@@ -7,7 +7,10 @@ import test from 'node:test';
 import {
   createBrokerIpcClient,
   createBrokerIpcServer,
+  loadBrokerIpcResponseV4,
+  removeOwnedUnixEndpointV4,
   reclaimUnixSocketV4,
+  secureUnixEndpointV4,
   normalizeBrokerResponseErrorV4,
   type BrokerIpcRequestV4,
   type BrokerIpcPlatformVerifierV4,
@@ -19,7 +22,10 @@ import type { BrokerCommandV4 } from '../src/runtime/run-state.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4, RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
 import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
 import { reopenJournalV4 } from '../src/runtime/journal.js';
+import { createInProcessReclamationCoordinatorV4 } from '../src/runtime/repository-lock.js';
 import { validRepositoryPolicy, validRuntimeProfile, validRuntimeResult, validTaskRequest } from './runtime-contracts.test.js';
+
+const endpointCoordinator = createInProcessReclamationCoordinatorV4('ipc-test');
 
 async function ipcFixture() {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
@@ -30,7 +36,7 @@ async function ipcFixture() {
   const daemon: BrokerDaemonV4 = {
     submit: async (command) => {
       submitted.push(command);
-      return { request_id: command.type === 'RUN_CODING_TASK' ? command.request.request_id : 'req_unknown', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', state: 'READY_FOR_EXECUTOR', status_token: 'status-token' };
+      return { request_id: command.type === 'RUN_CODING_TASK' ? command.request.request_id : 'req_unknown', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', state: 'READY_FOR_EXECUTOR', status_token: 'c'.repeat(64) };
     },
     status: async () => validRuntimeResult() as RuntimeResultV4,
     recover: async () => {},
@@ -49,6 +55,8 @@ async function ipcFixture() {
     endpoint,
     platform: process.platform,
     platformVerifier,
+    endpointCoordinator,
+    allowInProcessCoordinatorForTests: true,
     requestDeadlineMs: 1_000,
   });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
@@ -96,7 +104,7 @@ test('rejects authenticated JSON that is not in canonical wire form', async () =
 
   try {
     const response = await fixture.server.exchangeFrameForTest(nonCanonical);
-    assert.match(response.error ?? '', /INVALID_CONTRACT.*canonical/);
+    assert.equal(response.error, 'INVALID_CONTRACT: request contract rejected');
     assert.equal(fixture.submitted.length, 0);
   } finally {
     await fixture.server.close();
@@ -152,7 +160,19 @@ test('production startup fails closed when no native platform verifier is provid
     : join(stateDirectory, 'closed.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   await assert.rejects(
-    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform }),
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, endpointCoordinator, allowInProcessCoordinatorForTests: true }),
+    /AUTHENTICATION_FAILED/,
+  );
+});
+
+test('production startup rejects an in-process endpoint coordinator', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-coordinator-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-coordinator-${Date.now()}` : join(stateDirectory, 'coordinator.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator }),
     /AUTHENTICATION_FAILED/,
   );
 });
@@ -167,7 +187,7 @@ test('startup fails closed when the platform verifier cannot prove token ACL own
   };
 
   await assert.rejects(
-    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier }),
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true }),
     /AUTHENTICATION_FAILED/,
   );
 });
@@ -182,7 +202,7 @@ test('normalizes native verifier exceptions during IPC startup', async () => {
   };
 
   await assert.rejects(
-    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier }),
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true }),
     (error: Error) => /^AUTHENTICATION_FAILED:/.test(error.message) && !/secret-owner|ACL tool/.test(error.message),
   );
 });
@@ -195,7 +215,7 @@ test('normalizes raw daemon errors before they cross IPC', async () => {
   const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-leak-${Date.now()}` : join(stateDirectory, 'leak.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const daemon = { ...({} as BrokerDaemonV4), submit: async () => { throw new Error('ENOENT C:\\Users\\secret-owner\\private'); } };
-  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier });
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
 
   const response = await server.exchangeFrameForTest(Buffer.from(canonicalJsonV4(request(token)), 'utf8'));
@@ -203,6 +223,23 @@ test('normalizes raw daemon errors before they cross IPC', async () => {
   assert.match(response.error ?? '', /^UNKNOWN_FAILURE:/);
   assert.doesNotMatch(response.error ?? '', /secret-owner|ENOENT/);
   await server.close();
+});
+
+test('rejects a malformed daemon reply before it crosses IPC', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-malformed-reply-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-malformed-reply-${Date.now()}` : join(stateDirectory, 'malformed-reply.sock');
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+  const daemon = { ...({} as BrokerDaemonV4), submit: async () => ({ request_id: 'req_invalid', secret: 'C:\\Users\\secret-owner' }) } as unknown as BrokerDaemonV4;
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true });
+  const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
+
+  try {
+    const response = await server.exchangeFrameForTest(Buffer.from(canonicalJsonV4(request(token)), 'utf8'));
+    assert.equal(response.error, 'UNKNOWN_FAILURE: broker request failed');
+    assert.doesNotMatch(canonicalJsonV4(response), /secret-owner|Users/);
+  } finally {
+    await server.close();
+  }
 });
 
 test('normalizes malicious server response errors to a bounded closed-catalog reply', () => {
@@ -213,6 +250,41 @@ test('normalizes malicious server response errors to a bounded closed-catalog re
   assert.equal(normalizeBrokerResponseErrorV4('NOT_A_CODE: secret'), 'UNKNOWN_FAILURE: broker request failed');
 });
 
+test('strictly loads canonical IPC replies and rejects malformed reply objects without leakage', () => {
+  const valid = canonicalJsonV4({ ok: true, reply: { request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', state: 'READY_FOR_EXECUTOR', status_token: 'd'.repeat(64) } });
+  assert.equal(loadBrokerIpcResponseV4(valid).reply?.status_token, 'd'.repeat(64));
+
+  for (const malicious of [
+    'null',
+    '{}',
+    canonicalJsonV4({ ok: true, reply: null }),
+    canonicalJsonV4({ ok: true, reply: { request_id: 'req_bad', run_id: 'run_bad', state: 'READY_FOR_EXECUTOR', status_token: 'secret C:\\Users\\owner', extra: true } }),
+    JSON.stringify({ ok: false, error: 'UNKNOWN_FAILURE: C:\\Users\\owner\\private' }, null, 2),
+  ]) {
+    assert.throws(
+      () => loadBrokerIpcResponseV4(malicious),
+      (error: Error) => /^UNKNOWN_FAILURE: broker response rejected$/.test(error.message) && !/Users|owner|private/.test(error.message),
+    );
+  }
+
+  const failure = loadBrokerIpcResponseV4(canonicalJsonV4({ ok: false, error: 'AUTHENTICATION_FAILED: C:\\Users\\owner\\token' }));
+  assert.equal(failure.error, 'AUTHENTICATION_FAILED: authentication failed');
+});
+
+test('normalizes a synchronous client transport failure without exposing its path', async () => {
+  const client = createBrokerIpcClient({
+    endpoint: 'private-endpoint',
+    token: '0'.repeat(64),
+    serverIdentityVerifier: clientVerifier('private-endpoint'),
+    connect: () => { throw new Error('ENOENT C:\\Users\\secret-owner\\broker.sock'); },
+  });
+
+  await assert.rejects(
+    () => client.submit(request('0'.repeat(64)).command),
+    (error: Error) => error.message === 'UNKNOWN_FAILURE: broker request failed' && !/secret-owner|ENOENT/.test(error.message),
+  );
+});
+
 test('normalizes injected token-storage and server-close failures', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-lifecycle-'));
   const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-lifecycle-${Date.now()}` : join(stateDirectory, 'lifecycle.sock');
@@ -220,11 +292,11 @@ test('normalizes injected token-storage and server-close failures', async () => 
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
 
   await assert.rejects(
-    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, loadToken: async () => { throw new Error('EACCES C:\\Users\\secret-owner\\token'); } }),
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true, loadToken: async () => { throw new Error('EACCES C:\\Users\\secret-owner\\token'); } }),
     (error: Error) => /^AUTHENTICATION_FAILED:/.test(error.message) && !/secret-owner|EACCES/.test(error.message),
   );
 
-  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, closeServer: async (nativeServer) => {
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true, closeServer: async (nativeServer) => {
     await new Promise<void>((resolve) => nativeServer.close(() => resolve()));
     throw new Error('EPERM C:\\Users\\secret-owner\\pipe');
   } });
@@ -249,10 +321,12 @@ test('replayed mutation over IPC returns the original run without another journa
     inspectChanges: async (input) => input.changes.map((change) => ({ ...change, canonical_parent: join(repositoryRoot, 'src'), existed_at_freeze: true })),
     generateRunId: () => 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
     lockOwnerStatus: async () => 'dead',
+    reclamationCoordinator: endpointCoordinator,
+    allowInProcessCoordinatorForTests: true,
   });
   const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-replay-${Date.now()}` : join(stateDirectory, 'replay.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
-  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier });
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
   const client = createBrokerIpcClient({ endpoint, token, platform: process.platform, serverIdentityVerifier: clientVerifier(endpoint) });
   const command = request(token).command;
@@ -276,15 +350,87 @@ test('reclaims only a proven-stale owner-only Unix socket', async () => {
     probe: async () => 'stale',
     rename: async (_from, to) => { quarantine = to; },
     removeQuarantine: async (path) => { assert.equal(path, quarantine); removed = true; },
+    restoreQuarantine: async () => { throw new Error('not expected'); },
   });
   assert.equal(removed, true);
+});
+
+test('restores a live replacement that appears after stale probe but before quarantine rename', async () => {
+  let endpointIdentity: string | null = 'inode:7';
+  const quarantines = new Map<string, string>();
+  let removed = false;
+  await assert.rejects(
+    () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', {
+      metadata: async (path) => {
+        const identity = path === '/state/broker.sock' ? endpointIdentity : quarantines.get(path) ?? null;
+        return identity === null ? null : { kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: identity };
+      },
+      probe: async () => { endpointIdentity = 'inode:8'; return 'stale'; },
+      rename: async (_from, to) => { quarantines.set(to, endpointIdentity!); endpointIdentity = null; },
+      removeQuarantine: async () => { removed = true; },
+      restoreQuarantine: async (from) => { endpointIdentity = quarantines.get(from) ?? null; quarantines.delete(from); },
+    }),
+    /REPOSITORY_BUSY/,
+  );
+  assert.equal(endpointIdentity, 'inode:8');
+  assert.equal(removed, false);
+});
+
+test('removes a Unix endpoint only when its current object identity is the owned socket', async () => {
+  let removed = false;
+  await removeOwnedUnixEndpointV4('/state/broker.sock', 'inode:7', {
+    metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: 'inode:8' }),
+    remove: async () => { removed = true; },
+  });
+  assert.equal(removed, false);
+
+  await assert.rejects(
+    () => removeOwnedUnixEndpointV4('/state/broker.sock', 'inode:7', {
+      metadata: async () => { throw new Error('EACCES /home/private/broker.sock'); },
+      remove: async () => { removed = true; },
+    }),
+    (error: Error) => error.message === 'UNKNOWN_FAILURE: local IPC endpoint cleanup failed' && !/private|EACCES/.test(error.message),
+  );
+});
+
+test('normalizes Unix endpoint metadata failure and closes the listening server', async () => {
+  let closed = false;
+  await assert.rejects(
+    () => secureUnixEndpointV4('/state/broker.sock', 'uid:1000', {
+      metadata: async () => { throw new Error('EACCES /home/private/broker.sock'); },
+      secure: async () => {},
+      verify: async () => ({ owner_identity: 'uid:1000' }),
+      close: async () => { closed = true; },
+      remove: async () => { throw new Error('must not remove an unproved endpoint'); },
+    }),
+    (error: Error) => error.message === 'AUTHENTICATION_FAILED: authentication failed' && !/private|EACCES/.test(error.message),
+  );
+  assert.equal(closed, true);
+});
+
+test('post-listen permission failure never removes a replacement Unix socket', async () => {
+  let metadataReads = 0;
+  let closed = false;
+  let removed = false;
+  await assert.rejects(
+    () => secureUnixEndpointV4('/state/broker.sock', 'uid:1000', {
+      metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: ++metadataReads === 1 ? 'inode:7' : 'inode:8' }),
+      secure: async () => { throw new Error('EPERM /home/private/broker.sock'); },
+      verify: async () => ({ owner_identity: 'uid:1000' }),
+      close: async () => { closed = true; },
+      remove: async () => { removed = true; },
+    }),
+    (error: Error) => error.message === 'AUTHENTICATION_FAILED: authentication failed' && !/private|EPERM/.test(error.message),
+  );
+  assert.equal(closed, true);
+  assert.equal(removed, false);
 });
 
 test('refuses to reclaim a live or unverifiable Unix socket', async () => {
   for (const probe of ['live', 'unknown'] as const) {
     let removed = false;
     await assert.rejects(
-      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: 'inode:7' }), probe: async () => probe, rename: async () => { removed = true; }, removeQuarantine: async () => { removed = true; } }),
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: 'inode:7' }), probe: async () => probe, rename: async () => { removed = true; }, removeQuarantine: async () => { removed = true; }, restoreQuarantine: async () => { removed = true; } }),
       /REPOSITORY_BUSY/,
     );
     assert.equal(removed, false);
@@ -297,7 +443,7 @@ test('refuses to reclaim a stale Unix socket with wrong ownership or permissions
     { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: false, object_identity: 'inode:7' },
   ]) {
     await assert.rejects(
-      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => metadata, probe: async () => 'stale', rename: async () => {}, removeQuarantine: async () => {} }),
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => metadata, probe: async () => 'stale', rename: async () => {}, removeQuarantine: async () => {}, restoreQuarantine: async () => {} }),
       /AUTHENTICATION_FAILED/,
     );
   }
@@ -319,6 +465,7 @@ test('concurrent Unix stale reclaimers cannot unlink a replacement socket', asyn
       renameWinners += 1;
     },
     removeQuarantine: async (path: string) => { quarantines.delete(path); },
+    restoreQuarantine: async (from: string) => { endpointIdentity = quarantines.get(from) ?? null; quarantines.delete(from); },
   };
 
   await Promise.all([

@@ -6,7 +6,7 @@ import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import { inspectAllowedChanges, type InspectedChangeV4, type PathInspectionInputV4 } from './path-policy.js';
-import { acquireRepositoryLockV4, acquireRunLockV4, type LockOwnerStatusV4, type RepositoryLockOwnerV4, type RepositoryLockV4, type RunLockV4 } from './repository-lock.js';
+import { acquireRepositoryLockV4, acquireRunLockV4, type LockOwnerStatusV4, type ReclamationCoordinatorV4, type RepositoryLockOwnerV4, type RepositoryLockV4, type RunLockV4 } from './repository-lock.js';
 import { freezeRepositoryPolicy, type FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import { loadRepositoryRegistration, type RegisteredRepositoryV4, type RepositoryRegistryV4 } from './repository-registry.js';
 import { deriveWorkContract } from './routing.js';
@@ -49,6 +49,8 @@ export interface BrokerDaemonDependenciesV4 {
   lockOwnerStatus?: (owner: RepositoryLockOwnerV4) => Promise<LockOwnerStatusV4>;
   reconcileExternalProcess?: (runId: string, process: ExternalProcessIdentityV4) => Promise<'running' | 'terminated' | 'unknown'>;
   writeStateCache?: typeof writeBrokerStateCacheV4;
+  reclamationCoordinator: ReclamationCoordinatorV4;
+  allowInProcessCoordinatorForTests?: boolean;
 }
 
 const terminalStates = new Set(['FAILED', 'ABORTED', 'FINALIZED']);
@@ -65,7 +67,7 @@ function normalizePublicError(error: unknown): Error {
   if (error instanceof Error) {
     const match = /^([A-Z_]+):\s*(.*)$/s.exec(error.message);
     if (match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as typeof RUNTIME_FAILURE_CODES_V4[number])) {
-      return new Error(`${match[1]}: ${(match[2] || 'broker operation failed').replace(/[\r\n\0]/g, ' ').slice(0, 512)}`);
+      return new Error(`${match[1]}: broker operation failed`);
     }
   }
   return new Error('UNKNOWN_FAILURE: broker operation failed');
@@ -104,6 +106,11 @@ function initialResult(runId: string, contract: ReturnType<typeof deriveWorkCont
 }
 
 export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaemonV4 {
+  if (deps.reclamationCoordinator === undefined
+    || (deps.reclamationCoordinator.certification.kind !== 'native-cross-process' && !deps.allowInProcessCoordinatorForTests)
+    || deps.reclamationCoordinator.certification.identity.length === 0) {
+    throw new Error('BROKER_STATE_CORRUPT: certified native reclamation coordinator is required');
+  }
   let state: BrokerStateV4 | null = null;
   let journal: JournalV4 | null = null;
   let recovering: Promise<void> | null = null;
@@ -131,6 +138,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       directory: deps.stateDirectory,
       repositoryId,
       ownerStatus: deps.lockOwnerStatus,
+      reclamationCoordinator: deps.reclamationCoordinator,
     });
     locks.set(repositoryId, lock);
     return lock;
@@ -139,7 +147,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   const acquireForRun = async (runId: string): Promise<RunLockV4> => {
     const current = runLocks.get(runId);
     if (current !== undefined) return current;
-    const lock = await acquireRunLockV4({ directory: deps.stateDirectory, runId, ownerStatus: deps.lockOwnerStatus });
+    const lock = await acquireRunLockV4({ directory: deps.stateDirectory, runId, ownerStatus: deps.lockOwnerStatus, reclamationCoordinator: deps.reclamationCoordinator });
     runLocks.set(runId, lock);
     return lock;
   };

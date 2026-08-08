@@ -6,7 +6,8 @@ import { createConnection, createServer, type Server, type Socket } from 'node:n
 
 import { canonicalJsonV4 } from './canonical.js';
 import type { BrokerDaemonV4, BrokerReplyV4 } from './broker-daemon.js';
-import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
+import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureCodeV4 } from './failures.js';
+import type { ReclamationCoordinatorV4 } from './repository-lock.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import type { BrokerCommandV4 } from './run-state.js';
 
@@ -18,7 +19,7 @@ export interface BrokerIpcRequestV4 {
   command: BrokerCommandV4;
 }
 
-interface BrokerIpcResponseV4 {
+export interface BrokerIpcResponseV4 {
   ok: boolean;
   reply?: BrokerReplyV4;
   error?: string;
@@ -33,6 +34,8 @@ export interface BrokerIpcDependenciesV4 {
   requestDeadlineMs?: number;
   loadToken?: (directory: string, platform: NodeJS.Platform) => Promise<string>;
   closeServer?: (server: Server) => Promise<void>;
+  endpointCoordinator: ReclamationCoordinatorV4;
+  allowInProcessCoordinatorForTests?: boolean;
 }
 
 export interface BrokerIpcPlatformVerifierV4 {
@@ -46,6 +49,7 @@ export interface UnixSocketReclaimDependenciesV4 {
   probe(endpoint: string): Promise<'live' | 'stale' | 'unknown'>;
   rename(from: string, to: string): Promise<void>;
   removeQuarantine(path: string): Promise<void>;
+  restoreQuarantine(from: string, endpoint: string): Promise<void>;
 }
 
 export interface BrokerIpcServerV4 {
@@ -60,6 +64,7 @@ export interface BrokerIpcClientConfigV4 {
   requestDeadlineMs?: number;
   platform?: NodeJS.Platform;
   serverIdentityVerifier?: BrokerIpcServerIdentityVerifierV4;
+  connect?: (endpoint: string) => Socket;
 }
 
 export interface BrokerIpcServerIdentityVerifierV4 {
@@ -114,21 +119,78 @@ function equalToken(expected: string, supplied: unknown): boolean {
   return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
+const PUBLIC_FAILURE_MESSAGES_V4: Readonly<Record<RuntimeFailureCodeV4, string>> = Object.freeze({
+  INVALID_CONTRACT: 'request contract rejected',
+  REPOSITORY_NOT_ALLOWED: 'repository is not allowed',
+  REPOSITORY_BUSY: 'repository is busy',
+  BROKER_STATE_CORRUPT: 'broker state is corrupt',
+  BASE_SHA_INVALID: 'base revision is invalid',
+  WORKTREE_CREATION_FAILED: 'worktree creation failed',
+  CAPABILITY_UNVERIFIED: 'required capability is unverified',
+  SOURCE_SENSITIVITY_UNSUPPORTED: 'source sensitivity is unsupported',
+  PROCESS_SANDBOX_UNAVAILABLE: 'process sandbox is unavailable',
+  REVIEW_SANDBOX_UNAVAILABLE: 'review sandbox is unavailable',
+  AUTHENTICATION_FAILED: 'authentication failed',
+  PROVIDER_UNAVAILABLE: 'provider is unavailable',
+  EXECUTOR_INVALID_OUTPUT: 'executor output is invalid',
+  EXECUTOR_POLICY_VIOLATION: 'executor policy was violated',
+  OUT_OF_SCOPE_CHANGE: 'change is outside the allowed scope',
+  VALIDATION_FAILED: 'validation failed',
+  REVIEW_REJECTED: 'review rejected the result',
+  REVIEW_ATTESTATION_INVALID: 'review attestation is invalid',
+  EVIDENCE_HASH_MISMATCH: 'evidence hash does not match',
+  FINALIZATION_ISOLATION_FAILED: 'finalization isolation failed',
+  FINALIZATION_FAILED: 'finalization failed',
+  ABORTED: 'operation was aborted',
+  UNKNOWN_FAILURE: 'broker request failed',
+});
+
+function failureCode(value: unknown): RuntimeFailureCodeV4 {
+  const message = value instanceof Error ? value.message : value;
+  const code = typeof message === 'string' ? /^([A-Z_]+):/.exec(message)?.[1] : undefined;
+  return code !== undefined && RUNTIME_FAILURE_CODES_V4.includes(code as RuntimeFailureCodeV4)
+    ? code as RuntimeFailureCodeV4
+    : 'UNKNOWN_FAILURE';
+}
+
 function normalizedBoundaryMessage(error: unknown): string {
-  if (error instanceof Error) {
-    const match = /^([A-Z_]+):\s*(.*)$/s.exec(error.message);
-    if (match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as typeof RUNTIME_FAILURE_CODES_V4[number])) {
-      const message = match[2].replace(/[\r\n\0]/g, ' ').slice(0, 512) || 'broker request failed';
-      return `${match[1]}: ${message}`;
-    }
-  }
-  return 'UNKNOWN_FAILURE: broker request failed';
+  const code = failureCode(error);
+  return `${code}: ${PUBLIC_FAILURE_MESSAGES_V4[code]}`;
 }
 
 export function normalizeBrokerResponseErrorV4(value: unknown): string {
-  const code = typeof value === 'string' ? /^([A-Z_]+):/.exec(value)?.[1] : undefined;
-  const safeCode = code !== undefined && RUNTIME_FAILURE_CODES_V4.includes(code as typeof RUNTIME_FAILURE_CODES_V4[number]) ? code : 'UNKNOWN_FAILURE';
-  return `${safeCode}: broker request failed`;
+  return normalizedBoundaryMessage(value);
+}
+
+function responseRejected(): never {
+  throw new Error('UNKNOWN_FAILURE: broker response rejected');
+}
+
+export function loadBrokerIpcResponseV4(payload: string): BrokerIpcResponseV4 {
+  if (Buffer.byteLength(payload, 'utf8') > MAX_FRAME_BYTES_V4) responseRejected();
+  let decoded: unknown;
+  try { decoded = JSON.parse(payload); } catch { responseRejected(); }
+  try {
+    if (canonicalJsonV4(decoded) !== payload || decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) responseRejected();
+    const response = decoded as Record<string, unknown>;
+    if (response.ok === false) {
+      exactKeys(response, ['ok', 'error'], 'response');
+      if (typeof response.error !== 'string') responseRejected();
+      return Object.freeze({ ok: false, error: normalizeBrokerResponseErrorV4(response.error) });
+    }
+    if (response.ok !== true) responseRejected();
+    exactKeys(response, ['ok', 'reply'], 'response');
+    if (response.reply === null || typeof response.reply !== 'object' || Array.isArray(response.reply)) responseRejected();
+    const reply = response.reply as Record<string, unknown>;
+    exactKeys(reply, ['request_id', 'run_id', 'state', 'status_token'], 'reply');
+    if (typeof reply.request_id !== 'string' || !/^req_[A-Za-z0-9_-]{16,96}$/.test(reply.request_id)) responseRejected();
+    if (typeof reply.run_id !== 'string' || !/^run_[A-Za-z0-9_-]{16,96}$/.test(reply.run_id)) responseRejected();
+    if (typeof reply.state !== 'string' || !/^[A-Z][A-Z_]{0,63}$/.test(reply.state)) responseRejected();
+    if (typeof reply.status_token !== 'string' || !/^[a-f0-9]{64}$/.test(reply.status_token)) responseRejected();
+    return Object.freeze({ ok: true, reply: Object.freeze(reply as unknown as BrokerReplyV4) });
+  } catch {
+    responseRejected();
+  }
 }
 
 async function defaultUnixMetadata(endpoint: string): Promise<UnixSocketMetadataV4 | null> {
@@ -153,9 +215,18 @@ async function defaultUnixProbe(endpoint: string): Promise<'live' | 'stale' | 'u
 export async function reclaimUnixSocketV4(
   endpoint: string,
   expectedOwnerIdentity: string,
-  deps: UnixSocketReclaimDependenciesV4 = { metadata: defaultUnixMetadata, probe: defaultUnixProbe, rename, removeQuarantine: unlink },
+  deps: UnixSocketReclaimDependenciesV4 = {
+    metadata: defaultUnixMetadata,
+    probe: defaultUnixProbe,
+    rename,
+    removeQuarantine: unlink,
+    restoreQuarantine: async (from, to) => {
+      if (await defaultUnixMetadata(to) !== null) throw new Error('REPOSITORY_BUSY: broker endpoint was replaced during restore');
+      await rename(from, to);
+    },
+  },
 ): Promise<void> {
-  const metadata = await deps.metadata(endpoint);
+  const metadata = await deps.metadata(endpoint).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker endpoint metadata unavailable'); });
   if (metadata === null) return;
   if (metadata.kind !== 'socket' || metadata.owner_identity !== expectedOwnerIdentity || !metadata.owner_only) {
     throw new Error('AUTHENTICATION_FAILED: existing broker endpoint ownership or mode is invalid');
@@ -173,8 +244,61 @@ export async function reclaimUnixSocketV4(
     throw new Error('UNKNOWN_FAILURE: stale broker endpoint quarantine failed');
   }
   const quarantined = await deps.metadata(quarantine).catch(() => null);
-  if (quarantined?.object_identity !== metadata.object_identity) throw new Error('AUTHENTICATION_FAILED: quarantined endpoint identity changed');
+  if (quarantined?.object_identity !== metadata.object_identity) {
+    await deps.restoreQuarantine(quarantine, endpoint).catch(() => { throw new Error('REPOSITORY_BUSY: live replacement could not be restored'); });
+    throw new Error('REPOSITORY_BUSY: broker endpoint was replaced during stale reclamation');
+  }
   await deps.removeQuarantine(quarantine).catch(() => { throw new Error('UNKNOWN_FAILURE: stale broker endpoint cleanup failed'); });
+}
+
+export async function removeOwnedUnixEndpointV4(
+  endpoint: string,
+  ownedObjectIdentity: string,
+  deps: { metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>; remove(endpoint: string): Promise<void> } = {
+    metadata: defaultUnixMetadata,
+    remove: unlink,
+  },
+): Promise<void> {
+  const current = await deps.metadata(endpoint).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed'); });
+  if (current === null || current.kind !== 'socket' || current.object_identity !== ownedObjectIdentity) return;
+  await deps.remove(endpoint).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
+  });
+}
+
+export async function secureUnixEndpointV4(
+  endpoint: string,
+  expectedOwnerIdentity: string,
+  deps: {
+    metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>;
+    secure(endpoint: string): Promise<void>;
+    verify(endpoint: string, expectedOwnerIdentity: string): Promise<{ owner_identity: string } | null>;
+    close(): Promise<void>;
+    remove(endpoint: string): Promise<void>;
+  },
+): Promise<string> {
+  let ownedObjectIdentity: string | null = null;
+  try {
+    const metadata = await deps.metadata(endpoint).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker endpoint metadata unavailable'); });
+    if (metadata === null || metadata.kind !== 'socket' || metadata.owner_identity !== expectedOwnerIdentity) {
+      throw new Error('AUTHENTICATION_FAILED: broker endpoint ownership could not be established');
+    }
+    ownedObjectIdentity = metadata.object_identity;
+    await deps.secure(endpoint).catch(() => { throw new Error('AUTHENTICATION_FAILED: endpoint permission setup failed'); });
+    const proof = await deps.verify(endpoint, expectedOwnerIdentity).catch(() => null);
+    if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
+    return ownedObjectIdentity;
+  } catch (error) {
+    let cleanupFailure: Error | null = null;
+    try { await deps.close(); } catch { cleanupFailure = new Error('UNKNOWN_FAILURE: local IPC close failed'); }
+    if (ownedObjectIdentity !== null) {
+      try {
+        await removeOwnedUnixEndpointV4(endpoint, ownedObjectIdentity, { metadata: deps.metadata, remove: deps.remove });
+      } catch { cleanupFailure = new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed'); }
+    }
+    if (cleanupFailure !== null) throw cleanupFailure;
+    throw new Error(normalizedBoundaryMessage(error));
+  }
 }
 
 async function verifyOwnerOnlyState(directory: string, platform: NodeJS.Platform): Promise<void> {
@@ -238,6 +362,11 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   const deadline = deps.requestDeadlineMs ?? 5_000;
   if (!Number.isSafeInteger(deadline) || deadline < 1 || deadline > 60_000) invalid('request deadline is invalid');
   if (deps.platformVerifier === undefined) throw new Error('AUTHENTICATION_FAILED: native platform verifier is required');
+  if (deps.endpointCoordinator === undefined) throw new Error('AUTHENTICATION_FAILED: certified endpoint coordinator is required');
+  if (deps.endpointCoordinator.certification.kind !== 'native-cross-process' && !deps.allowInProcessCoordinatorForTests) {
+    throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
+  }
+  if (deps.endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
   const expectedOwnerIdentity = platformOwnerIdentity(platform);
   await verifyOwnerOnlyState(deps.stateDirectory, platform).catch((error) => {
     if (error instanceof Error && error.message.startsWith('AUTHENTICATION_FAILED:')) throw error;
@@ -248,7 +377,6 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   if (platform !== 'win32') {
     const stateRoot = `${resolve(deps.stateDirectory)}${process.platform === 'win32' ? '\\' : '/'}`;
     if (!resolve(endpoint).startsWith(stateRoot)) throw new Error('AUTHENTICATION_FAILED: Unix socket must be inside owner-only state directory');
-    await reclaimUnixSocketV4(endpoint, expectedOwnerIdentity);
   }
   for (const [path, kind] of [[deps.stateDirectory, 'state-directory'], [join(deps.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
     const proof = await deps.platformVerifier.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity }).catch(() => null);
@@ -269,48 +397,68 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
       exactKeys(request, ['token', 'command'], 'request');
       if (!equalToken(token, request.token)) throw new Error('AUTHENTICATION_FAILED: token mismatch');
       const command = loadSubmittedCommand(request.command);
-      return { ok: true, reply: await deps.daemon.submit(command) };
+      return loadBrokerIpcResponseV4(canonicalJsonV4({ ok: true, reply: await deps.daemon.submit(command) }));
     } catch (error) {
       return { ok: false, error: normalizedBoundaryMessage(error) };
     }
   };
 
-  const server = createServer((socket) => {
-    let buffer = Buffer.alloc(0);
-    let expectedLength: number | null = null;
-    let handled = false;
-    socket.setTimeout(deadline, () => socket.destroy(new Error('INVALID_CONTRACT: request deadline exceeded')));
-    socket.on('data', (chunk: Buffer) => {
-      if (handled) return;
-      buffer = Buffer.concat([buffer, chunk]);
-      if (expectedLength === null && buffer.length >= 4) {
-        expectedLength = buffer.readUInt32BE(0);
-        buffer = buffer.subarray(4);
-        if (expectedLength > MAX_FRAME_BYTES_V4) {
+  let server: Server;
+  try {
+    server = createServer((socket) => {
+      let buffer = Buffer.alloc(0);
+      let expectedLength: number | null = null;
+      let handled = false;
+      socket.setTimeout(deadline, () => socket.destroy(new Error('INVALID_CONTRACT: request deadline exceeded')));
+      socket.on('data', (chunk: Buffer) => {
+        if (handled) return;
+        buffer = Buffer.concat([buffer, chunk]);
+        if (expectedLength === null && buffer.length >= 4) {
+          expectedLength = buffer.readUInt32BE(0);
+          buffer = buffer.subarray(4);
+          if (expectedLength > MAX_FRAME_BYTES_V4) {
+            handled = true;
+            socket.end(encodeFrame({ ok: false, error: 'INVALID_CONTRACT: request contract rejected' }));
+            return;
+          }
+        }
+        if (expectedLength !== null && buffer.length >= expectedLength) {
           handled = true;
-          socket.end(encodeFrame({ ok: false, error: 'INVALID_CONTRACT: frame too large' }));
-          return;
+          if (buffer.length !== expectedLength) {
+            socket.end(encodeFrame({ ok: false, error: 'INVALID_CONTRACT: request contract rejected' }));
+            return;
+          }
+          void exchange(buffer, socket).then((response) => socket.end(encodeFrame(response)));
         }
-      }
-      if (expectedLength !== null && buffer.length >= expectedLength) {
-        handled = true;
-        if (buffer.length !== expectedLength) {
-          socket.end(encodeFrame({ ok: false, error: 'INVALID_CONTRACT: trailing frame bytes' }));
-          return;
-        }
-        void exchange(buffer, socket).then((response) => socket.end(encodeFrame(response)));
-      }
+      });
+      socket.on('error', () => socket.destroy());
     });
-    socket.on('error', () => socket.destroy());
-  });
-  await listen(server, endpoint).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
-  if (platform !== 'win32') await chmod(endpoint, 0o600);
-  const endpointProof = await deps.platformVerifier.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity }).catch(() => null);
-  if (endpointProof?.owner_identity !== expectedOwnerIdentity) {
-    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-    if (platform !== 'win32') await unlink(endpoint).catch(() => undefined);
-    throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
+  } catch {
+    throw new Error('UNKNOWN_FAILURE: local IPC startup failed');
   }
+  let ownedUnixEndpointIdentity: string | null = null;
+  const closeNativeServer = async (): Promise<void> => {
+    await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error === undefined ? resolveClose() : rejectClose(error)));
+  };
+  await deps.endpointCoordinator.runExclusive(`ipc-endpoint:${endpoint}`, async () => {
+    if (platform !== 'win32') await reclaimUnixSocketV4(endpoint, expectedOwnerIdentity);
+    await listen(server, endpoint).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+    if (platform !== 'win32') {
+      ownedUnixEndpointIdentity = await secureUnixEndpointV4(endpoint, expectedOwnerIdentity, {
+        metadata: defaultUnixMetadata,
+        secure: async (path) => chmod(path, 0o600),
+        verify: async (path, owner) => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind: 'endpoint', expected_owner_identity: owner }),
+        close: closeNativeServer,
+        remove: unlink,
+      });
+    } else try {
+      const endpointProof = await deps.platformVerifier!.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity }).catch(() => null);
+      if (endpointProof?.owner_identity !== expectedOwnerIdentity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
+    } catch (error) {
+      await closeNativeServer().catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC close failed'); });
+      throw new Error(normalizedBoundaryMessage(error));
+    }
+  }).catch((error) => { throw new Error(normalizedBoundaryMessage(error)); });
 
   let closed = false;
   return {
@@ -319,15 +467,14 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     close: async () => {
       if (closed) return;
       closed = true;
+      let closeFailure: Error | null = null;
       try {
         await (deps.closeServer?.(server) ?? new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error))));
       } catch {
-        throw new Error('UNKNOWN_FAILURE: local IPC close failed');
-      } finally {
-        if (platform !== 'win32') await unlink(endpoint).catch((error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
-        });
+        closeFailure = new Error('UNKNOWN_FAILURE: local IPC close failed');
       }
+      if (platform !== 'win32' && ownedUnixEndpointIdentity !== null) await removeOwnedUnixEndpointV4(endpoint, ownedUnixEndpointIdentity);
+      if (closeFailure !== null) throw closeFailure;
     },
   };
 }
@@ -343,7 +490,9 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
       const request: BrokerIpcRequestV4 = { token: config.token, command };
       const frame = encodeFrame(request);
       return new Promise<BrokerReplyV4>((resolvePromise, reject) => {
-        const socket = createConnection(config.endpoint);
+        let socket: Socket;
+        try { socket = (config.connect ?? createConnection)(config.endpoint); }
+        catch { reject(new Error('UNKNOWN_FAILURE: broker request failed')); return; }
         let buffer = Buffer.alloc(0);
         let expectedLength: number | null = null;
         const fail = (error: Error) => { socket.destroy(); reject(new Error(normalizedBoundaryMessage(error))); };
@@ -363,9 +512,10 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
             buffer = buffer.subarray(4);
             if (expectedLength > MAX_FRAME_BYTES_V4) return fail(new Error('INVALID_CONTRACT: response frame too large'));
           }
+          if (expectedLength !== null && buffer.length > expectedLength) return fail(new Error('INVALID_CONTRACT: trailing response frame bytes'));
           if (expectedLength !== null && buffer.length === expectedLength) {
             let response: BrokerIpcResponseV4;
-            try { response = JSON.parse(buffer.toString('utf8')) as BrokerIpcResponseV4; } catch { return fail(new Error('INVALID_CONTRACT: malformed response')); }
+            try { response = loadBrokerIpcResponseV4(buffer.toString('utf8')); } catch (error) { return fail(error as Error); }
             socket.end();
             if (!response.ok || response.reply === undefined) {
               reject(new Error(normalizeBrokerResponseErrorV4(response.error)));

@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import { createBrokerDaemon, type BrokerDaemonDependenciesV4 } from '../src/runtime/broker-daemon.js';
-import { hashCanonicalV4 } from '../src/runtime/canonical.js';
-import { acquireRepositoryLockV4, acquireRunLockV4 } from '../src/runtime/repository-lock.js';
+import { acquireRepositoryLockV4, acquireRunLockV4, createInProcessReclamationCoordinatorV4, type ReclamationCoordinatorV4 } from '../src/runtime/repository-lock.js';
 import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
 import { writeBrokerStateCacheV4 } from '../src/runtime/run-state.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
@@ -28,6 +27,8 @@ async function daemonFixture(overrides: Partial<BrokerDaemonDependenciesV4> = {}
     generateRunId: () => 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
     now: () => '2026-08-08T12:00:00.000Z',
     lockOwnerStatus: async () => 'dead',
+    reclamationCoordinator: createInProcessReclamationCoordinatorV4('daemon-test'),
+    allowInProcessCoordinatorForTests: true,
     ...overrides,
   };
   return { deps, stateDirectory };
@@ -112,6 +113,18 @@ test('normalizes raw dependency failures at the public daemon boundary', async (
   await daemon.close();
 });
 
+test('does not preserve private suffixes from recognized dependency failure codes', async () => {
+  const { deps } = await daemonFixture({ loadPolicy: async () => { throw new Error('AUTHENTICATION_FAILED: token at C:\\Users\\secret-owner\\broker.token'); } });
+  const daemon = createBrokerDaemon(deps);
+
+  await assert.rejects(
+    () => daemon.submit(runCommand()),
+    (error: Error) => error.message === 'AUTHENTICATION_FAILED: broker operation failed' && !/secret-owner|broker\.token/.test(error.message),
+  );
+
+  await daemon.close();
+});
+
 test('fails an indeterminate external process as UNKNOWN_FAILURE during restart reconciliation', async () => {
   const { deps } = await daemonFixture({ reconcileExternalProcess: async () => 'unknown' });
   const daemon = createBrokerDaemon(deps);
@@ -130,10 +143,11 @@ test('fails an indeterminate external process as UNKNOWN_FAILURE during restart 
 
 test('does not steal a repository lock from a live or unverifiable owner', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-lock-'));
-  const owner = await acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', ownerStatus: async () => 'live', pid: 100, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-100' } });
+  const reclamationCoordinator = createInProcessReclamationCoordinatorV4('live-test');
+  const owner = await acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator, ownerStatus: async () => 'live', pid: 100, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-100' } });
 
   await assert.rejects(
-    () => acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', ownerStatus: async () => 'unknown', pid: 200, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-200' } }),
+    () => acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator, ownerStatus: async () => 'unknown', pid: 200, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-200' } }),
     /REPOSITORY_BUSY/,
   );
 
@@ -144,7 +158,7 @@ test('replaces a lock only after its recorded owner is proven dead', async () =>
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-lock-'));
   await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify({ repository_id: 'fixture-repo', pid: 100, boot_nonce: 'old-nonce', boot_id: 'old-boot', process_start_id: 'old-start' }));
 
-  const replacement = await acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', ownerStatus: async () => 'dead', pid: 200, bootNonce: 'new-nonce', ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' } });
+  const replacement = await acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator: createInProcessReclamationCoordinatorV4('replace-test'), ownerStatus: async () => 'dead', pid: 200, bootNonce: 'new-nonce', ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' } });
 
   assert.equal(replacement.boot_nonce, 'new-nonce');
   await replacement.release();
@@ -152,10 +166,11 @@ test('replaces a lock only after its recorded owner is proven dead', async () =>
 
 test('serializes mutation ownership with a distinct per-run lock', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-run-lock-'));
-  const owner = await acquireRunLockV4({ directory, runId: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', ownerStatus: async () => 'live', pid: 100, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-100' } });
+  const reclamationCoordinator = createInProcessReclamationCoordinatorV4('run-test');
+  const owner = await acquireRunLockV4({ directory, runId: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', reclamationCoordinator, ownerStatus: async () => 'live', pid: 100, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-100' } });
 
   await assert.rejects(
-    () => acquireRunLockV4({ directory, runId: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', ownerStatus: async () => 'live', pid: 200, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-200' } }),
+    () => acquireRunLockV4({ directory, runId: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', reclamationCoordinator, ownerStatus: async () => 'live', pid: 200, ownerIdentity: { boot_id: 'boot', process_start_id: 'start-200' } }),
     /REPOSITORY_BUSY/,
   );
 
@@ -164,6 +179,7 @@ test('serializes mutation ownership with a distinct per-run lock', async () => {
 
 test('serializes stale-lock reclamation so a second contender cannot unlink the new owner', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-lock-race-'));
+  const reclamationCoordinator = createInProcessReclamationCoordinatorV4('race-test');
   await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify({ repository_id: 'fixture-repo', pid: 100, boot_nonce: 'old-nonce', boot_id: 'old-boot', process_start_id: 'old-start' }));
   let releaseFirst!: () => void;
   const firstPaused = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -175,6 +191,7 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
     pid: 200,
     bootNonce: 'first-nonce',
     ownerIdentity: { boot_id: 'new-boot', process_start_id: 'first-start' },
+    reclamationCoordinator,
     ownerStatus: async () => { firstEntered(); await firstPaused; return 'dead'; },
   });
   await entered;
@@ -185,32 +202,42 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
     pid: 300,
     bootNonce: 'second-nonce',
     ownerIdentity: { boot_id: 'new-boot', process_start_id: 'second-start' },
+    reclamationCoordinator,
     ownerStatus: async (lockOwner) => lockOwner.pid === 100 ? 'dead' : 'live',
   });
-  await assert.rejects(second, /REPOSITORY_BUSY/);
   releaseFirst();
   const winner = await first;
+  await assert.rejects(second, /REPOSITORY_BUSY/);
 
-  const third = acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', ownerStatus: async () => 'live', pid: 400, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'third-start' } });
+  const third = acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator, ownerStatus: async () => 'live', pid: 400, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'third-start' } });
   await assert.rejects(third, /REPOSITORY_BUSY/);
+  assert.deepEqual((await readdir(directory)).filter((name) => name.includes('.reclaim')), []);
   await winner.release();
 });
 
-test('recovers an orphaned reclaim guard only after its identity is proven dead', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'runner-v4-orphan-guard-'));
-  const staleOwner = { repository_id: 'fixture-repo', pid: 100, boot_nonce: 'stale-owner', boot_id: 'old-boot', process_start_id: 'old-start' };
-  await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify(staleOwner));
-  await writeFile(join(directory, `fixture-repo.lock.reclaim-${hashCanonicalV4(staleOwner).slice(0, 16)}`), JSON.stringify(staleOwner));
+test('fails closed when stale reclamation has no certified coordinator', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runner-v4-no-coordinator-'));
+  await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify({ repository_id: 'fixture-repo', pid: 100, boot_nonce: 'stale-owner', boot_id: 'old-boot', process_start_id: 'old-start' }));
+  await assert.rejects(() => acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', pid: 200, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' }, ownerStatus: async () => 'dead' }), /REPOSITORY_BUSY/);
+});
 
-  const recovered = await acquireRepositoryLockV4({
-    directory,
-    repositoryId: 'fixture-repo',
-    pid: 200,
-    bootNonce: 'new-owner',
-    ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' },
-    ownerStatus: async () => 'dead',
-  });
+test('preserves a stale lock when the trusted reclamation coordinator is unavailable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runner-v4-rejecting-coordinator-'));
+  const path = join(directory, 'fixture-repo.lock');
+  await writeFile(path, JSON.stringify({ repository_id: 'fixture-repo', pid: 100, boot_nonce: 'stale-owner', boot_id: 'old-boot', process_start_id: 'old-start' }));
+  const unavailable: ReclamationCoordinatorV4 = {
+    certification: { kind: 'native-cross-process', identity: 'native-test-unavailable' },
+    runExclusive: async () => { throw new Error('EACCES C:\\Users\\secret-owner\\native-mutex'); },
+  };
 
-  assert.equal(recovered.boot_nonce, 'new-owner');
-  await recovered.release();
+  await assert.rejects(
+    () => acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator: unavailable, pid: 200, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' }, ownerStatus: async () => 'dead' }),
+    (error: Error) => /^REPOSITORY_BUSY:/.test(error.message) && !/secret-owner|EACCES/.test(error.message),
+  );
+  assert.equal((await readdir(directory)).includes('fixture-repo.lock'), true);
+});
+
+test('production daemon rejects an in-process reclamation coordinator', async () => {
+  const { deps } = await daemonFixture({ allowInProcessCoordinatorForTests: false });
+  assert.throws(() => createBrokerDaemon(deps), /BROKER_STATE_CORRUPT/);
 });
