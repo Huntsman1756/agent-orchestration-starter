@@ -1,0 +1,46 @@
+schemaVersion: 4
+id: arliai-opencode-example
+bindings:
+  orchestrator:
+    harness: opencode
+    provider: arliai
+    model: Sol
+    capability: planning
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+  executor:
+    harness: opencode
+    provider: arliai
+    model: MiMo
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+  escalationExecutor:
+    harness: opencode
+    provider: arliai
+    model: GLM
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: contract-write
+  frontierExecutor:
+    harness: opencode
+    provider: arliai
+    model: Sol
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: contract-write
+  reviewer:
+    harness: opencode
+    provider: arliai
+    model: GLM
+    capability: review
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+runtime:
+  maxArliParallelRequests: 2
+  maxConcurrentRunsPerRepository: 1
