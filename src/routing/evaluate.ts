@@ -70,6 +70,12 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
         ) {
           reasons.push('first_pass_acceptance_drop_above_maximum');
         }
+        if (
+          baseline.finalAcceptanceRate - candidate.finalAcceptanceRate
+          > policy.maxFinalAcceptanceDropRate
+        ) {
+          reasons.push('final_acceptance_drop_above_maximum');
+        }
         if (candidate.escalationRate > policy.maxEscalationRate) {
           reasons.push('escalation_rate_above_maximum');
         }

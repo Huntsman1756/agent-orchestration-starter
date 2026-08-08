@@ -29,6 +29,7 @@ export interface RoutingGatePolicy {
   minPairedSamplesPerRoute: number;
   minAcceptedTaskCostSavingsRate: number;
   maxFirstPassAcceptanceDropRate: number;
+  maxFinalAcceptanceDropRate: number;
   maxEscalationRate: number;
   maxPostAcceptanceDefectRate: number;
 }

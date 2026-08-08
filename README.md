@@ -17,7 +17,7 @@ El orquestador y el revisor son de solo lectura. Los ejecutores economy/frontier
 - `orchestrated`: planificación *frontier*, implementación económica, validación y revisión *frontier* con contexto limpio.
 - `frontier_execution`: ejecutor *frontier* para trabajo transversal, debugging ambiguo, arquitectura, seguridad o migraciones delicadas.
 
-La ruta mixta no es universal. `routing-gate.yaml` exige al menos 30 pares comparables por `taskClass × ruta candidata × frontier_execution` y calcula las métricas únicamente sobre esa intersección de `taskId`. Así, seis pares de una clase nunca se convierten en `n=30` sumando otras clases o tareas no comparables.
+La ruta mixta no es universal. `routing-gate.yaml` exige al menos 30 pares comparables por `taskClass × ruta candidata × frontier_execution` y calcula las métricas únicamente sobre esa intersección de `taskId`. Así, seis pares de una clase nunca se convierten en `n=30` sumando otras clases o tareas no comparables. Una ruta tampoco puede reducir la aceptación final frente al baseline (`maxFinalAcceptanceDropRate: 0`), aunque iguale la aceptación inicial y sea más barata.
 
 ## Inicio rápido
 

@@ -15,6 +15,7 @@ const gate: RoutingGatePolicy = {
   minPairedSamplesPerRoute: 30,
   minAcceptedTaskCostSavingsRate: 0.2,
   maxFirstPassAcceptanceDropRate: 0,
+  maxFinalAcceptanceDropRate: 0,
   maxEscalationRate: 0.2,
   maxPostAcceptanceDefectRate: 0.02,
 };
@@ -120,6 +121,30 @@ test('records rescued economy attempts as first-pass failures and rejects excess
   ]);
 });
 
+test('rejects equal first-pass performance when the candidate leaves fewer tasks finally accepted', () => {
+  const candidate = Array.from({ length: 30 }, (_, index) => observation(index, 'economy_only', {
+    firstPassAccepted: index < 20,
+    finalAccepted: index < 20,
+    totalCostUsd: 0.1,
+  }));
+  const baseline = Array.from({ length: 30 }, (_, index) => observation(index, 'frontier_execution', {
+    firstPassAccepted: index < 20,
+    finalAccepted: true,
+    totalCostUsd: 1,
+    repairCount: index < 20 ? 0 : 1,
+  }));
+
+  const report = evaluateRouting([...candidate, ...baseline], gate);
+  const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
+
+  assert.ok(decision);
+  assert.equal(decision.candidate.firstPassAcceptanceRate, decision.baseline.firstPassAcceptanceRate);
+  assert.equal(decision.candidate.finalAcceptanceRate, 20 / 30);
+  assert.equal(decision.baseline.finalAcceptanceRate, 1);
+  assert.equal(decision.decision, 'reject');
+  assert.deepEqual(decision.reasons, ['final_acceptance_drop_above_maximum']);
+});
+
 test('loads strict provider-neutral JSONL observations and YAML gate policy', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'routing-load-'));
   const observationsPath = join(directory, 'observations.jsonl');
@@ -134,6 +159,7 @@ candidateRoutes: [economy_only, orchestrated]
 minPairedSamplesPerRoute: 30
 minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
+maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0.2
 maxPostAcceptanceDefectRate: 0.02
 `, 'utf8');

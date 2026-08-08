@@ -22,7 +22,7 @@ Review uses a fresh review envelope containing only the original work contract, 
 
 The benchmark ingests JSONL observations produced by any harness. Each observation records task class, attempted route, first-pass and final acceptance, total route cost in USD, latency, repairs, escalation, post-acceptance defects, and frontier/economy token totals. An escalated task remains a failed first pass for its attempted route even when the final result is accepted.
 
-For each task class and candidate route, the gate compares evidence with `frontier_execution` using only task IDs observed under both routes. It returns `promote`, `reject`, or `insufficient_evidence` plus machine-readable reasons. Promotion requires the configured minimum number of comparable pairs per class and candidate, accepted-task cost savings, no unacceptable first-pass acceptance regression, bounded escalation, and bounded post-acceptance defects. Cost per accepted task is total route cost divided by finally accepted tasks, so repairs, rereads, and escalation are included rather than hidden.
+For each task class and candidate route, the gate compares evidence with `frontier_execution` using only task IDs observed under both routes. It returns `promote`, `reject`, or `insufficient_evidence` plus machine-readable reasons. Promotion requires the configured minimum number of comparable pairs per class and candidate, accepted-task cost savings, no unacceptable first-pass or final-acceptance regression, bounded escalation, and bounded post-acceptance defects. Cost per accepted task is total route cost divided by finally accepted tasks, so repairs, rereads, and escalation are included rather than hidden.
 
 ## Non-goals
 

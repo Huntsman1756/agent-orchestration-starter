@@ -37,6 +37,7 @@ const gateSchema = z.object({
   minPairedSamplesPerRoute: z.number().int().positive(),
   minAcceptedTaskCostSavingsRate: z.number().min(0).max(1),
   maxFirstPassAcceptanceDropRate: z.number().min(0).max(1),
+  maxFinalAcceptanceDropRate: z.number().min(0).max(1),
   maxEscalationRate: z.number().min(0).max(1),
   maxPostAcceptanceDefectRate: z.number().min(0),
 }).strict().superRefine((value, context) => {

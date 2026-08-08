@@ -109,6 +109,7 @@ candidateRoutes: [economy_only]
 minPairedSamplesPerRoute: 1
 minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
+maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0
 maxPostAcceptanceDefectRate: 0
 `, 'utf8');

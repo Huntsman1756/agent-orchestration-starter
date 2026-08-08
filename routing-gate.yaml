@@ -4,5 +4,6 @@ candidateRoutes: [economy_only, orchestrated]
 minPairedSamplesPerRoute: 30
 minAcceptedTaskCostSavingsRate: 0.20
 maxFirstPassAcceptanceDropRate: 0
+maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0.20
 maxPostAcceptanceDefectRate: 0.02

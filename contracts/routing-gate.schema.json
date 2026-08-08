@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/agent-orchestration/routing-gate.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectRate"],
+  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxFinalAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectRate"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "baselineRoute": { "$ref": "#/$defs/route" },
@@ -11,6 +11,7 @@
     "minPairedSamplesPerRoute": { "type": "integer", "minimum": 1 },
     "minAcceptedTaskCostSavingsRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxFirstPassAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maxFinalAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxEscalationRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxPostAcceptanceDefectRate": { "type": "number", "minimum": 0 }
   },
