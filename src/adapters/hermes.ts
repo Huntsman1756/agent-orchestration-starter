@@ -3,9 +3,9 @@ import { stringify } from 'yaml';
 import type { GeneratedFile } from './index.js';
 import { policyManifest } from './shared.js';
 import { providerFor } from '../core/providers.js';
-import type { ResolvedPolicy } from '../core/types.js';
+import type { ResolvedPolicy, WriteIsolation } from '../core/types.js';
 
-export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
+export function compileHermes(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'degraded'): GeneratedFile[] {
   const orchestrator = policy.roles.orchestrator;
   const executor = policy.roles.executor;
   const reviewer = policy.roles.reviewer;
@@ -51,6 +51,6 @@ export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
     { path: 'hermes-profile/config.yaml', content: config },
     { path: 'hermes-profile/SOUL.md', content: soul },
     { path: 'hermes-profile/PERMISSION_BOUNDARY.md', content: permissionBoundary },
-    policyManifest('hermes', policy, 'hermes-profile/policy-manifest.json'),
+    policyManifest('hermes', policy, 'hermes-profile/policy-manifest.json', effectiveWriteIsolation),
   ];
 }

@@ -1,6 +1,6 @@
 import type { GeneratedFile } from './index.js';
 import { contractInstructions, policyManifest } from './shared.js';
-import type { ResolvedPolicy, ResolvedRole, RoleName } from '../core/types.js';
+import type { ResolvedPolicy, ResolvedRole, RoleName, WriteIsolation } from '../core/types.js';
 
 type AgentRole = RoleName | 'frontier-executor';
 
@@ -39,7 +39,7 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
   };
 }
 
-export function compileCodex(policy: ResolvedPolicy): GeneratedFile[] {
+export function compileCodex(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'hard'): GeneratedFile[] {
   const orchestrator = policy.roles.orchestrator;
   return [
     {
@@ -58,6 +58,6 @@ export function compileCodex(policy: ResolvedPolicy): GeneratedFile[] {
     agentFile('executor', policy),
     agentFile('frontier-executor', policy),
     agentFile('reviewer', policy),
-    policyManifest('codex', policy, '.agent-orchestration/codex/policy-manifest.json'),
+    policyManifest('codex', policy, '.agent-orchestration/codex/policy-manifest.json', effectiveWriteIsolation),
   ];
 }

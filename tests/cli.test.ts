@@ -55,3 +55,29 @@ test('doctor reports local harness availability without network access', async (
   assert.match(output.join('\n'), /opencode: missing/);
   assert.match(output.join('\n'), /hermes: available/);
 });
+
+test('requires exact CLI acceptance before rendering a degraded-isolation harness', async () => {
+  const files = await configFiles();
+  const errors: string[] = [];
+  const args = ['--target', files.directory, '--policy', files.policy, '--profile', files.profile, '--harnesses', 'hermes', '--dry-run'];
+
+  const rejected = await runCli(['render', ...args], { stderr: (line) => errors.push(line) });
+  const accepted = await runCli(['render', ...args, '--accept-degraded-isolation', 'hermes']);
+
+  assert.equal(rejected, 2);
+  assert.match(errors.join('\n'), /hard.*hermes.*degraded/i);
+  assert.equal(accepted, 0);
+});
+
+test('doctor rejects an installed harness that cannot meet the requested isolation', async () => {
+  const files = await configFiles();
+  const errors: string[] = [];
+  const args = ['doctor', '--harnesses', 'hermes', '--policy', files.policy, '--profile', files.profile];
+
+  const rejected = await runCli(args, { checkBinary: () => true, stderr: (line) => errors.push(line) });
+  const accepted = await runCli([...args, '--accept-degraded-isolation', 'hermes'], { checkBinary: () => true });
+
+  assert.equal(rejected, 2);
+  assert.match(errors.join('\n'), /hard.*hermes.*degraded/i);
+  assert.equal(accepted, 0);
+});

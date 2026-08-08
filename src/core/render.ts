@@ -11,6 +11,7 @@ export interface RenderOptions {
   harnesses: Harness[];
   dryRun?: boolean;
   forcePaths?: string[];
+  acceptDegradedIsolation?: Harness[];
 }
 
 export interface RenderReport {
@@ -43,9 +44,9 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
   };
 }
 
-function desiredFiles(policy: ResolvedPolicy, harnesses: Harness[]): GeneratedFile[] {
+function desiredFiles(policy: ResolvedPolicy, harnesses: Harness[], acceptDegradedIsolation: Harness[] = []): GeneratedFile[] {
   const byPath = new Map<string, GeneratedFile>();
-  for (const generated of [orchestrationInstructions(policy), ...harnesses.flatMap((harness) => compileHarness(harness, policy))]) {
+  for (const generated of [orchestrationInstructions(policy), ...harnesses.flatMap((harness) => compileHarness(harness, policy, { acceptDegradedIsolation }))]) {
     const prior = byPath.get(generated.path);
     if (prior && prior.content !== generated.content) throw new Error(`Conflicting generated content for ${generated.path}`);
     byPath.set(generated.path, generated);
@@ -75,7 +76,7 @@ export async function renderProject(options: RenderOptions): Promise<RenderRepor
   const nextFiles: Record<string, string> = { ...(inventory?.files ?? {}) };
   const force = new Set(options.forcePaths ?? []);
 
-  for (const generated of desiredFiles(options.policy, options.harnesses)) {
+  for (const generated of desiredFiles(options.policy, options.harnesses, options.acceptDegradedIsolation)) {
     const absolute = join(options.targetDir, generated.path);
     const existing = await readExisting(absolute);
     const desiredHash = contentHash(generated.content);
@@ -118,7 +119,7 @@ export async function renderProject(options: RenderOptions): Promise<RenderRepor
 export async function checkProject(options: Omit<RenderOptions, 'dryRun' | 'forcePaths'>): Promise<CheckReport> {
   const inventory = await readInventory(options.targetDir);
   const report: CheckReport = { clean: [], issues: [] };
-  for (const generated of desiredFiles(options.policy, options.harnesses)) {
+  for (const generated of desiredFiles(options.policy, options.harnesses, options.acceptDegradedIsolation)) {
     const existing = await readExisting(join(options.targetDir, generated.path));
     if (existing === null) {
       report.issues.push({ path: generated.path, reason: 'missing' });

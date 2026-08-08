@@ -6,11 +6,20 @@ import { compileHarness } from '../src/adapters/index.js';
 import { resolvedPolicy } from './fixtures.js';
 
 function file(harness: 'codex' | 'opencode' | 'hermes', path: string): string {
-  const output = compileHarness(harness, resolvedPolicy());
+  const output = compileHarness(harness, resolvedPolicy(), { acceptDegradedIsolation: harness === 'hermes' ? ['hermes'] : [] });
   const generated = output.find((entry) => entry.path === path);
   assert.ok(generated, `missing ${harness} file ${path}`);
   return generated.content;
 }
+
+test('rejects degraded Hermes isolation unless that harness is explicitly accepted', () => {
+  assert.throws(() => compileHarness('hermes', resolvedPolicy()), /hard.*hermes.*degraded/i);
+
+  const output = compileHarness('hermes', resolvedPolicy(), { acceptDegradedIsolation: ['hermes'] });
+  const manifest = output.find((entry) => entry.path.endsWith('policy-manifest.json'));
+  assert.ok(manifest);
+  assert.equal(JSON.parse(manifest.content).effectiveWriteIsolation, 'degraded');
+});
 
 test('compiles explicit Codex custom agents with role-specific sandboxes', () => {
   const config = file('codex', '.codex/config.toml');
@@ -72,5 +81,5 @@ test('rejects a Hermes profile that cannot represent a separate reviewer model',
   resolved.roles.reviewer.model = 'different-reviewer';
   resolved.roles.reviewer.modelRef = 'frontier-vendor/different-reviewer';
 
-  assert.throws(() => compileHarness('hermes', resolved), /reviewer.*same frontier parent/i);
+  assert.throws(() => compileHarness('hermes', resolved, { acceptDegradedIsolation: ['hermes'] }), /reviewer.*same frontier parent/i);
 });

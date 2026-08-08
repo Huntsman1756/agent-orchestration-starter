@@ -3,7 +3,7 @@ import { stringify } from 'yaml';
 import type { GeneratedFile } from './index.js';
 import { contractInstructions, policyManifest } from './shared.js';
 import { providerFor } from '../core/providers.js';
-import type { ResolvedPolicy, ResolvedRole, RoleName } from '../core/types.js';
+import type { ResolvedPolicy, ResolvedRole, RoleName, WriteIsolation } from '../core/types.js';
 
 type AgentRole = RoleName | 'frontier-executor';
 
@@ -45,12 +45,12 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
   };
 }
 
-export function compileOpenCode(policy: ResolvedPolicy): GeneratedFile[] {
+export function compileOpenCode(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'hard'): GeneratedFile[] {
   return [
     agentFile('orchestrator', policy),
     agentFile('executor', policy),
     agentFile('frontier-executor', policy),
     agentFile('reviewer', policy),
-    policyManifest('opencode', policy, '.agent-orchestration/opencode/policy-manifest.json'),
+    policyManifest('opencode', policy, '.agent-orchestration/opencode/policy-manifest.json', effectiveWriteIsolation),
   ];
 }
