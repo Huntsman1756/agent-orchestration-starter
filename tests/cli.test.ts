@@ -81,3 +81,45 @@ test('doctor rejects an installed harness that cannot meet the requested isolati
   assert.match(errors.join('\n'), /hard.*hermes.*degraded/i);
   assert.equal(accepted, 0);
 });
+
+test('benchmark prints a deterministic provider-neutral routing report', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agent-orchestration-benchmark-'));
+  const observations = join(directory, 'observations.jsonl');
+  const routingPolicy = join(directory, 'routing-gate.yaml');
+  const record = (taskId: string, attemptedRoute: 'economy_only' | 'frontier_execution', totalCostUsd: number) => ({
+    schemaVersion: 1,
+    taskId,
+    taskClass: 'mechanical-change',
+    attemptedRoute,
+    firstPassAccepted: true,
+    finalAccepted: true,
+    totalCostUsd,
+    latencyMs: 100,
+    repairCount: 0,
+    escalated: false,
+    postAcceptanceDefects: 0,
+    frontierTokens: { input: attemptedRoute === 'frontier_execution' ? 100 : 0, output: 0 },
+    economyTokens: { input: attemptedRoute === 'economy_only' ? 100 : 0, output: 0 },
+  });
+  await writeFile(observations, `${JSON.stringify(record('economy-1', 'economy_only', 0.5))}\n${JSON.stringify(record('frontier-1', 'frontier_execution', 1))}\n`, 'utf8');
+  await writeFile(routingPolicy, `
+schemaVersion: 1
+baselineRoute: frontier_execution
+candidateRoutes: [economy_only]
+minSamplesPerRoute: 1
+minAcceptedTaskCostSavingsRate: 0.2
+maxFirstPassAcceptanceDropRate: 0
+maxEscalationRate: 0
+maxPostAcceptanceDefectRate: 0
+`, 'utf8');
+  const output: string[] = [];
+
+  const code = await runCli(['benchmark', '--observations', observations, '--routing-policy', routingPolicy], {
+    stdout: (line) => output.push(line),
+  });
+
+  assert.equal(code, 0);
+  const report = JSON.parse(output.join('\n'));
+  assert.equal(report.decisions[0].decision, 'promote');
+  assert.equal(report.decisions[0].candidateRoute, 'economy_only');
+});

@@ -24,7 +24,8 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
   if (role === 'orchestrator') {
     return [
       'Plan and coordinate; do not edit project files directly.',
-      'Delegate bounded implementation work to the executor using a self-contained work contract.',
+      'Choose an evidence-supported route: economy_only for mechanical work with strong deterministic gates; orchestrated for hard-to-understand but bounded work; frontier_execution for cross-cutting, ambiguous, security-sensitive, or delicate work.',
+      'Delegate implementation using a self-contained work contract. Do not assume orchestrated is the universal route.',
       'Every contract must include: id, objective, allowed files, inputs, constraints, validation commands, success criteria, budget, and result format.',
       'Never pass the full conversation. Accept work only after deterministic validation and reviewer evidence.',
     ].join('\n');

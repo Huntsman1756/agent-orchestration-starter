@@ -8,6 +8,8 @@ import { compileHarness } from '../adapters/index.js';
 import { loadPolicy, loadProfile } from '../core/load-config.js';
 import { checkProject, renderProject } from '../core/render.js';
 import { resolveRoles } from '../core/resolve.js';
+import { evaluateRouting } from '../routing/evaluate.js';
+import { loadBenchmarkObservations, loadRoutingGatePolicy } from '../routing/load.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -56,6 +58,19 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
   const stderr = io.stderr ?? console.error;
   try {
     const command = argv[0];
+    if (command === 'benchmark') {
+      const observationsPath = option(argv, '--observations');
+      const routingPolicyPath = option(argv, '--routing-policy');
+      if (!observationsPath || !routingPolicyPath) {
+        throw new Error('--observations and --routing-policy are required');
+      }
+      const report = evaluateRouting(
+        await loadBenchmarkObservations(observationsPath),
+        await loadRoutingGatePolicy(routingPolicyPath),
+      );
+      stdout(JSON.stringify(report, null, 2));
+      return 0;
+    }
     if (command === 'doctor') {
       const selectedHarnesses = harnesses(argv);
       const isolationAcceptance = acceptedDegradedIsolation(argv);
@@ -73,7 +88,7 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       return missing ? 1 : 0;
     }
     if (!['init', 'render', 'check'].includes(command ?? '')) {
-      stderr('Usage: agent-orchestration <init|render|check|doctor> [options]');
+      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark> [options]');
       return 2;
     }
     const targetDir = option(argv, '--target') ?? process.cwd();
