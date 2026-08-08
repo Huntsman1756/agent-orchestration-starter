@@ -37,7 +37,7 @@
 | Contracts | `src/runtime/contracts.ts`, `src/runtime/failures.ts`, `src/runtime/contract-schemas.ts`, `src/runtime/load.ts`, `contracts/runtime-*.schema.json` | Strict public V4 vocabulary and failures, Zod loaders, JSON Schema parity |
 | Policy/routing | `src/runtime/repository-registry.ts`, `repository-policy.ts`, `bindings.ts`, `routing.ts`, `path-policy.ts` | Resolve local registrations, freeze owner policy, resolve compatible bindings, derive effective route, reject unsafe paths |
 | Durable control | `src/runtime/journal.ts`, `run-state.ts`, `request-idempotency.ts`, `broker-daemon.ts`, `broker-ipc.ts` | Hash-chained state, locks, recovery, idempotent local control |
-| Sandbox | `src/runtime/process-sandbox.ts`, `docker-sandbox.ts`, `sandbox-egress-proxy.ts`, `infra/sandbox/Dockerfile` | OS-enforced execution, resource/network policy, hostile certification |
+| Sandbox | `src/runtime/process-sandbox.ts`, `docker-sandbox.ts`, `provider-egress-gateway.ts`, `infra/sandbox/Dockerfile` | OS-enforced execution, authenticated provider gateway, resource/network policy, hostile certification |
 | Isolation | `src/runtime/worktree.ts`, `executor-capsule.ts`, `review-capsule.ts` | Task worktree and broker-owned executor/reviewer filesystem views |
 | Harnesses | `src/runtime/opencode-runner.ts`, `codex-runner.ts`, `capabilities.ts`, `credential-adapter.ts` | Exact argv/env, structured outputs, binding probes and TTL |
 | Gates | `src/runtime/validation.ts`, `diff-policy.ts`, `review-envelope.ts`, `review-attestation.ts` | Deterministic validation, scope checks, fresh independent review |
@@ -78,6 +78,7 @@ export type RuntimeFailureCodeV4 =
   | 'INVALID_CONTRACT'
   | 'REPOSITORY_NOT_ALLOWED'
   | 'REPOSITORY_BUSY'
+  | 'BROKER_STATE_CORRUPT'
   | 'BASE_SHA_INVALID'
   | 'WORKTREE_CREATION_FAILED'
   | 'CAPABILITY_UNVERIFIED'
@@ -359,10 +360,10 @@ await journal.append(commandA);
 await journal.append(commandB);
 const recovered = await reopenJournal(directory);
 assert.deepEqual(recovered.records.map((record) => record.command), [commandA, commandB]);
-await assert.rejects(() => reopenJournal(tamperedDirectory), /JOURNAL_CORRUPT/);
+await assert.rejects(() => reopenJournal(tamperedDirectory), /BROKER_STATE_CORRUPT/);
 ```
 
-Cover a partial trailing record, wrong sequence, broken previous hash, duplicate command ID with different bytes, and an atomic cache snapshot that disagrees with journal replay.
+Cover a partial trailing record, wrong sequence, broken previous hash, duplicate command ID with different bytes, and an atomic cache snapshot that disagrees with journal replay. Invalid journal bytes, hash-chain failure, and an irreconcilable cache/replay mismatch all map to the closed-catalog code `BROKER_STATE_CORRUPT`; genuinely indeterminate external process state after restart remains `UNKNOWN_FAILURE`.
 
 - [ ] **Step 2: Run Task 3 tests and record RED**
 
@@ -422,7 +423,7 @@ git commit -m "feat(runtime): add durable broker daemon"
 
 - Create: `src/runtime/process-sandbox.ts`
 - Create: `src/runtime/docker-sandbox.ts`
-- Create: `src/runtime/sandbox-egress-proxy.ts`
+- Create: `src/runtime/provider-egress-gateway.ts`
 - Create: `src/runtime/sandbox-certification.ts`
 - Create: `infra/sandbox/Dockerfile`
 - Create: `tests/fixtures/sandbox/hostile-child.mjs`
@@ -448,6 +449,12 @@ export interface DockerSandboxConfigV4 {
   image_id: `sha256:${string}`;
   certification_ttl_seconds: number;
   provider_hosts: readonly string[];
+}
+
+export interface ProviderGatewayLeaseV4 {
+  readonly gateway_base_url: string;
+  readonly non_secret_api_key_value: 'broker-gateway';
+  revoke(): Promise<void>;
 }
 ```
 
@@ -500,13 +507,13 @@ const isolationArgs = [
 
 Never mount `/var/run/docker.sock`, host home, credential directories, broker state, or the active worktree. Spawn Docker with `shell: false`, an environment allowlist, bounded stdout/stderr, and a process-tree timeout.
 
-- [ ] **Step 5: Implement broker-owned provider egress proxy**
+- [ ] **Step 5: Implement the broker-owned authenticated ArliAI gateway**
 
-Run the proxy as a sibling container with no repository mount. The target container joins only a per-run `--internal` network; the proxy joins that network and a separate outbound bridge. The proxy accepts only HTTP `CONNECT` to exact lower-case `host:443` entries from `provider_hosts`, resolves after allowlist comparison, rejects IP literals/private ranges/redirect expansion, and records only host, decision, byte counts, and duration.
+Run one gateway as a sibling container with no repository or capsule mount. The executor joins only a per-run `--internal` network and uses `http://provider-gateway:8080/v1` as its ArliAI base URL; the gateway joins that network and a separate outbound bridge. The broker streams the real ArliAI key to gateway stdin, never argv, environment, config, image, or a mounted file. The gateway strips inbound authorization, accepts only profile-approved methods and API paths, creates the outbound HTTPS request to the exact lower-case ArliAI origin, injects the real authorization header there, verifies TLS, rejects IP literals/private ranges/redirects/alternate origins, and records only host, path class, decision, byte counts, and duration. The executor uses a fixed non-secret API-key-shaped value only when required by the pinned OpenCode provider adapter; it never receives a provider credential.
 
 - [ ] **Step 6: Add hostile fixtures that attempt real effects**
 
-`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, read injected `ARLIAI_API_KEY`/`OPENAI_API_KEY`, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the proxy and fail against a second non-allowlisted fixture plus a direct IP.
+`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, find `ARLIAI_API_KEY`/`OPENAI_API_KEY` in environment, argv, files, and descendant state, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the gateway and fail against a second non-allowlisted fixture plus a direct IP. Gateway tests prove the executor-side request contains only the fixed non-secret value, the upstream fixture receives the injected real test credential, and Docker inspection of the executor and gateway environments exposes neither credential.
 
 - [ ] **Step 7: Run hostile certification early**
 
@@ -527,7 +534,7 @@ Expected: all Task 4 tests PASS with a fresh certification bound to host, Docker
 - [ ] **Step 9: Commit Task 4**
 
 ```bash
-git add src/runtime/process-sandbox.ts src/runtime/docker-sandbox.ts src/runtime/sandbox-egress-proxy.ts src/runtime/sandbox-certification.ts infra/sandbox/Dockerfile tests/fixtures/sandbox tests/runtime-process-sandbox.test.ts tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts
+git add src/runtime/process-sandbox.ts src/runtime/docker-sandbox.ts src/runtime/provider-egress-gateway.ts src/runtime/sandbox-certification.ts infra/sandbox/Dockerfile tests/fixtures/sandbox tests/runtime-process-sandbox.test.ts tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts
 git commit -m "feat(runtime): certify docker process sandbox"
 ```
 
@@ -634,7 +641,6 @@ git commit -m "feat(runtime): isolate worktrees and executor capsules"
 
 **Files:**
 
-- Create: `src/runtime/credential-adapter.ts`
 - Create: `src/runtime/opencode-config.ts`
 - Create: `src/runtime/opencode-runner.ts`
 - Create: `src/runtime/capabilities.ts`
@@ -646,11 +652,6 @@ git commit -m "feat(runtime): isolate worktrees and executor capsules"
 **Interfaces:**
 
 ```ts
-export interface CredentialAdapterV4 {
-  lease(binding: ResolvedBindingV4): Promise<CredentialLeaseV4>;
-  revoke(leaseId: string): Promise<void>;
-}
-
 export interface OpenCodeRunnerV4 {
   execute(input: ExecutorAttemptInputV4): Promise<ExecutorAttemptResultV4>;
 }
@@ -662,7 +663,7 @@ export function assertFreshCapability(record: CapabilityRecordV4, expected: Capa
 
 - [ ] **Step 1: Write failing fake-harness argv/env/config tests**
 
-The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains `run --pure --auto --dir /capsule --model arliai/MiMo-V2.5 --agent executor --format json`; no shell fragment exists; and environment contains only the credential lease plus explicit OpenCode/runtime variables.
+The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains `run --pure --auto --dir /capsule --model arliai/MiMo-V2.5 --agent executor --format json`; no shell fragment exists; the provider base URL is the per-run gateway; and environment contains no provider key or provider-key reference, only explicit OpenCode/runtime variables.
 
 - [ ] **Step 2: Add hostile configuration-discovery tests**
 
@@ -687,11 +688,11 @@ Put conflicting model/provider values and executable custom tools in `repo/`, sy
 
 Run: `npm exec -- tsx --test tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts`
 
-Expected: FAIL because the credential adapter, runner, and probe registry do not exist.
+Expected: FAIL because the OpenCode configuration, runner, and probe registry do not exist.
 
 - [ ] **Step 4: Implement broker-owned config and structured result parser**
 
-Set `OPENCODE_CONFIG_DIR=/capsule/config`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_MODELS_FETCH=1`, and `OPENCODE_DISABLE_CLAUDE_CODE=1`. Define the ArliAI provider with its fixed base URL and an environment credential reference; never serialize the key. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
+Set `OPENCODE_CONFIG_DIR=/capsule/config`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_MODELS_FETCH=1`, and `OPENCODE_DISABLE_CLAUDE_CODE=1`. Define the ArliAI provider with the per-run gateway base URL and the fixed non-secret value `broker-gateway` only if the pinned provider adapter requires an API-key-shaped value. Never give OpenCode a real ArliAI key, an environment reference to one, or a reusable local bearer token. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
 
 - [ ] **Step 5: Implement sandboxed MiMo then GLM attempt execution**
 
@@ -714,7 +715,7 @@ Probe structured result, exact bounded edit, multi-step file-tool use, and repai
 
 - [ ] **Step 7: Add opt-in live ArliAI probe**
 
-Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the user credential adapter and a disposable public fixture only. Default CI asserts the test is not run and no network call occurs.
+Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the broker-owned gateway and a disposable public fixture only. The real credential is consumed only by the gateway process. Default CI asserts the test is not run and no network call occurs.
 
 - [ ] **Step 8: Run Task 6 GREEN gates**
 
@@ -727,7 +728,7 @@ Expected: fake harness tests PASS with no provider call; TypeScript exits 0.
 - [ ] **Step 9: Commit Task 6**
 
 ```bash
-git add src/runtime/credential-adapter.ts src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/arliai-opencode.example.yaml
+git add src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/arliai-opencode.example.yaml
 git commit -m "feat(runtime): run verified opencode executors"
 ```
 
@@ -820,11 +821,13 @@ git commit -m "feat(runtime): validate trees in untrusted sandbox"
 
 **Files:**
 
+- Create: `src/runtime/credential-adapter.ts`
 - Create: `src/runtime/codex-runner.ts`
 - Create: `src/runtime/frontier-executor.ts`
 - Create: `contracts/frontier-executor-result-v4.schema.json`
 - Create: `tests/fixtures/bin/fake-codex.mjs`
 - Create: `tests/runtime-codex-runner.test.ts`
+- Create: `tests/runtime-credential-adapter.test.ts`
 - Create: `tests/runtime-frontier.test.ts`
 - Modify: `tests/runtime-schema-parity.test.ts`
 
@@ -861,7 +864,7 @@ Provide a fake saved-auth sentinel to the trusted Codex parent and instruct a mo
 
 - [ ] **Step 3: Run Task 8 tests and record RED**
 
-Run: `npm exec -- tsx --test tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
+Run: `npm exec -- tsx --test tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
 
 Expected: FAIL because Codex/frontier services and result schema do not exist.
 
@@ -888,7 +891,7 @@ Use only the disposable public fixture, require `AO_LIVE_PROVIDER_PROBES=1`, rec
 
 - [ ] **Step 7: Run Task 8 GREEN gates**
 
-Run: `npm exec -- tsx --test tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
+Run: `npm exec -- tsx --test tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
 
 Run: `npm run typecheck`
 
@@ -897,7 +900,7 @@ Expected: all Task 8 tests PASS; TypeScript exits 0.
 - [ ] **Step 8: Commit Task 8**
 
 ```bash
-git add src/runtime/codex-runner.ts src/runtime/frontier-executor.ts contracts/frontier-executor-result-v4.schema.json tests/fixtures/bin/fake-codex.mjs tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts
+git add src/runtime/credential-adapter.ts src/runtime/codex-runner.ts src/runtime/frontier-executor.ts contracts/frontier-executor-result-v4.schema.json tests/fixtures/bin/fake-codex.mjs tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts
 git commit -m "feat(runtime): execute frontier tasks in capsule"
 ```
 
@@ -1126,7 +1129,8 @@ sandbox_mode = "read-only"
 
 [mcp_servers.agent_orchestration_v4]
 command = "node"
-args = [".agent-orchestration/runtime/dist/cli/main.js", "runtime", "mcp-stdio"]
+args = ["/tmp/agent-orchestration-fixture/.agent-orchestration/runtime/dist/cli/main.js", "runtime", "mcp-stdio"]
+cwd = "/tmp/agent-orchestration-fixture"
 required = true
 enabled_tools = ["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status"]
 startup_timeout_sec = 10
@@ -1134,7 +1138,7 @@ tool_timeout_sec = 30
 default_tools_approval_mode = "auto"
 ```
 
-The renderer installs the immutable runtime bundle at the project-local canonical path shown above and emits that path as one argv value. It creates `.codex/config.toml` only when absent or inventory-managed; unmanaged conflicts are reported and never overwritten.
+The TOML above is the deterministic POSIX fixture. The renderer canonicalizes its input project root, rejects a relative root or bundle path, and emits the platform-native absolute project root as `cwd` plus the absolute immutable bundle path as one argv value. Tests use a temporary absolute Windows path on Windows and the POSIX fixture elsewhere, then launch the server from an unrelated caller directory to prove resolution is independent of caller `cwd`. It creates `.codex/config.toml` only when absent or inventory-managed; unmanaged conflicts are reported and never overwritten.
 
 - [ ] **Step 7: Add CLI lifecycle commands**
 

@@ -477,7 +477,7 @@ Always prohibited to the worker:
 - project `.env` files, credential stores, production fixtures, and real data;
 - modifying broker state, attestations, inventory, or runtime policy.
 
-OpenCode runs inside an `EXECUTOR_NETWORKED` process sandbox whose filesystem view is the `ExecutorCapsule`. It cannot see the active repository, original worktree path, host credential stores, broker state, global/managed OpenCode directories, or arbitrary host files. Its outbound network is restricted to the resolved, pinned ArliAI API endpoint. The trusted OpenCode parent may receive the ArliAI credential through the platform credential adapter, but model-invoked tools and child processes receive no credential and cannot execute arbitrary processes. If that separation cannot be demonstrated on the host, the binding is unavailable.
+OpenCode runs inside an `EXECUTOR_NETWORKED` process sandbox whose filesystem view is the `ExecutorCapsule`. It cannot see the active repository, original worktree path, host credential stores, broker state, global/managed OpenCode directories, or arbitrary host files. It reaches only a per-run broker-owned ArliAI gateway on an internal sandbox network. The gateway receives the real ArliAI credential through the platform credential adapter, injects authentication when it creates the outbound TLS request, and never mounts repository or capsule content. OpenCode receives no ArliAI credential in configuration, environment, files, argv, or inherited process state; a fixed non-secret local gateway token may be used only if the pinned harness requires an API-key-shaped value. The gateway strips any inbound authorization, permits only the configured ArliAI origin plus approved methods and API paths, rejects redirects and alternate destinations, and records metadata without bodies. If this separation cannot be demonstrated on the host, the binding is unavailable.
 
 Repository-controlled lifecycle hooks, plugins, language servers, package installers, shells, and binaries never run in the executor sandbox. All code execution happens later through registered validation in the credential-free sandbox.
 
@@ -591,6 +591,7 @@ Every failure is typed:
 INVALID_CONTRACT
 REPOSITORY_NOT_ALLOWED
 REPOSITORY_BUSY
+BROKER_STATE_CORRUPT
 BASE_SHA_INVALID
 WORKTREE_CREATION_FAILED
 CAPABILITY_UNVERIFIED
@@ -632,7 +633,7 @@ Tool schemas use strict JSON Schema and reject additional properties. Tool resul
 
 The broker daemon owns an append-only journal plus transactional current-state store and communicates over an authenticated, user-local named pipe or Unix-domain socket with owner-only permissions. It outlives individual STDIO clients. After daemon restart it reconciles journal state, sandbox process identity, worktree identity, and locks before accepting commands. Unknown process state fails closed; it is never assumed successful. Reconnecting with the same `request_id` returns the existing run. Thus "resumable" means resumable observation and control of daemon-owned state, not resumption of a dead STDIO process or model session.
 
-The generated project `.codex/config.toml` marks the V4 MCP server `required = true`, sets an exact `enabled_tools` list to the five domain operations, uses no forwarded credential environment variables, and sets bounded startup/tool timeouts appropriate to short control calls. If the adapter cannot initialize or authenticate to the daemon, Codex startup fails instead of continuing without orchestration.
+The generated project `.codex/config.toml` marks the V4 MCP server `required = true`, sets an exact `enabled_tools` list to the five domain operations, uses no forwarded credential environment variables, fixes `cwd` to the canonical project root, uses an absolute canonical path to the installed runtime bundle, and sets bounded startup/tool timeouts appropriate to short control calls. Relative-path resolution and the caller's current directory cannot select the executable. If the adapter cannot initialize or authenticate to the daemon, Codex startup fails instead of continuing without orchestration.
 
 The adapter and daemon accept only configured local repositories. A caller cannot register a new repository, alter validation commands, change provider credentials, choose `run_id`, set effective routing/classification, or expand permissions through MCP.
 
@@ -680,6 +681,7 @@ src/runtime/
   executor-capsule.ts
   process-sandbox.ts
   process-policy.ts
+  provider-egress-gateway.ts
   opencode-runner.ts
   codex-runner.ts
   validation.ts
