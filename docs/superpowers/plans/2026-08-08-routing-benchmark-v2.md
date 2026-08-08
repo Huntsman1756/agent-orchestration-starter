@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript 5.9, Node.js 20+, Zod, YAML, `node:test`.
 
+**Status:** Completed on 2026-08-08. Every task below was implemented through observable red-green cycles and verified by the project validation suite.
+
 ## Global Constraints
 
 - Provider and model names remain confined to `profiles/*.yaml`.
