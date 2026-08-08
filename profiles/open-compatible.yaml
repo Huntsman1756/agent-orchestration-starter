@@ -6,7 +6,7 @@ assignments:
     model: frontier-model
     tier: frontier
     reasoningEffort: high
-    capabilities: [planning, delegation]
+    capabilities: [planning, delegation, coding]
   executor:
     provider: my-provider
     model: economy-coding-model

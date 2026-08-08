@@ -15,7 +15,6 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
   if (!executorPermissions.read || !executorPermissions.write) {
     throw new Error('executor requires read and write permissions');
   }
-
   for (const roleName of roleNames) {
     const requirement = policy.roles[roleName];
     const assignment = profile.assignments[roleName];
@@ -35,6 +34,13 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     };
   }
 
+  if (
+    policy.routing.strategies.includes('frontier_execution')
+    && !profile.assignments.orchestrator.capabilities.includes('coding')
+  ) {
+    throw new Error('frontier_execution requires coding capability from the frontier orchestrator assignment');
+  }
+
   if (roles.reviewer.modelRef === roles.executor.modelRef) {
     throw new Error('reviewer must be independent from the executor provider and model');
   }
@@ -48,5 +54,7 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     profileId: profile.id,
     roles,
     validation: { commands: [...policy.validation.commands] },
+    routing: { strategies: [...policy.routing.strategies] },
+    isolation: { ...policy.isolation },
   };
 }

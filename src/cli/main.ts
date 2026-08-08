@@ -4,9 +4,12 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import type { Harness } from '../adapters/index.js';
+import { compileHarness } from '../adapters/index.js';
 import { loadPolicy, loadProfile } from '../core/load-config.js';
 import { checkProject, renderProject } from '../core/render.js';
 import { resolveRoles } from '../core/resolve.js';
+import { evaluateRouting } from '../routing/evaluate.js';
+import { loadBenchmarkObservations, loadRoutingGatePolicy } from '../routing/load.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -28,6 +31,16 @@ function harnesses(argv: string[]): Harness[] {
   return parsed as Harness[];
 }
 
+function acceptedDegradedIsolation(argv: string[]): Harness[] {
+  const value = option(argv, '--accept-degraded-isolation');
+  if (!value) return [];
+  const parsed = value.split(',').map((item) => item.trim()).filter(Boolean);
+  for (const item of parsed) {
+    if (!['codex', 'opencode', 'hermes'].includes(item)) throw new Error(`Unsupported isolation acceptance: ${item}`);
+  }
+  return parsed as Harness[];
+}
+
 function localBinary(binary: string): boolean {
   const command = process.platform === 'win32' ? 'where.exe' : 'which';
   return spawnSync(command, [binary], { stdio: 'ignore' }).status === 0;
@@ -45,9 +58,29 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
   const stderr = io.stderr ?? console.error;
   try {
     const command = argv[0];
+    if (command === 'benchmark') {
+      const observationsPath = option(argv, '--observations');
+      const routingPolicyPath = option(argv, '--routing-policy');
+      if (!observationsPath || !routingPolicyPath) {
+        throw new Error('--observations and --routing-policy are required');
+      }
+      const report = evaluateRouting(
+        await loadBenchmarkObservations(observationsPath),
+        await loadRoutingGatePolicy(routingPolicyPath),
+      );
+      stdout(JSON.stringify(report, null, 2));
+      return 0;
+    }
     if (command === 'doctor') {
+      const selectedHarnesses = harnesses(argv);
+      const isolationAcceptance = acceptedDegradedIsolation(argv);
+      const hasPolicyConfig = option(argv, '--policy') !== undefined || option(argv, '--profile') !== undefined;
+      if (hasPolicyConfig) {
+        const policy = await resolvedFromArgs(argv);
+        for (const harness of selectedHarnesses) compileHarness(harness, policy, { acceptDegradedIsolation: isolationAcceptance });
+      }
       let missing = false;
-      for (const harness of harnesses(argv)) {
+      for (const harness of selectedHarnesses) {
         const available = (io.checkBinary ?? localBinary)(harness);
         stdout(`${harness}: ${available ? 'available' : 'missing'}`);
         missing ||= !available;
@@ -55,21 +88,22 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       return missing ? 1 : 0;
     }
     if (!['init', 'render', 'check'].includes(command ?? '')) {
-      stderr('Usage: agent-orchestration <init|render|check|doctor> [options]');
+      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark> [options]');
       return 2;
     }
     const targetDir = option(argv, '--target') ?? process.cwd();
     const selectedHarnesses = harnesses(argv);
+    const isolationAcceptance = acceptedDegradedIsolation(argv);
     const policy = await resolvedFromArgs(argv);
     if (command === 'check') {
-      const report = await checkProject({ targetDir, policy, harnesses: selectedHarnesses });
+      const report = await checkProject({ targetDir, policy, harnesses: selectedHarnesses, acceptDegradedIsolation: isolationAcceptance });
       for (const issue of report.issues) stdout(`${issue.reason}: ${issue.path}`);
       if (report.issues.length === 0) stdout(`clean: ${report.clean.length} managed files`);
       return report.issues.length === 0 ? 0 : 1;
     }
     const dryRun = argv.includes('--dry-run');
     const forcePaths = argv.flatMap((value, index) => value === '--force' && argv[index + 1] ? [argv[index + 1]] : []);
-    const report = await renderProject({ targetDir, policy, harnesses: selectedHarnesses, dryRun, forcePaths });
+    const report = await renderProject({ targetDir, policy, harnesses: selectedHarnesses, dryRun, forcePaths, acceptDegradedIsolation: isolationAcceptance });
     for (const path of report.created) stdout(`${dryRun ? 'would create' : 'created'}: ${path}`);
     for (const path of report.updated) stdout(`${dryRun ? 'would update' : 'updated'}: ${path}`);
     for (const conflict of report.conflicts) stdout(`${conflict.reason}: ${conflict.path}`);

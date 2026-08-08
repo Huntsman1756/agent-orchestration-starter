@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/review-envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workContract", "completeDiff", "deterministicResults", "requestedFiles"],
+  "properties": {
+    "workContract": { "type": "object" },
+    "completeDiff": { "type": "string" },
+    "deterministicResults": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exitCode", "output"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "exitCode": { "type": "integer" },
+          "output": { "type": "string" }
+        }
+      }
+    },
+    "requestedFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "content"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "content": { "type": "string" }
+        }
+      }
+    }
+  }
+}

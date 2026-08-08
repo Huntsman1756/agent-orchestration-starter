@@ -3,9 +3,9 @@ import { stringify } from 'yaml';
 import type { GeneratedFile } from './index.js';
 import { policyManifest } from './shared.js';
 import { providerFor } from '../core/providers.js';
-import type { ResolvedPolicy } from '../core/types.js';
+import type { ResolvedPolicy, WriteIsolation } from '../core/types.js';
 
-export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
+export function compileHermes(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'degraded'): GeneratedFile[] {
   const orchestrator = policy.roles.orchestrator;
   const executor = policy.roles.executor;
   const reviewer = policy.roles.reviewer;
@@ -32,9 +32,13 @@ export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
   const soul = [
     '# Agent orchestration role',
     '',
-    'You are the frontier orchestrator and independent reviewer. Plan and review; delegate implementation instead of editing directly.',
+    'You are the frontier orchestrator and independent reviewer. In orchestrated mode, plan and review while delegating implementation instead of editing directly.',
+    'Choose among economy_only, orchestrated, and frontier_execution using benchmark evidence for the task class; orchestrated is not universal.',
+    'For frontier_execution, use a separate worktree session as the writable frontier executor, end that execution context, then start a fresh context for review.',
     'Pass each child only a self-contained work contract with id, objective, allowed files, inputs, constraints, validation commands, success criteria, budget, and result format.',
     'The child returns only status, files changed, validation result, and risks. Never pass the full conversation.',
+    'For review, start a fresh review context using only the original work contract, complete diff, deterministic validation results, and files requested on demand.',
+    'Exclude planner rationale, executor reasoning, prior verdicts, and the orchestration transcript from review evidence.',
     `Require deterministic validation before acceptance: ${policy.validation.commands.join('; ')}. Failed deterministic gates are authoritative and cannot be overruled by model judgment.`,
     'Automatic provider fallback is disabled. Authentication, policy, invalid output, grounding, and validation failures fail closed.',
     '',
@@ -51,6 +55,6 @@ export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
     { path: 'hermes-profile/config.yaml', content: config },
     { path: 'hermes-profile/SOUL.md', content: soul },
     { path: 'hermes-profile/PERMISSION_BOUNDARY.md', content: permissionBoundary },
-    policyManifest('hermes', policy, 'hermes-profile/policy-manifest.json'),
+    policyManifest('hermes', policy, 'hermes-profile/policy-manifest.json', effectiveWriteIsolation),
   ];
 }

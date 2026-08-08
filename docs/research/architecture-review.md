@@ -11,6 +11,9 @@ Reviewed 2026-08-08. These notes separate durable design choices from provider-s
 - Permit automatic fallback only for availability failures. Authentication, policy, invalid output, grounding, and validation failures fail closed.
 - Record the attempted and effective role assignment, but not prompts, secrets, or sensitive content.
 - Keep stable role policy separate from replaceable provider/model profiles and harness-specific provider aliases.
+- Treat economy-only, orchestrated, and frontier execution as competing routes by task class rather than assuming one universal path.
+- Compare total cost per finally accepted task, including planning, review, repair, rereads, and escalation.
+- Preserve first-pass failure telemetry when a frontier model rescues an economy attempt.
 
 ## Local projects
 
@@ -28,3 +31,5 @@ Reviewed 2026-08-08. These notes separate durable design choices from provider-s
 ## Snapshot profile
 
 `profiles/chatgpt-subscription.yaml` is deliberately dated. At review time it maps orchestration/review to `gpt-5.6-sol` and bounded coding to `gpt-5.6-luna`, with the Hermes provider alias `openai-codex`. These are operational defaults, not architectural dependencies. Verify tool support and subscription availability locally with `doctor` and each harness's own authentication flow.
+
+The Sol/Luna cost-quality hypothesis remains unproven until enough stratified observations pass `routing-gate.yaml`. The offline evaluator intentionally consumes measured total USD cost instead of embedding provider pricing, keeping historical evidence reproducible when price tables or model names change.

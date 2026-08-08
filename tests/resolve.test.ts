@@ -12,6 +12,8 @@ const policy: Policy = {
     reviewer: { tier: 'frontier', capabilities: ['review'], permissions: { read: true, write: false } },
   },
   validation: { commands: ['npm test'] },
+  routing: { strategies: ['economy_only', 'orchestrated', 'frontier_execution'] },
+  isolation: { required: 'hard' },
 };
 
 function profile(): ModelProfile {
@@ -19,7 +21,7 @@ function profile(): ModelProfile {
     version: 1,
     id: 'portable',
     assignments: {
-      orchestrator: { provider: 'frontier-vendor', model: 'frontier-plan', tier: 'frontier', reasoningEffort: 'high', capabilities: ['planning', 'delegation'] },
+      orchestrator: { provider: 'frontier-vendor', model: 'frontier-plan', tier: 'frontier', reasoningEffort: 'high', capabilities: ['planning', 'delegation', 'coding'] },
       executor: { provider: 'economy-vendor', model: 'economy-code', tier: 'economy', reasoningEffort: 'low', capabilities: ['coding'] },
       reviewer: { provider: 'frontier-vendor', model: 'frontier-review', tier: 'frontier', reasoningEffort: 'high', capabilities: ['review'] },
     },
@@ -62,4 +64,11 @@ test('rejects role permissions that violate the orchestrate-execute-review bound
   const powerlessExecutor = structuredClone(policy);
   powerlessExecutor.roles.executor.permissions.write = false;
   assert.throws(() => resolveRoles(powerlessExecutor, profile()), /executor.*write/i);
+});
+
+test('requires coding capability from the frontier assignment when frontier execution is enabled', () => {
+  const input = profile();
+  input.assignments.orchestrator.capabilities = ['planning', 'delegation'];
+
+  assert.throws(() => resolveRoles(policy, input), /frontier_execution.*coding/i);
 });

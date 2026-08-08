@@ -11,6 +11,7 @@ export interface RenderOptions {
   harnesses: Harness[];
   dryRun?: boolean;
   forcePaths?: string[];
+  acceptDegradedIsolation?: Harness[];
 }
 
 export interface RenderReport {
@@ -31,9 +32,12 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
     content: [
       '# Agent orchestration contract',
       '',
-      'The primary agent is the frontier orchestrator. For non-trivial implementation, delegate bounded work to the configured `executor` and use the configured `reviewer` after deterministic gates pass.',
+      `Allowed routing strategies: ${policy.routing.strategies.join(', ')}. Use economy_only for mechanical work with strong deterministic gates, orchestrated for hard-to-understand but bounded work, and frontier_execution for cross-cutting, ambiguous, security-sensitive, or delicate work.`,
+      'Route recommendations require benchmark evidence for the task class; orchestrated is not a universal default.',
       'Pass work contracts, never the full conversation. A work contract includes: id, objective, allowed files, inputs, constraints, validation commands, success criteria, budget, and result format.',
-      'The executor returns only status, files changed, validation result, and risks. The reviewer stays read-only and cannot overrule failed deterministic validation.',
+      'The executor returns only status, files changed, validation result, and risks. Start review in a fresh context containing only the original contract, complete diff, deterministic results, and requested files.',
+      'The reviewer stays read-only and cannot overrule failed deterministic validation. Exclude planner rationale, executor reasoning, and prior verdicts from review evidence.',
+      `Required write isolation: ${policy.isolation.required}. A degraded harness requires exact explicit acceptance and records its effective guarantee in the manifest.`,
       'Fallback is allowed only for typed provider/model availability failures. Authentication, policy, invalid output, grounding, and validation failures fail closed.',
       '',
       'Project validation commands:',
@@ -43,9 +47,9 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
   };
 }
 
-function desiredFiles(policy: ResolvedPolicy, harnesses: Harness[]): GeneratedFile[] {
+function desiredFiles(policy: ResolvedPolicy, harnesses: Harness[], acceptDegradedIsolation: Harness[] = []): GeneratedFile[] {
   const byPath = new Map<string, GeneratedFile>();
-  for (const generated of [orchestrationInstructions(policy), ...harnesses.flatMap((harness) => compileHarness(harness, policy))]) {
+  for (const generated of [orchestrationInstructions(policy), ...harnesses.flatMap((harness) => compileHarness(harness, policy, { acceptDegradedIsolation }))]) {
     const prior = byPath.get(generated.path);
     if (prior && prior.content !== generated.content) throw new Error(`Conflicting generated content for ${generated.path}`);
     byPath.set(generated.path, generated);
@@ -75,7 +79,7 @@ export async function renderProject(options: RenderOptions): Promise<RenderRepor
   const nextFiles: Record<string, string> = { ...(inventory?.files ?? {}) };
   const force = new Set(options.forcePaths ?? []);
 
-  for (const generated of desiredFiles(options.policy, options.harnesses)) {
+  for (const generated of desiredFiles(options.policy, options.harnesses, options.acceptDegradedIsolation)) {
     const absolute = join(options.targetDir, generated.path);
     const existing = await readExisting(absolute);
     const desiredHash = contentHash(generated.content);
@@ -118,7 +122,7 @@ export async function renderProject(options: RenderOptions): Promise<RenderRepor
 export async function checkProject(options: Omit<RenderOptions, 'dryRun' | 'forcePaths'>): Promise<CheckReport> {
   const inventory = await readInventory(options.targetDir);
   const report: CheckReport = { clean: [], issues: [] };
-  for (const generated of desiredFiles(options.policy, options.harnesses)) {
+  for (const generated of desiredFiles(options.policy, options.harnesses, options.acceptDegradedIsolation)) {
     const existing = await readExisting(join(options.targetDir, generated.path));
     if (existing === null) {
       report.issues.push({ path: generated.path, reason: 'missing' });

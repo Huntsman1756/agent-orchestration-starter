@@ -7,7 +7,7 @@ assignments:
     model: gpt-5.6-sol
     tier: frontier
     reasoningEffort: high
-    capabilities: [planning, delegation]
+    capabilities: [planning, delegation, coding]
   executor:
     provider: openai
     harnessProviders: { hermes: openai-codex }

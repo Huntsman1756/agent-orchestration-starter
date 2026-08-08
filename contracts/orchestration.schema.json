@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/agent-orchestration/orchestration.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "roles", "validation"],
+  "required": ["version", "roles", "validation", "routing", "isolation"],
   "properties": {
     "version": { "type": "integer", "minimum": 1 },
     "roles": {
@@ -23,6 +23,25 @@
       "properties": {
         "commands": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
       }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategies"],
+      "properties": {
+        "strategies": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["economy_only", "orchestrated", "frontier_execution"] }
+        }
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required"],
+      "properties": { "required": { "enum": ["hard", "degraded"] } }
     }
   },
   "$defs": {

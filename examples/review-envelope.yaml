@@ -1,0 +1,13 @@
+workContract:
+  id: AO-001
+  objective: Implement the bounded change described by the contract.
+  allowedFiles: [src/example.ts]
+completeDiff: |-
+  diff --git a/src/example.ts b/src/example.ts
+  --- a/src/example.ts
+  +++ b/src/example.ts
+deterministicResults:
+  - command: npm test
+    exitCode: 0
+    output: 24 tests passed
+requestedFiles: []

@@ -17,3 +17,7 @@ validation:
     - npm test
     - npm run typecheck
     - npm run build
+routing:
+  strategies: [economy_only, orchestrated, frontier_execution]
+isolation:
+  required: hard

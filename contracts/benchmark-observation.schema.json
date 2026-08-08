@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/benchmark-observation.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taskId", "taskClass", "attemptedRoute", "firstPassAccepted", "finalAccepted", "totalCostUsd", "latencyMs", "repairCount", "escalated", "postAcceptanceDefects", "frontierTokens", "economyTokens"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "taskId": { "type": "string", "minLength": 1 },
+    "taskClass": { "type": "string", "minLength": 1 },
+    "attemptedRoute": { "enum": ["economy_only", "orchestrated", "frontier_execution"] },
+    "firstPassAccepted": { "type": "boolean" },
+    "finalAccepted": { "type": "boolean" },
+    "totalCostUsd": { "type": "number", "minimum": 0 },
+    "latencyMs": { "type": "integer", "minimum": 0 },
+    "repairCount": { "type": "integer", "minimum": 0 },
+    "escalated": { "type": "boolean" },
+    "postAcceptanceDefects": { "type": "integer", "minimum": 0 },
+    "frontierTokens": { "$ref": "#/$defs/tokens" },
+    "economyTokens": { "$ref": "#/$defs/tokens" }
+  },
+  "$defs": {
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output"],
+      "properties": {
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

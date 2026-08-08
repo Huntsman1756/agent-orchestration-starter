@@ -23,6 +23,12 @@ const policySchema = z.object({
   validation: z.object({
     commands: z.array(z.string().min(1)).min(1),
   }).strict(),
+  routing: z.object({
+    strategies: z.array(z.enum(['economy_only', 'orchestrated', 'frontier_execution'])).min(1),
+  }).strict().default({ strategies: ['orchestrated'] }),
+  isolation: z.object({
+    required: z.enum(['hard', 'degraded']),
+  }).strict().default({ required: 'hard' }),
 }).strict();
 
 const assignmentSchema = z.object({

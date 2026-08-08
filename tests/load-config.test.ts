@@ -32,6 +32,10 @@ roles:
     permissions: { read: true, write: false }
 validation:
   commands: [npm test]
+routing:
+  strategies: [economy_only, orchestrated, frontier_execution]
+isolation:
+  required: hard
 `);
 
   await assert.rejects(loadPolicy(path), /model|unrecognized/i);
@@ -77,6 +81,10 @@ roles:
     permissions: { read: true, write: false }
 validation:
   commands: [npm test]
+routing:
+  strategies: [economy_only, orchestrated, frontier_execution]
+isolation:
+  required: hard
 `);
   const profilePath = await yamlFile('profile.yaml', `
 version: 1
@@ -91,5 +99,7 @@ assignments:
   const profile = await loadProfile(profilePath);
 
   assert.equal(policy.roles.executor.tier, 'economy');
+  assert.deepEqual(policy.routing.strategies, ['economy_only', 'orchestrated', 'frontier_execution']);
+  assert.equal(policy.isolation.required, 'hard');
   assert.equal(profile.assignments.executor.model, 'economy-b');
 });

@@ -55,3 +55,72 @@ test('doctor reports local harness availability without network access', async (
   assert.match(output.join('\n'), /opencode: missing/);
   assert.match(output.join('\n'), /hermes: available/);
 });
+
+test('requires exact CLI acceptance before rendering a degraded-isolation harness', async () => {
+  const files = await configFiles();
+  const errors: string[] = [];
+  const args = ['--target', files.directory, '--policy', files.policy, '--profile', files.profile, '--harnesses', 'hermes', '--dry-run'];
+
+  const rejected = await runCli(['render', ...args], { stderr: (line) => errors.push(line) });
+  const accepted = await runCli(['render', ...args, '--accept-degraded-isolation', 'hermes']);
+
+  assert.equal(rejected, 2);
+  assert.match(errors.join('\n'), /hard.*hermes.*degraded/i);
+  assert.equal(accepted, 0);
+});
+
+test('doctor rejects an installed harness that cannot meet the requested isolation', async () => {
+  const files = await configFiles();
+  const errors: string[] = [];
+  const args = ['doctor', '--harnesses', 'hermes', '--policy', files.policy, '--profile', files.profile];
+
+  const rejected = await runCli(args, { checkBinary: () => true, stderr: (line) => errors.push(line) });
+  const accepted = await runCli([...args, '--accept-degraded-isolation', 'hermes'], { checkBinary: () => true });
+
+  assert.equal(rejected, 2);
+  assert.match(errors.join('\n'), /hard.*hermes.*degraded/i);
+  assert.equal(accepted, 0);
+});
+
+test('benchmark prints a deterministic provider-neutral routing report', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'agent-orchestration-benchmark-'));
+  const observations = join(directory, 'observations.jsonl');
+  const routingPolicy = join(directory, 'routing-gate.yaml');
+  const record = (taskId: string, attemptedRoute: 'economy_only' | 'frontier_execution', totalCostUsd: number) => ({
+    schemaVersion: 1,
+    taskId,
+    taskClass: 'mechanical-change',
+    attemptedRoute,
+    firstPassAccepted: true,
+    finalAccepted: true,
+    totalCostUsd,
+    latencyMs: 100,
+    repairCount: 0,
+    escalated: false,
+    postAcceptanceDefects: 0,
+    frontierTokens: { input: attemptedRoute === 'frontier_execution' ? 100 : 0, output: 0 },
+    economyTokens: { input: attemptedRoute === 'economy_only' ? 100 : 0, output: 0 },
+  });
+  await writeFile(observations, `${JSON.stringify(record('task-1', 'economy_only', 0.5))}\n${JSON.stringify(record('task-1', 'frontier_execution', 1))}\n`, 'utf8');
+  await writeFile(routingPolicy, `
+schemaVersion: 1
+baselineRoute: frontier_execution
+candidateRoutes: [economy_only]
+minPairedSamplesPerRoute: 1
+minAcceptedTaskCostSavingsRate: 0.2
+maxFirstPassAcceptanceDropRate: 0
+maxFinalAcceptanceDropRate: 0
+maxEscalationRate: 0
+maxPostAcceptanceDefectRate: 0
+`, 'utf8');
+  const output: string[] = [];
+
+  const code = await runCli(['benchmark', '--observations', observations, '--routing-policy', routingPolicy], {
+    stdout: (line) => output.push(line),
+  });
+
+  assert.equal(code, 0);
+  const report = JSON.parse(output.join('\n'));
+  assert.equal(report.decisions[0].decision, 'promote');
+  assert.equal(report.decisions[0].candidateRoute, 'economy_only');
+});

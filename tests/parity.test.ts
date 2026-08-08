@@ -6,7 +6,7 @@ import { resolvedPolicy } from './fixtures.js';
 
 test('all adapters publish the same resolved role and validation contract', () => {
   const manifests = (['codex', 'opencode', 'hermes'] as const).map((harness) => {
-    const generated = compileHarness(harness, resolvedPolicy());
+    const generated = compileHarness(harness, resolvedPolicy(), { acceptDegradedIsolation: harness === 'hermes' ? ['hermes'] : [] });
     const manifest = generated.find((file) => file.path.endsWith('policy-manifest.json'));
     assert.ok(manifest, `${harness} did not emit a policy manifest`);
     return JSON.parse(manifest.content);
