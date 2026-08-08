@@ -13,10 +13,13 @@ function file(harness: 'codex' | 'opencode' | 'hermes', path: string): string {
 }
 
 test('compiles explicit Codex custom agents with role-specific sandboxes', () => {
+  const config = file('codex', '.codex/config.toml');
   const orchestrator = file('codex', '.codex/agents/orchestrator.toml');
   const executor = file('codex', '.codex/agents/executor.toml');
   const reviewer = file('codex', '.codex/agents/reviewer.toml');
 
+  assert.match(config, /^model = "frontier-main"/m);
+  assert.match(config, /^model_reasoning_effort = "high"/m);
   assert.match(orchestrator, /model = "frontier-main"/);
   assert.match(orchestrator, /sandbox_mode = "read-only"/);
   assert.match(executor, /model = "economy-code"/);

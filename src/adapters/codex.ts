@@ -32,10 +32,19 @@ function agentFile(role: RoleName, policy: ResolvedPolicy): GeneratedFile {
 }
 
 export function compileCodex(policy: ResolvedPolicy): GeneratedFile[] {
+  const orchestrator = policy.roles.orchestrator;
   return [
     {
       path: '.codex/config.toml',
-      content: '[agents]\nenabled = true\nmax_concurrent_threads_per_session = 4\n',
+      content: [
+        `model = ${tomlString(orchestrator.model)}`,
+        `model_reasoning_effort = ${tomlString(orchestrator.reasoningEffort)}`,
+        '',
+        '[agents]',
+        'enabled = true',
+        'max_concurrent_threads_per_session = 4',
+        '',
+      ].join('\n'),
     },
     agentFile('orchestrator', policy),
     agentFile('executor', policy),
