@@ -26,7 +26,7 @@ export interface RoutingGatePolicy {
   schemaVersion: 1;
   baselineRoute: RoutingStrategy;
   candidateRoutes: RoutingStrategy[];
-  minSamplesPerRoute: number;
+  minPairedSamplesPerRoute: number;
   minAcceptedTaskCostSavingsRate: number;
   maxFirstPassAcceptanceDropRate: number;
   maxEscalationRate: number;
@@ -51,6 +51,7 @@ export interface RouteDecision {
   taskClass: string;
   candidateRoute: RoutingStrategy;
   baselineRoute: RoutingStrategy;
+  pairedSamples: number;
   decision: RoutingDecision;
   reasons: string[];
   candidate: RouteMetrics;

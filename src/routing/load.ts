@@ -34,7 +34,7 @@ const gateSchema = z.object({
   schemaVersion: z.literal(1),
   baselineRoute: routeSchema,
   candidateRoutes: z.array(routeSchema).min(1),
-  minSamplesPerRoute: z.number().int().positive(),
+  minPairedSamplesPerRoute: z.number().int().positive(),
   minAcceptedTaskCostSavingsRate: z.number().min(0).max(1),
   maxFirstPassAcceptanceDropRate: z.number().min(0).max(1),
   maxEscalationRate: z.number().min(0).max(1),

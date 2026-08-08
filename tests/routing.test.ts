@@ -12,7 +12,7 @@ const gate: RoutingGatePolicy = {
   schemaVersion: 1,
   baselineRoute: 'frontier_execution',
   candidateRoutes: ['economy_only', 'orchestrated'],
-  minSamplesPerRoute: 30,
+  minPairedSamplesPerRoute: 30,
   minAcceptedTaskCostSavingsRate: 0.2,
   maxFirstPassAcceptanceDropRate: 0,
   maxEscalationRate: 0.2,
@@ -22,7 +22,7 @@ const gate: RoutingGatePolicy = {
 function observation(index: number, route: RoutingStrategy, overrides: Partial<BenchmarkObservation> = {}): BenchmarkObservation {
   return {
     schemaVersion: 1,
-    taskId: `${route}-${index}`,
+    taskId: `task-${index}`,
     taskClass: 'mechanical-change',
     attemptedRoute: route,
     firstPassAccepted: true,
@@ -42,7 +42,11 @@ function observations(count: number, route: RoutingStrategy, overrides: Partial<
   return Array.from({ length: count }, (_, index) => observation(index, route, overrides));
 }
 
-test('reports insufficient evidence until both candidate and baseline meet the sample minimum', () => {
+function unpairedObservations(count: number, route: RoutingStrategy): BenchmarkObservation[] {
+  return Array.from({ length: count }, (_, index) => observation(index, route, { taskId: `${route}-${index}` }));
+}
+
+test('reports insufficient evidence until a candidate and baseline have enough comparable pairs', () => {
   const report = evaluateRouting([
     ...observations(29, 'economy_only'),
     ...observations(30, 'frontier_execution'),
@@ -51,7 +55,21 @@ test('reports insufficient evidence until both candidate and baseline meet the s
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
   assert.equal(decision.decision, 'insufficient_evidence');
-  assert.deepEqual(decision.reasons, ['candidate_sample_below_minimum']);
+  assert.equal(decision.pairedSamples, 29);
+  assert.deepEqual(decision.reasons, ['paired_sample_below_minimum']);
+});
+
+test('does not count unpaired candidate and baseline observations toward the gate minimum', () => {
+  const report = evaluateRouting([
+    ...unpairedObservations(30, 'economy_only'),
+    ...unpairedObservations(30, 'frontier_execution'),
+  ], gate);
+
+  const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
+  assert.ok(decision);
+  assert.equal(decision.decision, 'insufficient_evidence');
+  assert.equal(decision.pairedSamples, 0);
+  assert.deepEqual(decision.reasons, ['paired_sample_below_minimum']);
 });
 
 test('rejects a candidate that does not reduce accepted-task cost enough', () => {
@@ -113,7 +131,7 @@ test('loads strict provider-neutral JSONL observations and YAML gate policy', as
 schemaVersion: 1
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only, orchestrated]
-minSamplesPerRoute: 30
+minPairedSamplesPerRoute: 30
 minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
 maxEscalationRate: 0.2
@@ -124,5 +142,5 @@ maxPostAcceptanceDefectRate: 0.02
   const loadedGate = await loadRoutingGatePolicy(gatePath);
 
   assert.equal(loadedObservations.length, 2);
-  assert.equal(loadedGate.minSamplesPerRoute, 30);
+  assert.equal(loadedGate.minPairedSamplesPerRoute, 30);
 });

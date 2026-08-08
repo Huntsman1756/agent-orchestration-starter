@@ -101,12 +101,12 @@ test('benchmark prints a deterministic provider-neutral routing report', async (
     frontierTokens: { input: attemptedRoute === 'frontier_execution' ? 100 : 0, output: 0 },
     economyTokens: { input: attemptedRoute === 'economy_only' ? 100 : 0, output: 0 },
   });
-  await writeFile(observations, `${JSON.stringify(record('economy-1', 'economy_only', 0.5))}\n${JSON.stringify(record('frontier-1', 'frontier_execution', 1))}\n`, 'utf8');
+  await writeFile(observations, `${JSON.stringify(record('task-1', 'economy_only', 0.5))}\n${JSON.stringify(record('task-1', 'frontier_execution', 1))}\n`, 'utf8');
   await writeFile(routingPolicy, `
 schemaVersion: 1
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only]
-minSamplesPerRoute: 1
+minPairedSamplesPerRoute: 1
 minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
 maxEscalationRate: 0

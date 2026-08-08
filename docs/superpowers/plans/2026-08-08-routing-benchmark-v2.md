@@ -98,7 +98,7 @@
 - Consumes: JSONL `BenchmarkObservation` records and YAML `RoutingGatePolicy` thresholds.
 - Returns: per-class/per-candidate metrics and `promote | reject | insufficient_evidence` decisions with reason codes.
 
-- [ ] Add a test proving fewer than 30 observations per compared route yields `insufficient_evidence`; run RED, implement parsing/aggregation, run GREEN.
+- [ ] Add a test proving fewer than 30 comparable task pairs per class and candidate yields `insufficient_evidence`; run RED, implement paired parsing/aggregation, run GREEN.
 - [ ] Add a test proving a cheaper candidate with equal quality and sufficient samples is promoted; run RED, implement cost-per-finally-accepted-task comparison, run GREEN.
 - [ ] Add a test proving escalation remains a first-pass failure and excessive escalation rejects promotion; run RED, implement quality gates, run GREEN.
 - [ ] Add schemas and canonical `routing-gate.yaml`; validate them through public loaders.

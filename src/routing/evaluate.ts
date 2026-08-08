@@ -45,11 +45,17 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
   const decisions: RouteDecision[] = [];
   for (const taskClass of taskClasses) {
     for (const candidateRoute of policy.candidateRoutes) {
-      const candidate = metrics(routeObservations(observations, taskClass, candidateRoute));
-      const baseline = metrics(routeObservations(observations, taskClass, policy.baselineRoute));
+      const candidateObservations = routeObservations(observations, taskClass, candidateRoute);
+      const baselineObservations = routeObservations(observations, taskClass, policy.baselineRoute);
+      const baselineTaskIds = new Set(baselineObservations.map((item) => item.taskId));
+      const pairedTaskIds = new Set(
+        candidateObservations.filter((item) => baselineTaskIds.has(item.taskId)).map((item) => item.taskId),
+      );
+      const candidate = metrics(candidateObservations.filter((item) => pairedTaskIds.has(item.taskId)));
+      const baseline = metrics(baselineObservations.filter((item) => pairedTaskIds.has(item.taskId)));
+      const pairedSamples = pairedTaskIds.size;
       const reasons: string[] = [];
-      if (candidate.samples < policy.minSamplesPerRoute) reasons.push('candidate_sample_below_minimum');
-      if (baseline.samples < policy.minSamplesPerRoute) reasons.push('baseline_sample_below_minimum');
+      if (pairedSamples < policy.minPairedSamplesPerRoute) reasons.push('paired_sample_below_minimum');
       const insufficientEvidence = reasons.length > 0;
       if (!insufficientEvidence) {
         const savingsRate = candidate.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === 0
@@ -75,6 +81,7 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
         taskClass,
         candidateRoute,
         baselineRoute: policy.baselineRoute,
+        pairedSamples,
         decision: insufficientEvidence ? 'insufficient_evidence' : reasons.length > 0 ? 'reject' : 'promote',
         reasons,
         candidate,
