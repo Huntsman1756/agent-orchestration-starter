@@ -12,7 +12,10 @@ function metrics(observations: BenchmarkObservation[]): RouteMetrics {
   const firstPassAccepted = observations.filter((item) => item.firstPassAccepted).length;
   const finalAccepted = observations.filter((item) => item.finalAccepted).length;
   const totalCostUsd = observations.reduce((sum, item) => sum + item.totalCostUsd, 0);
-  const postAcceptanceDefects = observations.reduce((sum, item) => sum + item.postAcceptanceDefects, 0);
+  const defectIncidents = observations.filter((item) => item.postAcceptanceDefective).length;
+  const defects = observations.flatMap((item) => item.postAcceptanceDefects);
+  const postAcceptanceDefectsBySeverity = { low: 0, medium: 0, high: 0, critical: 0 };
+  for (const defect of defects) postAcceptanceDefectsBySeverity[defect.severity] += 1;
   const tokenTotal = (kind: 'frontierTokens' | 'economyTokens') => observations.reduce(
     (sum, item) => ({ input: sum.input + item[kind].input, output: sum.output + item[kind].output }),
     { input: 0, output: 0 },
@@ -23,7 +26,9 @@ function metrics(observations: BenchmarkObservation[]): RouteMetrics {
     finalAcceptanceRate: samples === 0 ? 0 : finalAccepted / samples,
     acceptedTaskCostUsd: finalAccepted === 0 ? null : totalCostUsd / finalAccepted,
     escalationRate: samples === 0 ? 0 : observations.filter((item) => item.escalated).length / samples,
-    postAcceptanceDefectRate: finalAccepted === 0 ? 0 : postAcceptanceDefects / finalAccepted,
+    postAcceptanceDefectIncidenceRate: finalAccepted === 0 ? 0 : defectIncidents / finalAccepted,
+    postAcceptanceDefectCount: defects.length,
+    postAcceptanceDefectsBySeverity,
     totalCostUsd,
     totalLatencyMs: observations.reduce((sum, item) => sum + item.latencyMs, 0),
     totalRepairs: observations.reduce((sum, item) => sum + item.repairCount, 0),
@@ -40,6 +45,10 @@ function routeObservations(
   return observations.filter((item) => item.taskClass === taskClass && item.attemptedRoute === route);
 }
 
+function comparableCaseKey(observation: BenchmarkObservation): string {
+  return `${observation.taskId}\u0000${observation.caseFingerprint}`;
+}
+
 export function evaluateRouting(observations: BenchmarkObservation[], policy: RoutingGatePolicy): RoutingReport {
   const taskClasses = [...new Set(observations.map((item) => item.taskClass))].sort();
   const decisions: RouteDecision[] = [];
@@ -47,13 +56,13 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
     for (const candidateRoute of policy.candidateRoutes) {
       const candidateObservations = routeObservations(observations, taskClass, candidateRoute);
       const baselineObservations = routeObservations(observations, taskClass, policy.baselineRoute);
-      const baselineTaskIds = new Set(baselineObservations.map((item) => item.taskId));
-      const pairedTaskIds = new Set(
-        candidateObservations.filter((item) => baselineTaskIds.has(item.taskId)).map((item) => item.taskId),
+      const baselineCaseKeys = new Set(baselineObservations.map(comparableCaseKey));
+      const pairedCaseKeys = new Set(
+        candidateObservations.filter((item) => baselineCaseKeys.has(comparableCaseKey(item))).map(comparableCaseKey),
       );
-      const candidate = metrics(candidateObservations.filter((item) => pairedTaskIds.has(item.taskId)));
-      const baseline = metrics(baselineObservations.filter((item) => pairedTaskIds.has(item.taskId)));
-      const pairedSamples = pairedTaskIds.size;
+      const candidate = metrics(candidateObservations.filter((item) => pairedCaseKeys.has(comparableCaseKey(item))));
+      const baseline = metrics(baselineObservations.filter((item) => pairedCaseKeys.has(comparableCaseKey(item))));
+      const pairedSamples = pairedCaseKeys.size;
       const reasons: string[] = [];
       if (pairedSamples < policy.minPairedSamplesPerRoute) reasons.push('paired_sample_below_minimum');
       const insufficientEvidence = reasons.length > 0;
@@ -79,8 +88,8 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
         if (candidate.escalationRate > policy.maxEscalationRate) {
           reasons.push('escalation_rate_above_maximum');
         }
-        if (candidate.postAcceptanceDefectRate > policy.maxPostAcceptanceDefectRate) {
-          reasons.push('post_acceptance_defect_rate_above_maximum');
+        if (candidate.postAcceptanceDefectIncidenceRate > policy.maxPostAcceptanceDefectIncidenceRate) {
+          reasons.push('post_acceptance_defect_incidence_above_maximum');
         }
       }
       decisions.push({
@@ -95,5 +104,5 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
       });
     }
   }
-  return { schemaVersion: 1, decisions };
+  return { schemaVersion: 2, decisions };
 }

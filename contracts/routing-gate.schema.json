@@ -3,9 +3,9 @@
   "$id": "https://example.invalid/agent-orchestration/routing-gate.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxFinalAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectRate"],
+  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxFinalAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectIncidenceRate"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "baselineRoute": { "$ref": "#/$defs/route" },
     "candidateRoutes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/route" } },
     "minPairedSamplesPerRoute": { "type": "integer", "minimum": 1 },
@@ -13,7 +13,7 @@
     "maxFirstPassAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxFinalAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxEscalationRate": { "type": "number", "minimum": 0, "maximum": 1 },
-    "maxPostAcceptanceDefectRate": { "type": "number", "minimum": 0 }
+    "maxPostAcceptanceDefectIncidenceRate": { "type": "number", "minimum": 0, "maximum": 1 }
   },
   "$defs": { "route": { "enum": ["economy_only", "orchestrated", "frontier_execution"] } }
 }

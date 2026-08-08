@@ -14,6 +14,8 @@ Reviewed 2026-08-08. These notes separate durable design choices from provider-s
 - Treat economy-only, orchestrated, and frontier execution as competing routes by task class rather than assuming one universal path.
 - Compare total cost per finally accepted task, including planning, review, repair, rereads, and escalation.
 - Preserve first-pass failure telemetry when a frontier model rescues an economy attempt.
+- Pair benchmark runs only when a reproducible fingerprint confirms the same contract, base revision, fixtures/inputs, and relevant policy.
+- Gate post-acceptance defect incidence separately from descriptive defect count and severity.
 
 ## Local projects
 

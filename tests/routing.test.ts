@@ -9,7 +9,7 @@ import { loadBenchmarkObservations, loadRoutingGatePolicy } from '../src/routing
 import type { BenchmarkObservation, RoutingGatePolicy, RoutingStrategy } from '../src/routing/types.js';
 
 const gate: RoutingGatePolicy = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   baselineRoute: 'frontier_execution',
   candidateRoutes: ['economy_only', 'orchestrated'],
   minPairedSamplesPerRoute: 30,
@@ -17,13 +17,14 @@ const gate: RoutingGatePolicy = {
   maxFirstPassAcceptanceDropRate: 0,
   maxFinalAcceptanceDropRate: 0,
   maxEscalationRate: 0.2,
-  maxPostAcceptanceDefectRate: 0.02,
+  maxPostAcceptanceDefectIncidenceRate: 0.02,
 };
 
 function observation(index: number, route: RoutingStrategy, overrides: Partial<BenchmarkObservation> = {}): BenchmarkObservation {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     taskId: `task-${index}`,
+    caseFingerprint: 'a'.repeat(64),
     taskClass: 'mechanical-change',
     attemptedRoute: route,
     firstPassAccepted: true,
@@ -32,7 +33,8 @@ function observation(index: number, route: RoutingStrategy, overrides: Partial<B
     latencyMs: route === 'frontier_execution' ? 2000 : 1000,
     repairCount: 0,
     escalated: false,
-    postAcceptanceDefects: 0,
+    postAcceptanceDefective: false,
+    postAcceptanceDefects: [],
     frontierTokens: { input: route === 'frontier_execution' ? 1000 : 0, output: route === 'frontier_execution' ? 200 : 0 },
     economyTokens: { input: route === 'frontier_execution' ? 0 : 1000, output: route === 'frontier_execution' ? 0 : 200 },
     ...overrides,
@@ -71,6 +73,18 @@ test('does not count unpaired candidate and baseline observations toward the gat
   assert.equal(decision.decision, 'insufficient_evidence');
   assert.equal(decision.pairedSamples, 0);
   assert.deepEqual(decision.reasons, ['paired_sample_below_minimum']);
+});
+
+test('does not pair equal task IDs produced from different case conditions', () => {
+  const report = evaluateRouting([
+    ...observations(30, 'economy_only', { caseFingerprint: 'a'.repeat(64) }),
+    ...observations(30, 'frontier_execution', { caseFingerprint: 'b'.repeat(64) }),
+  ], gate);
+
+  const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
+  assert.ok(decision);
+  assert.equal(decision.pairedSamples, 0);
+  assert.equal(decision.decision, 'insufficient_evidence');
 });
 
 test('rejects a candidate that does not reduce accepted-task cost enough', () => {
@@ -145,6 +159,30 @@ test('rejects equal first-pass performance when the candidate leaves fewer tasks
   assert.deepEqual(decision.reasons, ['final_acceptance_drop_above_maximum']);
 });
 
+test('gates post-acceptance defect incidence while retaining severity counts', () => {
+  const candidate = observations(30, 'economy_only');
+  candidate[0] = {
+    ...candidate[0],
+    postAcceptanceDefective: true,
+    postAcceptanceDefects: [
+      { severity: 'high', description: 'contract regression' },
+      { severity: 'low', description: 'diagnostic wording' },
+    ],
+  };
+  const report = evaluateRouting([
+    ...candidate,
+    ...observations(30, 'frontier_execution'),
+  ], gate);
+
+  const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
+  assert.ok(decision);
+  assert.equal(decision.candidate.postAcceptanceDefectIncidenceRate, 1 / 30);
+  assert.equal(decision.candidate.postAcceptanceDefectCount, 2);
+  assert.deepEqual(decision.candidate.postAcceptanceDefectsBySeverity, { low: 1, medium: 0, high: 1, critical: 0 });
+  assert.equal(decision.decision, 'reject');
+  assert.ok(decision.reasons.includes('post_acceptance_defect_incidence_above_maximum'));
+});
+
 test('loads strict provider-neutral JSONL observations and YAML gate policy', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'routing-load-'));
   const observationsPath = join(directory, 'observations.jsonl');
@@ -153,7 +191,7 @@ test('loads strict provider-neutral JSONL observations and YAML gate policy', as
   const frontier = observation(1, 'frontier_execution', { taskId: 'shared-task' });
   await writeFile(observationsPath, `${JSON.stringify(economy)}\n${JSON.stringify(frontier)}\n`, 'utf8');
   await writeFile(gatePath, `
-schemaVersion: 1
+schemaVersion: 2
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only, orchestrated]
 minPairedSamplesPerRoute: 30
@@ -161,7 +199,7 @@ minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
 maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0.2
-maxPostAcceptanceDefectRate: 0.02
+maxPostAcceptanceDefectIncidenceRate: 0.02
 `, 'utf8');
 
   const loadedObservations = await loadBenchmarkObservations(observationsPath);
@@ -169,4 +207,16 @@ maxPostAcceptanceDefectRate: 0.02
 
   assert.equal(loadedObservations.length, 2);
   assert.equal(loadedGate.minPairedSamplesPerRoute, 30);
+});
+
+test('rejects inconsistent post-acceptance incidence and defect details', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'routing-defect-integrity-'));
+  const observationsPath = join(directory, 'observations.jsonl');
+  const inconsistent = observation(1, 'economy_only', {
+    postAcceptanceDefective: false,
+    postAcceptanceDefects: [{ severity: 'high', description: 'hidden incidence' }],
+  });
+  await writeFile(observationsPath, `${JSON.stringify(inconsistent)}\n`, 'utf8');
+
+  await assert.rejects(loadBenchmarkObservations(observationsPath), /postAcceptanceDefective.*details/i);
 });

@@ -6,6 +6,12 @@
   "bin": {
     "agent-orchestration": "dist/cli/main.js"
   },
+  "exports": {
+    "./fingerprint": {
+      "types": "./dist/routing/fingerprint.d.ts",
+      "import": "./dist/routing/fingerprint.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test tests/*.test.ts",
