@@ -29,6 +29,7 @@ test('compiles explicit Codex custom agents with role-specific sandboxes', () =>
 
   assert.match(config, /^model = "frontier-main"/m);
   assert.match(config, /^model_reasoning_effort = "high"/m);
+  assert.match(config, /^sandbox_mode = "read-only"/m);
   assert.match(orchestrator, /model = "frontier-main"/);
   assert.match(orchestrator, /sandbox_mode = "read-only"/);
   assert.match(executor, /model = "economy-code"/);
@@ -49,11 +50,18 @@ test('compiles a writable frontier executor for direct frontier execution', () =
 test('compiles OpenCode agents with explicit models and permissions', () => {
   const orchestrator = file('opencode', '.opencode/agents/orchestrator.md');
   const executor = file('opencode', '.opencode/agents/executor.md');
+  const reviewer = file('opencode', '.opencode/agents/reviewer.md');
 
   assert.match(orchestrator, /model: frontier-vendor\/frontier-main/);
   assert.match(orchestrator, /edit: deny/);
+  assert.match(orchestrator, /bash:\n\s+["']\*["']: deny/);
   assert.match(executor, /model: economy-vendor\/economy-code/);
   assert.match(executor, /edit: allow/);
+  assert.match(executor, /bash:\n\s+["']\*["']: ask/);
+  assert.match(reviewer, /edit: deny/);
+  assert.match(reviewer, /bash:\n\s+["']\*["']: deny/);
+  assert.doesNotMatch(reviewer, /git diff\*: allow/);
+  assert.doesNotMatch(reviewer, /npm test\*: allow/);
 });
 
 test('compiles a Hermes distribution with frontier parent and economy delegation', () => {

@@ -20,12 +20,12 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
     reviewer: 'Independent read-only reviewer for correctness and validation evidence',
     'frontier-executor': 'Frontier implementation worker for cross-cutting or high-risk work contracts',
   };
-  const bash: Record<string, 'allow' | 'ask' | 'deny'> = { '*': 'ask' };
-  if (!assignment.permissions.write) {
-    bash['git diff*'] = 'allow';
-    bash['git status*'] = 'allow';
+  const bash: Record<string, 'allow' | 'ask' | 'deny'> = {
+    '*': assignment.permissions.write ? 'ask' : 'deny',
+  };
+  if (assignment.permissions.write) {
+    for (const command of policy.validation.commands) bash[`${command}*`] = 'allow';
   }
-  for (const command of policy.validation.commands) bash[`${command}*`] = 'allow';
   const frontmatter = stringify({
     description: descriptions[role],
     mode: role === 'orchestrator' ? 'primary' : 'subagent',

@@ -47,6 +47,7 @@ export function compileCodex(policy: ResolvedPolicy, effectiveWriteIsolation: Wr
       content: [
         `model = ${tomlString(orchestrator.model)}`,
         `model_reasoning_effort = ${tomlString(orchestrator.reasoningEffort)}`,
+        'sandbox_mode = "read-only"',
         '',
         '[agents]',
         'enabled = true',
