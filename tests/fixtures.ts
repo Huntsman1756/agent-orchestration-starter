@@ -17,7 +17,7 @@ export function resolvedPolicy() {
     version: 3,
     id: 'test-profile',
     assignments: {
-      orchestrator: { provider: 'frontier-vendor', harnessProviders: { hermes: 'hermes-frontier' }, model: 'frontier-main', tier: 'frontier', reasoningEffort: 'high', capabilities: ['planning', 'delegation'] },
+      orchestrator: { provider: 'frontier-vendor', harnessProviders: { hermes: 'hermes-frontier' }, model: 'frontier-main', tier: 'frontier', reasoningEffort: 'high', capabilities: ['planning', 'delegation', 'coding'] },
       executor: { provider: 'economy-vendor', harnessProviders: { hermes: 'hermes-economy' }, model: 'economy-code', tier: 'economy', reasoningEffort: 'low', capabilities: ['coding'] },
       reviewer: { provider: 'frontier-vendor', harnessProviders: { hermes: 'hermes-frontier' }, model: 'frontier-main', tier: 'frontier', reasoningEffort: 'high', capabilities: ['review'] },
     },

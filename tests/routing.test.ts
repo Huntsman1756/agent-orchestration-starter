@@ -106,7 +106,9 @@ test('loads strict provider-neutral JSONL observations and YAML gate policy', as
   const directory = await mkdtemp(join(tmpdir(), 'routing-load-'));
   const observationsPath = join(directory, 'observations.jsonl');
   const gatePath = join(directory, 'gate.yaml');
-  await writeFile(observationsPath, `${JSON.stringify(observation(1, 'economy_only'))}\n`, 'utf8');
+  const economy = observation(1, 'economy_only', { taskId: 'shared-task' });
+  const frontier = observation(1, 'frontier_execution', { taskId: 'shared-task' });
+  await writeFile(observationsPath, `${JSON.stringify(economy)}\n${JSON.stringify(frontier)}\n`, 'utf8');
   await writeFile(gatePath, `
 schemaVersion: 1
 baselineRoute: frontier_execution
@@ -121,6 +123,6 @@ maxPostAcceptanceDefectRate: 0.02
   const loadedObservations = await loadBenchmarkObservations(observationsPath);
   const loadedGate = await loadRoutingGatePolicy(gatePath);
 
-  assert.equal(loadedObservations.length, 1);
+  assert.equal(loadedObservations.length, 2);
   assert.equal(loadedGate.minSamplesPerRoute, 30);
 });

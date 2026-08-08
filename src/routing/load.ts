@@ -56,14 +56,17 @@ function asError(kind: string, error: unknown): Error {
 export async function loadBenchmarkObservations(path: string): Promise<BenchmarkObservation[]> {
   const lines = (await readFile(path, 'utf8')).split(/\r?\n/);
   const observations: BenchmarkObservation[] = [];
-  const taskIds = new Set<string>();
+  const observationKeys = new Set<string>();
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].trim();
     if (!line) continue;
     try {
       const observation = observationSchema.parse(JSON.parse(line)) as BenchmarkObservation;
-      if (taskIds.has(observation.taskId)) throw new Error(`duplicate taskId: ${observation.taskId}`);
-      taskIds.add(observation.taskId);
+      const observationKey = `${observation.taskId}\u0000${observation.attemptedRoute}`;
+      if (observationKeys.has(observationKey)) {
+        throw new Error(`duplicate task/route observation: ${observation.taskId}/${observation.attemptedRoute}`);
+      }
+      observationKeys.add(observationKey);
       observations.push(observation);
     } catch (error) {
       throw asError(`Observation line ${index + 1}`, error);
