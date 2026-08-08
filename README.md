@@ -17,7 +17,7 @@ El orquestador y el revisor son de solo lectura. Los ejecutores economy/frontier
 - `orchestrated`: planificación *frontier*, implementación económica, validación y revisión *frontier* con contexto limpio.
 - `frontier_execution`: ejecutor *frontier* para trabajo transversal, debugging ambiguo, arquitectura, seguridad o migraciones delicadas.
 
-La ruta mixta no es universal. `routing-gate.yaml` exige al menos 30 pares comparables por `taskClass × ruta candidata × frontier_execution` y calcula las métricas únicamente sobre esa intersección de `taskId`. Así, seis pares de una clase nunca se convierten en `n=30` sumando otras clases o tareas no comparables. Una ruta tampoco puede reducir la aceptación final frente al baseline (`maxFinalAcceptanceDropRate: 0`), aunque iguale la aceptación inicial y sea más barata.
+La ruta mixta no es universal. `routing-gate.yaml` exige al menos 30 pares comparables por `taskClass × ruta candidata × frontier_execution` y calcula las métricas únicamente sobre la intersección exacta de `taskId + caseFingerprint`. Así, seis pares de una clase nunca se convierten en `n=30` sumando otras clases o tareas no comparables. Una ruta tampoco puede reducir la aceptación final frente al baseline (`maxFinalAcceptanceDropRate: 0`), aunque iguale la aceptación inicial y sea más barata.
 
 ## Inicio rápido
 
@@ -68,7 +68,7 @@ Cada línea JSONL v2 representa el coste total de una tarea intentada por una ru
 
 El pairing exige la misma combinación `taskId + caseFingerprint`. Importa `computeCaseFingerprint` desde `agent-orchestration-starter/fingerprint` y pásale `{ workContract, baseSha, fixtures, policy }`; `baseSha` debe ser un SHA Git completo de 40 o 64 caracteres hexadecimales. El SHA-256 canónico cambia si cambia el contrato, la revisión base, cualquier fixture/input o la política relevante. Compartir `taskId` ya no basta para declarar dos runs comparables. `examples/case-fingerprint-input.json` produce el fingerprint utilizado por las observaciones de ejemplo.
 
-Los defectos posteriores separan incidencia de detalle: `postAcceptanceDefective` indica si la tarea aceptada tuvo alguna incidencia, mientras `postAcceptanceDefects[]` conserva cada defecto con severidad `low`, `medium`, `high` o `critical`. El gate usa `maxPostAcceptanceDefectIncidenceRate`; el informe ofrece además cantidad total y recuentos por severidad.
+Los defectos posteriores separan incidencia de detalle: `postAcceptanceDefective` indica si la tarea aceptada tuvo alguna incidencia, mientras `postAcceptanceDefects[]` conserva cada defecto con severidad `low`, `medium`, `high` o `critical`. El gate limita tanto la incidencia agregada (`maxPostAcceptanceDefectIncidenceRate`) como los recuentos absolutos de severidad alta y crítica; el informe conserva además la cantidad total y el desglose por severidad.
 
 ```powershell
 node dist/cli/main.js benchmark `

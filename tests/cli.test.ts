@@ -114,6 +114,8 @@ maxFirstPassAcceptanceDropRate: 0
 maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0
 maxPostAcceptanceDefectIncidenceRate: 0
+maxHighSeverityPostAcceptanceDefects: 0
+maxCriticalSeverityPostAcceptanceDefects: 0
 `, 'utf8');
   const output: string[] = [];
 
