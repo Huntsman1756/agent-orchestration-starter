@@ -37,7 +37,9 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
     ].join('\n');
   }
   return [
-    'Review the complete diff as an independent checker and remain read-only.',
+    'Start in a fresh review context as an independent checker and remain read-only.',
+    'Use only the original work contract, complete diff, deterministic validation results, and files requested on demand.',
+    'Exclude planner rationale, executor reasoning, prior verdicts, and the orchestration transcript from review evidence.',
     `Treat deterministic validation as authoritative: ${commands.join('; ')}.`,
     'Reject scope drift, missing tests, unsafe changes, or failed gates. Return findings with file evidence.',
   ].join('\n');

@@ -76,6 +76,19 @@ test('uses harness-specific provider aliases without changing the canonical mode
   assert.equal(hermes.model.provider, 'hermes-frontier');
 });
 
+test('requires reviewer execution in a clean context with an evidence-only envelope', () => {
+  const reviewer = file('codex', '.codex/agents/reviewer.toml');
+  const hermes = file('hermes', 'hermes-profile/SOUL.md');
+
+  for (const instructions of [reviewer, hermes]) {
+    assert.match(instructions, /fresh review context/i);
+    assert.match(instructions, /original work contract/i);
+    assert.match(instructions, /complete diff/i);
+    assert.match(instructions, /deterministic.*results/i);
+    assert.match(instructions, /exclude.*planner rationale.*executor reasoning/i);
+  }
+});
+
 test('rejects a Hermes profile that cannot represent a separate reviewer model', () => {
   const resolved = resolvedPolicy();
   resolved.roles.reviewer.model = 'different-reviewer';

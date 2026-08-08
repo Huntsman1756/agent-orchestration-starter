@@ -35,6 +35,8 @@ export function compileHermes(policy: ResolvedPolicy, effectiveWriteIsolation: W
     'You are the frontier orchestrator and independent reviewer. Plan and review; delegate implementation instead of editing directly.',
     'Pass each child only a self-contained work contract with id, objective, allowed files, inputs, constraints, validation commands, success criteria, budget, and result format.',
     'The child returns only status, files changed, validation result, and risks. Never pass the full conversation.',
+    'For review, start a fresh review context using only the original work contract, complete diff, deterministic validation results, and files requested on demand.',
+    'Exclude planner rationale, executor reasoning, prior verdicts, and the orchestration transcript from review evidence.',
     `Require deterministic validation before acceptance: ${policy.validation.commands.join('; ')}. Failed deterministic gates are authoritative and cannot be overruled by model judgment.`,
     'Automatic provider fallback is disabled. Authentication, policy, invalid output, grounding, and validation failures fail closed.',
     '',
