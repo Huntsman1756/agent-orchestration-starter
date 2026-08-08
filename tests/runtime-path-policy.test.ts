@@ -33,26 +33,33 @@ async function launchAfterInspection(
 
 function virtualWindowsMetadata(options: {
   canonicalParents?: Readonly<Record<string, string>>;
+  deviceIds?: Readonly<Record<string, number>>;
+  existingFiles?: readonly string[];
   mountIds?: Readonly<Record<string, string>>;
   reparsePaths?: readonly string[];
 } = {}): PathMetadataProviderV4 {
   const root = 'C:\\repo';
   const source = 'C:\\repo\\src';
   const directories = new Set([root, source, ...Object.values(options.canonicalParents ?? {})]);
+  const existingPaths = new Set([...directories, ...(options.existingFiles ?? [])]);
   const reparsePaths = new Set(options.reparsePaths ?? []);
-  const entry = (isDirectory: boolean) => ({ isDirectory: () => isDirectory, isSymbolicLink: () => false, dev: 7 });
+  const entry = (path: string, isDirectory: boolean) => ({
+    isDirectory: () => isDirectory,
+    isSymbolicLink: () => false,
+    dev: options.deviceIds?.[path] ?? 7,
+  });
   const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
   return {
     realpath: async (path) => {
-      if (path === root || path === source || directories.has(path)) return options.canonicalParents?.[path] ?? path;
+      if (existingPaths.has(path)) return options.canonicalParents?.[path] ?? path;
       throw missing();
     },
     lstat: async (path) => {
-      if (directories.has(path)) return entry(true);
+      if (existingPaths.has(path)) return entry(path, directories.has(path));
       throw missing();
     },
     stat: async (path) => {
-      if (directories.has(path)) return entry(true);
+      if (existingPaths.has(path)) return entry(path, directories.has(path));
       throw missing();
     },
     mountIdentity: async (path) => options.mountIds?.[path] ?? 'volume-guid-a',
@@ -127,6 +134,46 @@ test('rejects a same-device mount identity change before the executor launches',
     /mount identity changed/,
   );
   assert.equal(launched, false);
+});
+
+test('rejects an existing final target with a different mount identity before the executor launches', async () => {
+  let launched = false;
+  await assert.rejects(
+    () => launchAfterInspection('C:\\repo', [{ path: 'src/mounted.ts', operations: ['MODIFY'] }], () => { launched = true; }, {
+      pathApi: win32Path,
+      metadata: virtualWindowsMetadata({
+        existingFiles: ['C:\\repo\\src\\mounted.ts'],
+        mountIds: { 'C:\\repo': 'volume-guid-a', 'C:\\repo\\src\\mounted.ts': 'volume-guid-b' },
+      }),
+    }),
+    /mount identity changed/,
+  );
+  assert.equal(launched, false);
+});
+
+test('rejects a non-final parent with a different device before the executor launches', async () => {
+  let launched = false;
+  await assert.rejects(
+    () => launchAfterInspection('C:\\repo', [{ path: 'src/nested/new.ts', operations: ['CREATE'] }], () => { launched = true; }, {
+      pathApi: win32Path,
+      metadata: virtualWindowsMetadata({
+        canonicalParents: { 'C:\\repo\\src\\nested': 'C:\\repo\\src\\nested' },
+        deviceIds: { 'C:\\repo\\src': 99 },
+      }),
+    }),
+    /device differs/,
+  );
+  assert.equal(launched, false);
+});
+
+test('permits a create for a nonexistent final leaf after its parent chain is proven', async () => {
+  let launched = false;
+  await launchAfterInspection('C:\\repo', [{ path: 'src/new.ts', operations: ['CREATE'] }], () => { launched = true; }, {
+    pathApi: win32Path,
+    metadata: virtualWindowsMetadata(),
+  });
+
+  assert.equal(launched, true);
 });
 
 test('rejects generic Windows reparse metadata before the executor launches', async () => {

@@ -170,10 +170,12 @@ async function inspectExistingComponent(
   metadata: PathMetadataProviderV4,
   value: string,
   expectedMountIdentity: string,
+  expectedDevice: number,
   changePath: string,
 ): Promise<void> {
   const entry = await metadata.lstat(value);
   if (entry.isSymbolicLink()) outOfScope(`reparse path component: ${changePath}`);
+  if (entry.dev !== expectedDevice) outOfScope(`component device differs from repository root: ${changePath}`);
   const reparse = await metadata.isReparsePoint(value);
   if (reparse === null) outOfScope(`reparse metadata unavailable: ${changePath}`);
   if (reparse) outOfScope(`reparse metadata set: ${changePath}`);
@@ -190,7 +192,7 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
   if (!rootStats.isDirectory()) outOfScope('repository root is not a directory');
   const rootMountIdentity = await metadata.mountIdentity(canonicalRoot);
   if (rootMountIdentity === null) outOfScope('mount identity unavailable for repository root');
-  await inspectExistingComponent(metadata, canonicalRoot, rootMountIdentity, '<repository-root>');
+  await inspectExistingComponent(metadata, canonicalRoot, rootMountIdentity, rootStats.dev, '<repository-root>');
 
   const seen = new Set<string>();
   const inspected: InspectedChangeV4[] = [];
@@ -211,17 +213,13 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
     for (const segment of change.path.split('/').slice(0, -1)) {
       current = pathApi.resolve(current, segment);
       if (!(await exists(metadata, current))) break;
-      await inspectExistingComponent(metadata, current, rootMountIdentity, change.path);
+      await inspectExistingComponent(metadata, current, rootMountIdentity, rootStats.dev, change.path);
       const resolved = await metadata.realpath(current);
       if (resolved !== current) outOfScope(`canonical path component changed: ${change.path}`);
     }
     const existedAtFreeze = await exists(metadata, candidate);
     if (existedAtFreeze) {
-      const entry = await metadata.lstat(candidate);
-      if (entry.isSymbolicLink()) outOfScope(`reparse target: ${change.path}`);
-      const reparse = await metadata.isReparsePoint(candidate);
-      if (reparse === null) outOfScope(`reparse metadata unavailable: ${change.path}`);
-      if (reparse) outOfScope(`reparse metadata set: ${change.path}`);
+      await inspectExistingComponent(metadata, candidate, rootMountIdentity, rootStats.dev, change.path);
     }
     inspected.push(Object.freeze({
       path: change.path,
