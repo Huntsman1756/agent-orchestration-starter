@@ -41,6 +41,8 @@ export interface RoutingGatePolicy {
   maxFinalAcceptanceDropRate: number;
   maxEscalationRate: number;
   maxPostAcceptanceDefectIncidenceRate: number;
+  maxHighSeverityPostAcceptanceDefects: number;
+  maxCriticalSeverityPostAcceptanceDefects: number;
 }
 
 export interface RouteMetrics {

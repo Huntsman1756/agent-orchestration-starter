@@ -18,6 +18,8 @@ const gate: RoutingGatePolicy = {
   maxFinalAcceptanceDropRate: 0,
   maxEscalationRate: 0.2,
   maxPostAcceptanceDefectIncidenceRate: 0.02,
+  maxHighSeverityPostAcceptanceDefects: 0,
+  maxCriticalSeverityPostAcceptanceDefects: 0,
 };
 
 function observation(index: number, route: RoutingStrategy, overrides: Partial<BenchmarkObservation> = {}): BenchmarkObservation {
@@ -183,6 +185,31 @@ test('gates post-acceptance defect incidence while retaining severity counts', (
   assert.ok(decision.reasons.includes('post_acceptance_defect_incidence_above_maximum'));
 });
 
+for (const severity of ['high', 'critical'] as const) {
+  test(`rejects a ${severity} defect even when aggregate incidence is within the limit`, () => {
+    const candidate = observations(50, 'economy_only');
+    candidate[0] = {
+      ...candidate[0],
+      postAcceptanceDefective: true,
+      postAcceptanceDefects: [{ severity, description: 'escaped material regression' }],
+    };
+    const report = evaluateRouting([
+      ...candidate,
+      ...observations(50, 'frontier_execution'),
+    ], {
+      ...gate,
+      minPairedSamplesPerRoute: 50,
+      maxPostAcceptanceDefectIncidenceRate: 0.02,
+    });
+
+    const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
+    assert.ok(decision);
+    assert.equal(decision.candidate.postAcceptanceDefectIncidenceRate, 0.02);
+    assert.equal(decision.decision, 'reject');
+    assert.ok(decision.reasons.includes(`${severity}_post_acceptance_defects_above_maximum`));
+  });
+}
+
 test('loads strict provider-neutral JSONL observations and YAML gate policy', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'routing-load-'));
   const observationsPath = join(directory, 'observations.jsonl');
@@ -200,6 +227,8 @@ maxFirstPassAcceptanceDropRate: 0
 maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0.2
 maxPostAcceptanceDefectIncidenceRate: 0.02
+maxHighSeverityPostAcceptanceDefects: 0
+maxCriticalSeverityPostAcceptanceDefects: 0
 `, 'utf8');
 
   const loadedObservations = await loadBenchmarkObservations(observationsPath);

@@ -21,6 +21,30 @@
     "frontierTokens": { "$ref": "#/$defs/tokens" },
     "economyTokens": { "$ref": "#/$defs/tokens" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "firstPassAccepted": { "const": true } }, "required": ["firstPassAccepted"] },
+      "then": { "properties": { "finalAccepted": { "const": true } } }
+    },
+    {
+      "if": { "properties": { "escalated": { "const": true } }, "required": ["escalated"] },
+      "then": { "properties": { "firstPassAccepted": { "const": false } } }
+    },
+    {
+      "if": { "properties": { "finalAccepted": { "const": false } }, "required": ["finalAccepted"] },
+      "then": {
+        "properties": {
+          "postAcceptanceDefective": { "const": false },
+          "postAcceptanceDefects": { "type": "array", "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "postAcceptanceDefective": { "const": true } }, "required": ["postAcceptanceDefective"] },
+      "then": { "properties": { "postAcceptanceDefects": { "type": "array", "minItems": 1 } } },
+      "else": { "properties": { "postAcceptanceDefects": { "type": "array", "maxItems": 0 } } }
+    }
+  ],
   "$defs": {
     "tokens": {
       "type": "object",

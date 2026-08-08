@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/agent-orchestration/routing-gate.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxFinalAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectIncidenceRate"],
+  "required": ["schemaVersion", "baselineRoute", "candidateRoutes", "minPairedSamplesPerRoute", "minAcceptedTaskCostSavingsRate", "maxFirstPassAcceptanceDropRate", "maxFinalAcceptanceDropRate", "maxEscalationRate", "maxPostAcceptanceDefectIncidenceRate", "maxHighSeverityPostAcceptanceDefects", "maxCriticalSeverityPostAcceptanceDefects"],
   "properties": {
     "schemaVersion": { "const": 2 },
     "baselineRoute": { "$ref": "#/$defs/route" },
@@ -13,7 +13,23 @@
     "maxFirstPassAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxFinalAcceptanceDropRate": { "type": "number", "minimum": 0, "maximum": 1 },
     "maxEscalationRate": { "type": "number", "minimum": 0, "maximum": 1 },
-    "maxPostAcceptanceDefectIncidenceRate": { "type": "number", "minimum": 0, "maximum": 1 }
+    "maxPostAcceptanceDefectIncidenceRate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maxHighSeverityPostAcceptanceDefects": { "type": "integer", "minimum": 0 },
+    "maxCriticalSeverityPostAcceptanceDefects": { "type": "integer", "minimum": 0 }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "baselineRoute": { "const": "economy_only" } }, "required": ["baselineRoute"] },
+      "then": { "properties": { "candidateRoutes": { "type": "array", "items": { "not": { "const": "economy_only" } } } } }
+    },
+    {
+      "if": { "properties": { "baselineRoute": { "const": "orchestrated" } }, "required": ["baselineRoute"] },
+      "then": { "properties": { "candidateRoutes": { "type": "array", "items": { "not": { "const": "orchestrated" } } } } }
+    },
+    {
+      "if": { "properties": { "baselineRoute": { "const": "frontier_execution" } }, "required": ["baselineRoute"] },
+      "then": { "properties": { "candidateRoutes": { "type": "array", "items": { "not": { "const": "frontier_execution" } } } } }
+    }
+  ],
   "$defs": { "route": { "enum": ["economy_only", "orchestrated", "frontier_execution"] } }
 }

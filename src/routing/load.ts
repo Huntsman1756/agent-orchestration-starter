@@ -52,6 +52,8 @@ const gateSchema = z.object({
   maxFinalAcceptanceDropRate: z.number().min(0).max(1),
   maxEscalationRate: z.number().min(0).max(1),
   maxPostAcceptanceDefectIncidenceRate: z.number().min(0).max(1),
+  maxHighSeverityPostAcceptanceDefects: z.number().int().nonnegative(),
+  maxCriticalSeverityPostAcceptanceDefects: z.number().int().nonnegative(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.candidateRoutes).size !== value.candidateRoutes.length) {
     context.addIssue({ code: 'custom', message: 'candidateRoutes must be unique' });

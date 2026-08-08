@@ -91,6 +91,12 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
         if (candidate.postAcceptanceDefectIncidenceRate > policy.maxPostAcceptanceDefectIncidenceRate) {
           reasons.push('post_acceptance_defect_incidence_above_maximum');
         }
+        if (candidate.postAcceptanceDefectsBySeverity.high > policy.maxHighSeverityPostAcceptanceDefects) {
+          reasons.push('high_post_acceptance_defects_above_maximum');
+        }
+        if (candidate.postAcceptanceDefectsBySeverity.critical > policy.maxCriticalSeverityPostAcceptanceDefects) {
+          reasons.push('critical_post_acceptance_defects_above_maximum');
+        }
       }
       decisions.push({
         taskClass,
