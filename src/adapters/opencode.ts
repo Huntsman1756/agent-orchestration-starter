@@ -3,14 +3,22 @@ import { stringify } from 'yaml';
 import type { GeneratedFile } from './index.js';
 import { contractInstructions, policyManifest } from './shared.js';
 import { providerFor } from '../core/providers.js';
-import type { ResolvedPolicy, RoleName } from '../core/types.js';
+import type { ResolvedPolicy, ResolvedRole, RoleName } from '../core/types.js';
 
-function agentFile(role: RoleName, policy: ResolvedPolicy): GeneratedFile {
-  const assignment = policy.roles[role];
-  const descriptions: Record<RoleName, string> = {
+type AgentRole = RoleName | 'frontier-executor';
+
+function assignmentFor(role: AgentRole, policy: ResolvedPolicy): ResolvedRole {
+  if (role !== 'frontier-executor') return policy.roles[role];
+  return { ...policy.roles.orchestrator, permissions: { ...policy.roles.executor.permissions } };
+}
+
+function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
+  const assignment = assignmentFor(role, policy);
+  const descriptions: Record<AgentRole, string> = {
     orchestrator: 'Frontier planner that delegates bounded work and accepts verified results',
     executor: 'Economy implementation worker for explicit work contracts',
     reviewer: 'Independent read-only reviewer for correctness and validation evidence',
+    'frontier-executor': 'Frontier implementation worker for cross-cutting or high-risk work contracts',
   };
   const bash: Record<string, 'allow' | 'ask' | 'deny'> = { '*': 'ask' };
   if (!assignment.permissions.write) {
@@ -22,7 +30,7 @@ function agentFile(role: RoleName, policy: ResolvedPolicy): GeneratedFile {
     description: descriptions[role],
     mode: role === 'orchestrator' ? 'primary' : 'subagent',
     model: `${providerFor(assignment, 'opencode')}/${assignment.model}`,
-    temperature: role === 'executor' ? 0.1 : 0,
+    temperature: role === 'executor' || role === 'frontier-executor' ? 0.1 : 0,
     permission: {
       read: assignment.permissions.read ? 'allow' : 'deny',
       edit: assignment.permissions.write ? 'allow' : 'deny',
@@ -41,6 +49,7 @@ export function compileOpenCode(policy: ResolvedPolicy): GeneratedFile[] {
   return [
     agentFile('orchestrator', policy),
     agentFile('executor', policy),
+    agentFile('frontier-executor', policy),
     agentFile('reviewer', policy),
     policyManifest('opencode', policy, '.agent-orchestration/opencode/policy-manifest.json'),
   ];

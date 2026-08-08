@@ -12,6 +12,8 @@ const policy: Policy = {
     reviewer: { tier: 'frontier', capabilities: ['review'], permissions: { read: true, write: false } },
   },
   validation: { commands: ['npm test'] },
+  routing: { strategies: ['economy_only', 'orchestrated', 'frontier_execution'] },
+  isolation: { required: 'hard' },
 };
 
 function profile(): ModelProfile {

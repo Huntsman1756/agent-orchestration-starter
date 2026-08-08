@@ -1,5 +1,7 @@
 export type RoleName = 'orchestrator' | 'executor' | 'reviewer';
 export type HarnessName = 'codex' | 'opencode' | 'hermes';
+export type RoutingStrategy = 'economy_only' | 'orchestrated' | 'frontier_execution';
+export type WriteIsolation = 'hard' | 'degraded';
 
 export type HarnessProviders = Partial<Record<HarnessName, string>>;
 
@@ -11,6 +13,8 @@ export interface Policy {
     permissions: { read: boolean; write: boolean };
   }>;
   validation: { commands: string[] };
+  routing: { strategies: RoutingStrategy[] };
+  isolation: { required: WriteIsolation };
 }
 
 export interface ModelProfile {
@@ -43,4 +47,6 @@ export interface ResolvedPolicy {
   profileId: string;
   roles: Record<RoleName, ResolvedRole>;
   validation: { commands: string[] };
+  routing: { strategies: RoutingStrategy[] };
+  isolation: { required: WriteIsolation };
 }

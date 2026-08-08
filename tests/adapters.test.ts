@@ -27,6 +27,16 @@ test('compiles explicit Codex custom agents with role-specific sandboxes', () =>
   assert.match(reviewer, /sandbox_mode = "read-only"/);
 });
 
+test('compiles a writable frontier executor for direct frontier execution', () => {
+  const codex = file('codex', '.codex/agents/frontier-executor.toml');
+  const openCode = file('opencode', '.opencode/agents/frontier-executor.md');
+
+  assert.match(codex, /model = "frontier-main"/);
+  assert.match(codex, /sandbox_mode = "workspace-write"/);
+  assert.match(openCode, /model: frontier-vendor\/frontier-main/);
+  assert.match(openCode, /edit: allow/);
+});
+
 test('compiles OpenCode agents with explicit models and permissions', () => {
   const orchestrator = file('opencode', '.opencode/agents/orchestrator.md');
   const executor = file('opencode', '.opencode/agents/executor.md');

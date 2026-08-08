@@ -10,6 +10,8 @@ export function resolvedPolicy() {
       reviewer: { tier: 'frontier', capabilities: ['review'], permissions: { read: true, write: false } },
     },
     validation: { commands: ['npm test', 'npm run typecheck'] },
+    routing: { strategies: ['economy_only', 'orchestrated', 'frontier_execution'] },
+    isolation: { required: 'hard' },
   };
   const profile: ModelProfile = {
     version: 3,

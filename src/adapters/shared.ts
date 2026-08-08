@@ -12,11 +12,13 @@ export function policyManifest(harness: Harness, policy: ResolvedPolicy, path: s
       profileId: policy.profileId,
       roles: policy.roles,
       validation: policy.validation,
+      routing: policy.routing,
+      isolation: policy.isolation,
     }, null, 2)}\n`,
   };
 }
 
-export function contractInstructions(role: 'orchestrator' | 'executor' | 'reviewer', commands: string[]): string {
+export function contractInstructions(role: 'orchestrator' | 'executor' | 'frontier-executor' | 'reviewer', commands: string[]): string {
   if (role === 'orchestrator') {
     return [
       'Plan and coordinate; do not edit project files directly.',
@@ -25,7 +27,7 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'review
       'Never pass the full conversation. Accept work only after deterministic validation and reviewer evidence.',
     ].join('\n');
   }
-  if (role === 'executor') {
+  if (role === 'executor' || role === 'frontier-executor') {
     return [
       'Implement only the received work contract and touch only its allowed files.',
       `Run the contract validation commands; project defaults are: ${commands.join('; ')}.`,

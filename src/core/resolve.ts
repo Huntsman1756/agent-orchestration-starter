@@ -48,5 +48,7 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     profileId: profile.id,
     roles,
     validation: { commands: [...policy.validation.commands] },
+    routing: { strategies: [...policy.routing.strategies] },
+    isolation: { ...policy.isolation },
   };
 }
