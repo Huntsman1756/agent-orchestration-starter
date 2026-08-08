@@ -41,12 +41,20 @@ test('compiles a Hermes distribution with frontier parent and economy delegation
   const config = parse(file('hermes', 'hermes-profile/config.yaml'));
   const soul = file('hermes', 'hermes-profile/SOUL.md');
 
-  assert.deepEqual(config.model, { provider: 'frontier-vendor', default: 'frontier-main' });
-  assert.equal(config.delegation.provider, 'economy-vendor');
+  assert.deepEqual(config.model, { provider: 'hermes-frontier', default: 'frontier-main' });
+  assert.equal(config.delegation.provider, 'hermes-economy');
   assert.equal(config.delegation.model, 'economy-code');
   assert.deepEqual(config.fallback_providers, []);
   assert.match(soul, /deterministic validation/i);
   assert.match(soul, /work contract/i);
+});
+
+test('uses harness-specific provider aliases without changing the canonical model identity', () => {
+  const openCode = file('opencode', '.opencode/agents/orchestrator.md');
+  const hermes = parse(file('hermes', 'hermes-profile/config.yaml'));
+
+  assert.match(openCode, /model: frontier-vendor\/frontier-main/);
+  assert.equal(hermes.model.provider, 'hermes-frontier');
 });
 
 test('rejects a Hermes profile that cannot represent a separate reviewer model', () => {

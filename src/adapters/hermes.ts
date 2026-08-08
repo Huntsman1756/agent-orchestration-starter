@@ -2,6 +2,7 @@ import { stringify } from 'yaml';
 
 import type { GeneratedFile } from './index.js';
 import { policyManifest } from './shared.js';
+import { providerFor } from '../core/providers.js';
 import type { ResolvedPolicy } from '../core/types.js';
 
 export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
@@ -18,9 +19,9 @@ export function compileHermes(policy: ResolvedPolicy): GeneratedFile[] {
     distribution_owned: ['SOUL.md', 'config.yaml', 'policy-manifest.json', 'PERMISSION_BOUNDARY.md'],
   }, { lineWidth: 0 });
   const config = stringify({
-    model: { provider: orchestrator.provider, default: orchestrator.model },
+    model: { provider: providerFor(orchestrator, 'hermes'), default: orchestrator.model },
     delegation: {
-      provider: executor.provider,
+      provider: providerFor(executor, 'hermes'),
       model: executor.model,
       max_concurrent_children: 3,
       max_spawn_depth: 1,

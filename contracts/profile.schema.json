@@ -25,6 +25,15 @@
       "required": ["provider", "model", "tier", "reasoningEffort", "capabilities"],
       "properties": {
         "provider": { "type": "string", "minLength": 1 },
+        "harnessProviders": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "codex": { "type": "string", "minLength": 1 },
+            "opencode": { "type": "string", "minLength": 1 },
+            "hermes": { "type": "string", "minLength": 1 }
+          }
+        },
         "model": { "type": "string", "minLength": 1 },
         "tier": { "enum": ["frontier", "economy"] },
         "reasoningEffort": { "enum": ["low", "medium", "high", "xhigh", "max"] },

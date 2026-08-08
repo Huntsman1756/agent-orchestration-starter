@@ -49,3 +49,17 @@ test('rejects a reviewer that reuses the executor provider and model', () => {
 
   assert.throws(() => resolveRoles(policy, input), /reviewer.*independent/i);
 });
+
+test('rejects role permissions that violate the orchestrate-execute-review boundary', () => {
+  const unsafeOrchestrator = structuredClone(policy);
+  unsafeOrchestrator.roles.orchestrator.permissions.write = true;
+  assert.throws(() => resolveRoles(unsafeOrchestrator, profile()), /orchestrator.*read-only/i);
+
+  const unsafeReviewer = structuredClone(policy);
+  unsafeReviewer.roles.reviewer.permissions.write = true;
+  assert.throws(() => resolveRoles(unsafeReviewer, profile()), /reviewer.*read-only/i);
+
+  const powerlessExecutor = structuredClone(policy);
+  powerlessExecutor.roles.executor.permissions.write = false;
+  assert.throws(() => resolveRoles(powerlessExecutor, profile()), /executor.*write/i);
+});

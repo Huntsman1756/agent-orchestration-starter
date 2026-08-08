@@ -1,9 +1,9 @@
-import type { ResolvedPolicy } from '../core/types.js';
+import type { HarnessName, ResolvedPolicy } from '../core/types.js';
 import { compileCodex } from './codex.js';
 import { compileHermes } from './hermes.js';
 import { compileOpenCode } from './opencode.js';
 
-export type Harness = 'codex' | 'opencode' | 'hermes';
+export type Harness = HarnessName;
 
 export interface GeneratedFile {
   path: string;

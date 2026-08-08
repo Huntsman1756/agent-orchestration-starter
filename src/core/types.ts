@@ -1,4 +1,7 @@
 export type RoleName = 'orchestrator' | 'executor' | 'reviewer';
+export type HarnessName = 'codex' | 'opencode' | 'hermes';
+
+export type HarnessProviders = Partial<Record<HarnessName, string>>;
 
 export interface Policy {
   version: number;
@@ -15,6 +18,7 @@ export interface ModelProfile {
   id: string;
   assignments: Record<RoleName, {
     provider: string;
+    harnessProviders?: HarnessProviders;
     model: string;
     tier: 'frontier' | 'economy';
     reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -24,6 +28,7 @@ export interface ModelProfile {
 
 export interface ResolvedRole {
   provider: string;
+  harnessProviders?: HarnessProviders;
   model: string;
   modelRef: string;
   tier: 'frontier' | 'economy';

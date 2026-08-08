@@ -27,6 +27,11 @@ const policySchema = z.object({
 
 const assignmentSchema = z.object({
   provider: z.string().min(1),
+  harnessProviders: z.object({
+    codex: z.string().min(1).optional(),
+    opencode: z.string().min(1).optional(),
+    hermes: z.string().min(1).optional(),
+  }).strict().optional(),
   model: z.string().min(1),
   tier: tierSchema,
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']),

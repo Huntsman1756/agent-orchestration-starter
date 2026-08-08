@@ -5,6 +5,17 @@ const roleNames: RoleName[] = ['orchestrator', 'executor', 'reviewer'];
 export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPolicy {
   const roles = {} as Record<RoleName, ResolvedRole>;
 
+  for (const roleName of ['orchestrator', 'reviewer'] as const) {
+    const permissions = policy.roles[roleName].permissions;
+    if (!permissions.read || permissions.write) {
+      throw new Error(`${roleName} must remain read-only`);
+    }
+  }
+  const executorPermissions = policy.roles.executor.permissions;
+  if (!executorPermissions.read || !executorPermissions.write) {
+    throw new Error('executor requires read and write permissions');
+  }
+
   for (const roleName of roleNames) {
     const requirement = policy.roles[roleName];
     const assignment = profile.assignments[roleName];

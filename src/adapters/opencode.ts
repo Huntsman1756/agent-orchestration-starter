@@ -2,6 +2,7 @@ import { stringify } from 'yaml';
 
 import type { GeneratedFile } from './index.js';
 import { contractInstructions, policyManifest } from './shared.js';
+import { providerFor } from '../core/providers.js';
 import type { ResolvedPolicy, RoleName } from '../core/types.js';
 
 function agentFile(role: RoleName, policy: ResolvedPolicy): GeneratedFile {
@@ -20,7 +21,7 @@ function agentFile(role: RoleName, policy: ResolvedPolicy): GeneratedFile {
   const frontmatter = stringify({
     description: descriptions[role],
     mode: role === 'orchestrator' ? 'primary' : 'subagent',
-    model: assignment.modelRef,
+    model: `${providerFor(assignment, 'opencode')}/${assignment.model}`,
     temperature: role === 'executor' ? 0.1 : 0,
     permission: {
       read: assignment.permissions.read ? 'allow' : 'deny',
