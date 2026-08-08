@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/orchestration.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "roles", "validation"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["orchestrator", "executor", "reviewer"],
+      "properties": {
+        "orchestrator": { "$ref": "#/$defs/role" },
+        "executor": { "$ref": "#/$defs/role" },
+        "reviewer": { "$ref": "#/$defs/role" }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands"],
+      "properties": {
+        "commands": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  },
+  "$defs": {
+    "role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "capabilities", "permissions"],
+      "properties": {
+        "tier": { "enum": ["frontier", "economy"] },
+        "capabilities": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["read", "write"],
+          "properties": { "read": { "type": "boolean" }, "write": { "type": "boolean" } }
+        }
+      }
+    }
+  }
+}

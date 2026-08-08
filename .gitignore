@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.agent-orchestration/
+*.local.yaml
+*.local.yml
+.env
+.env.*
+!.env.example
