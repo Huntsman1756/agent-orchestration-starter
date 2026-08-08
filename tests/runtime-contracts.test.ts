@@ -180,6 +180,34 @@ test('rejects duplicate allowed change operations', () => {
   assert.throws(() => loadRuntimeTaskRequestV4(request), /duplicate/i);
 });
 
+test('rejects non-normalized repository-relative paths in changes and approved instructions', () => {
+  const invalidPaths = [
+    '/tmp/x',
+    '../x',
+    'a/../b',
+    './x',
+    'a//b',
+    '*.ts',
+    'src/\0file.ts',
+    'src:alternate-stream',
+    'src\\greeting.ts',
+    'CON.ts',
+    'LPT1.txt',
+    'src/file.',
+    'src/file ',
+  ];
+
+  for (const path of invalidPaths) {
+    const request = validTaskRequest();
+    request.allowed_changes[0].path = path;
+    assert.throws(() => loadRuntimeTaskRequestV4(request), /path|invalid/i);
+
+    const policy = validRepositoryPolicy();
+    policy.instructions.approvedSources[0] = path;
+    assert.throws(() => loadRuntimeRepositoryPolicyV4(policy), /path|invalid/i);
+  }
+});
+
 test('rejects an acceptance attestation with unresolved findings', () => {
   const attestation = validReviewAttestation();
   attestation.unresolved_finding_ids.push('finding-1');

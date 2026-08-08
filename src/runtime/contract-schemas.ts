@@ -9,6 +9,26 @@ const runIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{16,96}$/);
 const requestIdSchema = z.string().regex(/^req_[A-Za-z0-9_-]{16,96}$/);
 const sourceSensitivitySchema = z.enum(['PUBLIC', 'PRIVATE']);
 const dataScopeSchema = z.literal('SOURCE_CODE_ONLY');
+const windowsReservedDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const prohibitedPathCharacter = /[\0\\:*?"<>|[\]{}]/;
+
+export function isNormalizedRepositoryRelativePathV4(value: string): boolean {
+  if (value.length === 0 || value.startsWith('/')) return false;
+
+  return value.split('/').every((segment) => (
+    segment !== ''
+    && segment !== '.'
+    && segment !== '..'
+    && !prohibitedPathCharacter.test(segment)
+    && !/[. ]$/.test(segment)
+    && !windowsReservedDeviceName.test(segment)
+  ));
+}
+
+export const normalizedRepositoryRelativePathV4Schema = z.string().min(1).refine(
+  isNormalizedRepositoryRelativePathV4,
+  'path must be a normalized repository-relative exact path',
+);
 
 function uniqueArray<T extends z.ZodType>(item: T, options: { min?: number; max?: number } = {}) {
   let schema = z.array(item);
@@ -20,7 +40,7 @@ function uniqueArray<T extends z.ZodType>(item: T, options: { min?: number; max?
 }
 
 const allowedChangeSchema = z.object({
-  path: z.string().min(1),
+  path: normalizedRepositoryRelativePathV4Schema,
   operations: uniqueArray(z.enum(['CREATE', 'MODIFY', 'DELETE']), { min: 1 }),
 }).strict();
 
@@ -89,7 +109,7 @@ export const runtimeRepositoryPolicyV4Schema = z.object({
     frontierOnly: z.object({
       riskClasses: uniqueArray(identifierSchema, { max: 64 }),
       taskClasses: uniqueArray(identifierSchema, { max: 64 }),
-      paths: uniqueArray(z.string().min(1).max(512), { max: 256 }),
+      paths: uniqueArray(normalizedRepositoryRelativePathV4Schema.max(512), { max: 256 }),
       sourceSensitivity: uniqueArray(sourceSensitivitySchema, { max: 2 }),
     }).strict(),
   }).strict(),
@@ -99,7 +119,7 @@ export const runtimeRepositoryPolicyV4Schema = z.object({
     requiredBackend: identifierSchema,
     requiredProfiles: uniqueArray(identifierSchema, { min: 1, max: 16 }),
   }).strict(),
-  instructions: z.object({ approvedSources: uniqueArray(z.string().min(1).max(512), { min: 1, max: 64 }) }).strict(),
+  instructions: z.object({ approvedSources: uniqueArray(normalizedRepositoryRelativePathV4Schema.max(512), { min: 1, max: 64 }) }).strict(),
 }).strict();
 
 export const runtimeWorkContractV4Schema = z.object({

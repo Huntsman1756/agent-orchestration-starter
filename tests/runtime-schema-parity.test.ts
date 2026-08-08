@@ -55,6 +55,8 @@ test('task request schema and loader reject unknown, caller-owned, route, duplic
     (value) => ({ ...value, requested_route: 'INVALID' }),
     (value) => ({ ...value, allowed_changes: [{ ...value.allowed_changes[0], operations: ['MODIFY', 'MODIFY'] }] }),
     (value) => ({ ...value, allowed_validation_ids: [] }),
+    ...['/tmp/x', '../x', 'a/../b', '*.ts', 'src/\0file.ts', 'src:alternate-stream', 'src\\greeting.ts', 'CON.ts', 'LPT1.txt', 'src/file.', 'src/file ']
+      .map((path) => (value: any) => ({ ...value, allowed_changes: [{ ...value.allowed_changes[0], path }] })),
   ]);
 });
 
@@ -66,6 +68,9 @@ test('profile and repository policy schemas reject mixed contracts and malformed
   await assertParity('runtime-repository-policy-v4.schema.json', validRepositoryPolicy(), loadRuntimeRepositoryPolicyV4, [
     (value) => ({ ...value, bindings: validRuntimeProfile().bindings }),
     (value) => ({ ...value, sourcePolicy: { ...value.sourcePolicy, sourceSensitivity: 'PRVIATE' } }),
+    (value) => ({ ...value, instructions: { approvedSources: ['../AGENTS.md'] } }),
+    (value) => ({ ...value, instructions: { approvedSources: ['/etc/AGENTS.md'] } }),
+    (value) => ({ ...value, routing: { frontierOnly: { ...value.routing.frontierOnly, paths: ['a/../b'] } } }),
   ]);
 });
 
@@ -73,6 +78,8 @@ test('work contract and result schemas reject malformed hashes and unapproved fa
   await assertParity('runtime-work-contract-v4.schema.json', validWorkContract(), loadRuntimeWorkContractV4, [
     (value) => ({ ...value, contract_hash: 'not-a-hash' }),
     (value) => ({ ...value, caller_owned: true }),
+    (value) => ({ ...value, allowed_changes: [{ ...value.allowed_changes[0], path: '/tmp/x' }] }),
+    (value) => ({ ...value, allowed_changes: [{ ...value.allowed_changes[0], path: 'a/../b' }] }),
   ]);
   await assertParity('runtime-result-v4.schema.json', validRuntimeResult(), loadRuntimeResultV4, [
     (value) => ({ ...value, artifact_manifest_hash: 'not-a-hash' }),
