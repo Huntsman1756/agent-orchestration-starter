@@ -7,9 +7,14 @@ import type { BenchmarkObservation, RoutingGatePolicy } from './types.js';
 
 const routeSchema = z.enum(['economy_only', 'orchestrated', 'frontier_execution']);
 const tokenUsageSchema = z.object({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative() }).strict();
+const defectSchema = z.object({
+  severity: z.enum(['low', 'medium', 'high', 'critical']),
+  description: z.string().min(1),
+}).strict();
 const observationSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   taskId: z.string().min(1),
+  caseFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   taskClass: z.string().min(1),
   attemptedRoute: routeSchema,
   firstPassAccepted: z.boolean(),
@@ -18,7 +23,8 @@ const observationSchema = z.object({
   latencyMs: z.number().int().nonnegative(),
   repairCount: z.number().int().nonnegative(),
   escalated: z.boolean(),
-  postAcceptanceDefects: z.number().int().nonnegative(),
+  postAcceptanceDefective: z.boolean(),
+  postAcceptanceDefects: z.array(defectSchema),
   frontierTokens: tokenUsageSchema,
   economyTokens: tokenUsageSchema,
 }).strict().superRefine((value, context) => {
@@ -28,10 +34,16 @@ const observationSchema = z.object({
   if (value.escalated && value.firstPassAccepted) {
     context.addIssue({ code: 'custom', message: 'escalated tasks cannot count as first-pass accepted' });
   }
+  if (!value.finalAccepted && (value.postAcceptanceDefective || value.postAcceptanceDefects.length > 0)) {
+    context.addIssue({ code: 'custom', message: 'only finally accepted tasks can have post-acceptance defects' });
+  }
+  if (value.postAcceptanceDefective !== (value.postAcceptanceDefects.length > 0)) {
+    context.addIssue({ code: 'custom', message: 'postAcceptanceDefective must match whether defect details are present' });
+  }
 });
 
 const gateSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   baselineRoute: routeSchema,
   candidateRoutes: z.array(routeSchema).min(1),
   minPairedSamplesPerRoute: z.number().int().positive(),
@@ -39,7 +51,7 @@ const gateSchema = z.object({
   maxFirstPassAcceptanceDropRate: z.number().min(0).max(1),
   maxFinalAcceptanceDropRate: z.number().min(0).max(1),
   maxEscalationRate: z.number().min(0).max(1),
-  maxPostAcceptanceDefectRate: z.number().min(0),
+  maxPostAcceptanceDefectIncidenceRate: z.number().min(0).max(1),
 }).strict().superRefine((value, context) => {
   if (new Set(value.candidateRoutes).size !== value.candidateRoutes.length) {
     context.addIssue({ code: 'custom', message: 'candidateRoutes must be unique' });

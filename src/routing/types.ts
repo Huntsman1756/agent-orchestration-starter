@@ -6,9 +6,17 @@ export interface TokenUsage {
   output: number;
 }
 
+export type DefectSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface PostAcceptanceDefect {
+  severity: DefectSeverity;
+  description: string;
+}
+
 export interface BenchmarkObservation {
-  schemaVersion: 1;
+  schemaVersion: 2;
   taskId: string;
+  caseFingerprint: string;
   taskClass: string;
   attemptedRoute: RoutingStrategy;
   firstPassAccepted: boolean;
@@ -17,13 +25,14 @@ export interface BenchmarkObservation {
   latencyMs: number;
   repairCount: number;
   escalated: boolean;
-  postAcceptanceDefects: number;
+  postAcceptanceDefective: boolean;
+  postAcceptanceDefects: PostAcceptanceDefect[];
   frontierTokens: TokenUsage;
   economyTokens: TokenUsage;
 }
 
 export interface RoutingGatePolicy {
-  schemaVersion: 1;
+  schemaVersion: 2;
   baselineRoute: RoutingStrategy;
   candidateRoutes: RoutingStrategy[];
   minPairedSamplesPerRoute: number;
@@ -31,7 +40,7 @@ export interface RoutingGatePolicy {
   maxFirstPassAcceptanceDropRate: number;
   maxFinalAcceptanceDropRate: number;
   maxEscalationRate: number;
-  maxPostAcceptanceDefectRate: number;
+  maxPostAcceptanceDefectIncidenceRate: number;
 }
 
 export interface RouteMetrics {
@@ -40,7 +49,9 @@ export interface RouteMetrics {
   finalAcceptanceRate: number;
   acceptedTaskCostUsd: number | null;
   escalationRate: number;
-  postAcceptanceDefectRate: number;
+  postAcceptanceDefectIncidenceRate: number;
+  postAcceptanceDefectCount: number;
+  postAcceptanceDefectsBySeverity: Record<DefectSeverity, number>;
   totalCostUsd: number;
   totalLatencyMs: number;
   totalRepairs: number;
@@ -60,6 +71,6 @@ export interface RouteDecision {
 }
 
 export interface RoutingReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   decisions: RouteDecision[];
 }

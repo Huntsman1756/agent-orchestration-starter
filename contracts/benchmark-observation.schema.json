@@ -3,10 +3,11 @@
   "$id": "https://example.invalid/agent-orchestration/benchmark-observation.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "taskId", "taskClass", "attemptedRoute", "firstPassAccepted", "finalAccepted", "totalCostUsd", "latencyMs", "repairCount", "escalated", "postAcceptanceDefects", "frontierTokens", "economyTokens"],
+  "required": ["schemaVersion", "taskId", "caseFingerprint", "taskClass", "attemptedRoute", "firstPassAccepted", "finalAccepted", "totalCostUsd", "latencyMs", "repairCount", "escalated", "postAcceptanceDefective", "postAcceptanceDefects", "frontierTokens", "economyTokens"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "taskId": { "type": "string", "minLength": 1 },
+    "caseFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "taskClass": { "type": "string", "minLength": 1 },
     "attemptedRoute": { "enum": ["economy_only", "orchestrated", "frontier_execution"] },
     "firstPassAccepted": { "type": "boolean" },
@@ -15,7 +16,8 @@
     "latencyMs": { "type": "integer", "minimum": 0 },
     "repairCount": { "type": "integer", "minimum": 0 },
     "escalated": { "type": "boolean" },
-    "postAcceptanceDefects": { "type": "integer", "minimum": 0 },
+    "postAcceptanceDefective": { "type": "boolean" },
+    "postAcceptanceDefects": { "type": "array", "items": { "$ref": "#/$defs/defect" } },
     "frontierTokens": { "$ref": "#/$defs/tokens" },
     "economyTokens": { "$ref": "#/$defs/tokens" }
   },
@@ -27,6 +29,15 @@
       "properties": {
         "input": { "type": "integer", "minimum": 0 },
         "output": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "defect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "description"],
+      "properties": {
+        "severity": { "enum": ["low", "medium", "high", "critical"] },
+        "description": { "type": "string", "minLength": 1 }
       }
     }
   }

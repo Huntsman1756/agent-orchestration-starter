@@ -87,8 +87,9 @@ test('benchmark prints a deterministic provider-neutral routing report', async (
   const observations = join(directory, 'observations.jsonl');
   const routingPolicy = join(directory, 'routing-gate.yaml');
   const record = (taskId: string, attemptedRoute: 'economy_only' | 'frontier_execution', totalCostUsd: number) => ({
-    schemaVersion: 1,
+    schemaVersion: 2,
     taskId,
+    caseFingerprint: 'a'.repeat(64),
     taskClass: 'mechanical-change',
     attemptedRoute,
     firstPassAccepted: true,
@@ -97,13 +98,14 @@ test('benchmark prints a deterministic provider-neutral routing report', async (
     latencyMs: 100,
     repairCount: 0,
     escalated: false,
-    postAcceptanceDefects: 0,
+    postAcceptanceDefective: false,
+    postAcceptanceDefects: [],
     frontierTokens: { input: attemptedRoute === 'frontier_execution' ? 100 : 0, output: 0 },
     economyTokens: { input: attemptedRoute === 'economy_only' ? 100 : 0, output: 0 },
   });
   await writeFile(observations, `${JSON.stringify(record('task-1', 'economy_only', 0.5))}\n${JSON.stringify(record('task-1', 'frontier_execution', 1))}\n`, 'utf8');
   await writeFile(routingPolicy, `
-schemaVersion: 1
+schemaVersion: 2
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only]
 minPairedSamplesPerRoute: 1
@@ -111,7 +113,7 @@ minAcceptedTaskCostSavingsRate: 0.2
 maxFirstPassAcceptanceDropRate: 0
 maxFinalAcceptanceDropRate: 0
 maxEscalationRate: 0
-maxPostAcceptanceDefectRate: 0
+maxPostAcceptanceDefectIncidenceRate: 0
 `, 'utf8');
   const output: string[] = [];
 

@@ -64,7 +64,11 @@ El contrato de trabajo está en `examples/work-contract.yaml`. La revisión reci
 
 ## Benchmark y routing gate
 
-Cada línea JSONL representa el coste total de una tarea intentada por una ruta. Si economy falla y frontier la rescata, `firstPassAccepted` sigue siendo `false`, `escalated` es `true` y `totalCostUsd` incluye ambas fases.
+Cada línea JSONL v2 representa el coste total de una tarea intentada por una ruta. Si economy falla y frontier la rescata, `firstPassAccepted` sigue siendo `false`, `escalated` es `true` y `totalCostUsd` incluye ambas fases.
+
+El pairing exige la misma combinación `taskId + caseFingerprint`. Importa `computeCaseFingerprint` desde `agent-orchestration-starter/fingerprint` y pásale `{ workContract, baseSha, fixtures, policy }`; `baseSha` debe ser un SHA Git completo de 40 o 64 caracteres hexadecimales. El SHA-256 canónico cambia si cambia el contrato, la revisión base, cualquier fixture/input o la política relevante. Compartir `taskId` ya no basta para declarar dos runs comparables. `examples/case-fingerprint-input.json` produce el fingerprint utilizado por las observaciones de ejemplo.
+
+Los defectos posteriores separan incidencia de detalle: `postAcceptanceDefective` indica si la tarea aceptada tuvo alguna incidencia, mientras `postAcceptanceDefects[]` conserva cada defecto con severidad `low`, `medium`, `high` o `critical`. El gate usa `maxPostAcceptanceDefectIncidenceRate`; el informe ofrece además cantidad total y recuentos por severidad.
 
 ```powershell
 node dist/cli/main.js benchmark `

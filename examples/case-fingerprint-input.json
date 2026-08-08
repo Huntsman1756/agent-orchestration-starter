@@ -1,0 +1,16 @@
+{
+  "workContract": {
+    "id": "mechanical-001",
+    "objective": "Apply one bounded mechanical change",
+    "allowedFiles": ["src/example.ts"],
+    "validationCommands": ["npm test"]
+  },
+  "baseSha": "0000000000000000000000000000000000000000",
+  "fixtures": {
+    "input.json": "{\"enabled\":true}"
+  },
+  "policy": {
+    "taskClass": "mechanical-change",
+    "review": "deterministic"
+  }
+}
