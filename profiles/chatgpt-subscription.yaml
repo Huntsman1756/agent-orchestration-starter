@@ -1,0 +1,24 @@
+version: 1
+id: chatgpt-subscription-2026-08
+assignments:
+  orchestrator:
+    provider: openai
+    harnessProviders: { hermes: openai-codex }
+    model: gpt-5.6-sol
+    tier: frontier
+    reasoningEffort: high
+    capabilities: [planning, delegation]
+  executor:
+    provider: openai
+    harnessProviders: { hermes: openai-codex }
+    model: gpt-5.6-luna
+    tier: economy
+    reasoningEffort: low
+    capabilities: [coding]
+  reviewer:
+    provider: openai
+    harnessProviders: { hermes: openai-codex }
+    model: gpt-5.6-sol
+    tier: frontier
+    reasoningEffort: high
+    capabilities: [review]

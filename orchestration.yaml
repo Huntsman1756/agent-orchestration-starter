@@ -1,0 +1,19 @@
+version: 1
+roles:
+  orchestrator:
+    tier: frontier
+    capabilities: [planning, delegation]
+    permissions: { read: true, write: false }
+  executor:
+    tier: economy
+    capabilities: [coding]
+    permissions: { read: true, write: true }
+  reviewer:
+    tier: frontier
+    capabilities: [review]
+    permissions: { read: true, write: false }
+validation:
+  commands:
+    - npm test
+    - npm run typecheck
+    - npm run build

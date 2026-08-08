@@ -1,0 +1,21 @@
+version: 1
+id: open-compatible-example
+assignments:
+  orchestrator:
+    provider: my-provider
+    model: frontier-model
+    tier: frontier
+    reasoningEffort: high
+    capabilities: [planning, delegation]
+  executor:
+    provider: my-provider
+    model: economy-coding-model
+    tier: economy
+    reasoningEffort: low
+    capabilities: [coding]
+  reviewer:
+    provider: my-provider
+    model: frontier-model
+    tier: frontier
+    reasoningEffort: high
+    capabilities: [review]
