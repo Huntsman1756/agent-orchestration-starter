@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createBrokerDaemon, type BrokerDaemonDependenciesV4 } from '../src/runtime/broker-daemon.js';
+import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import { acquireRepositoryLockV4, acquireRunLockV4 } from '../src/runtime/repository-lock.js';
 import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
 import { writeBrokerStateCacheV4 } from '../src/runtime/run-state.js';
@@ -184,7 +185,7 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
     pid: 300,
     bootNonce: 'second-nonce',
     ownerIdentity: { boot_id: 'new-boot', process_start_id: 'second-start' },
-    ownerStatus: async () => 'dead',
+    ownerStatus: async (lockOwner) => lockOwner.pid === 100 ? 'dead' : 'live',
   });
   await assert.rejects(second, /REPOSITORY_BUSY/);
   releaseFirst();
@@ -193,4 +194,23 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
   const third = acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', ownerStatus: async () => 'live', pid: 400, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'third-start' } });
   await assert.rejects(third, /REPOSITORY_BUSY/);
   await winner.release();
+});
+
+test('recovers an orphaned reclaim guard only after its identity is proven dead', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'runner-v4-orphan-guard-'));
+  const staleOwner = { repository_id: 'fixture-repo', pid: 100, boot_nonce: 'stale-owner', boot_id: 'old-boot', process_start_id: 'old-start' };
+  await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify(staleOwner));
+  await writeFile(join(directory, `fixture-repo.lock.reclaim-${hashCanonicalV4(staleOwner).slice(0, 16)}`), JSON.stringify(staleOwner));
+
+  const recovered = await acquireRepositoryLockV4({
+    directory,
+    repositoryId: 'fixture-repo',
+    pid: 200,
+    bootNonce: 'new-owner',
+    ownerIdentity: { boot_id: 'new-boot', process_start_id: 'new-start' },
+    ownerStatus: async () => 'dead',
+  });
+
+  assert.equal(recovered.boot_nonce, 'new-owner');
+  await recovered.release();
 });

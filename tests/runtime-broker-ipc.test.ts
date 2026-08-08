@@ -8,8 +8,10 @@ import {
   createBrokerIpcClient,
   createBrokerIpcServer,
   reclaimUnixSocketV4,
+  normalizeBrokerResponseErrorV4,
   type BrokerIpcRequestV4,
   type BrokerIpcPlatformVerifierV4,
+  type BrokerIpcServerIdentityVerifierV4,
 } from '../src/runtime/broker-ipc.js';
 import { canonicalJsonV4 } from '../src/runtime/canonical.js';
 import { createBrokerDaemon, type BrokerDaemonV4 } from '../src/runtime/broker-daemon.js';
@@ -57,9 +59,17 @@ function request(token: string): BrokerIpcRequestV4 {
   return { token, command: { type: 'RUN_CODING_TASK', command_id: 'command-run', request: validTaskRequest() as RuntimeTaskRequestV4 } };
 }
 
+function clientVerifier(endpoint: string): BrokerIpcServerIdentityVerifierV4 {
+  return {
+    verifyServer: async (input) => input.endpoint === endpoint && input.expected_owner_identity.length > 4
+      ? { owner_identity: input.expected_owner_identity }
+      : null,
+  };
+}
+
 test('round-trips an authenticated canonical request over a length-prefixed frame', async () => {
   const fixture = await ipcFixture();
-  const client = createBrokerIpcClient({ endpoint: fixture.server.endpoint, token: fixture.token, requestDeadlineMs: 1_000 });
+  const client = createBrokerIpcClient({ endpoint: fixture.server.endpoint, token: fixture.token, requestDeadlineMs: 1_000, platform: process.platform, serverIdentityVerifier: clientVerifier(fixture.server.endpoint) });
 
   const reply = await client.submit(request(fixture.token).command);
 
@@ -71,7 +81,7 @@ test('round-trips an authenticated canonical request over a length-prefixed fram
 
 test('rejects an invalid token before submitting to the daemon', async () => {
   const fixture = await ipcFixture();
-  const client = createBrokerIpcClient({ endpoint: fixture.server.endpoint, token: '0'.repeat(64), requestDeadlineMs: 1_000 });
+  const client = createBrokerIpcClient({ endpoint: fixture.server.endpoint, token: '0'.repeat(64), requestDeadlineMs: 1_000, platform: process.platform, serverIdentityVerifier: clientVerifier(fixture.server.endpoint) });
 
   await assert.rejects(() => client.submit(request(fixture.token).command), /AUTHENTICATION_FAILED/);
 
@@ -89,6 +99,31 @@ test('rejects authenticated JSON that is not in canonical wire form', async () =
     assert.match(response.error ?? '', /INVALID_CONTRACT.*canonical/);
     assert.equal(fixture.submitted.length, 0);
   } finally {
+    await fixture.server.close();
+  }
+});
+
+test('client fails closed without a trusted server-identity verifier', () => {
+  assert.throws(
+    () => createBrokerIpcClient({ endpoint: 'local-endpoint', token: '0'.repeat(64) }),
+    /AUTHENTICATION_FAILED/,
+  );
+});
+
+test('client sends no request when connected server ownership is rejected', async () => {
+  const fixture = await ipcFixture();
+  const client = createBrokerIpcClient({
+    endpoint: fixture.server.endpoint,
+    token: fixture.token,
+    platform: process.platform,
+    serverIdentityVerifier: { verifyServer: async () => null },
+  });
+
+  try {
+    await assert.rejects(() => client.submit(request(fixture.token).command), /AUTHENTICATION_FAILED/);
+    assert.equal(fixture.submitted.length, 0);
+  } finally {
+    await client.close();
     await fixture.server.close();
   }
 });
@@ -170,6 +205,35 @@ test('normalizes raw daemon errors before they cross IPC', async () => {
   await server.close();
 });
 
+test('normalizes malicious server response errors to a bounded closed-catalog reply', () => {
+  assert.equal(
+    normalizeBrokerResponseErrorV4('UNKNOWN_FAILURE: ENOENT C:\\Users\\secret-owner\\private'),
+    'UNKNOWN_FAILURE: broker request failed',
+  );
+  assert.equal(normalizeBrokerResponseErrorV4('NOT_A_CODE: secret'), 'UNKNOWN_FAILURE: broker request failed');
+});
+
+test('normalizes injected token-storage and server-close failures', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-lifecycle-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-lifecycle-${Date.now()}` : join(stateDirectory, 'lifecycle.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, loadToken: async () => { throw new Error('EACCES C:\\Users\\secret-owner\\token'); } }),
+    (error: Error) => /^AUTHENTICATION_FAILED:/.test(error.message) && !/secret-owner|EACCES/.test(error.message),
+  );
+
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, closeServer: async (nativeServer) => {
+    await new Promise<void>((resolve) => nativeServer.close(() => resolve()));
+    throw new Error('EPERM C:\\Users\\secret-owner\\pipe');
+  } });
+  await assert.rejects(
+    () => server.close(),
+    (error: Error) => /^UNKNOWN_FAILURE:/.test(error.message) && !/secret-owner|EPERM/.test(error.message),
+  );
+});
+
 test('replayed mutation over IPC returns the original run without another journal append', async () => {
   const repositoryRoot = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-repo-'));
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-replay-'));
@@ -190,7 +254,7 @@ test('replayed mutation over IPC returns the original run without another journa
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
-  const client = createBrokerIpcClient({ endpoint, token });
+  const client = createBrokerIpcClient({ endpoint, token, platform: process.platform, serverIdentityVerifier: clientVerifier(endpoint) });
   const command = request(token).command;
 
   const first = await client.submit(command);
@@ -206,10 +270,12 @@ test('replayed mutation over IPC returns the original run without another journa
 
 test('reclaims only a proven-stale owner-only Unix socket', async () => {
   let removed = false;
+  let quarantine = '';
   await reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', {
-    metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true }),
+    metadata: async (path) => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: path === '/state/broker.sock' ? 'inode:7' : 'inode:7' }),
     probe: async () => 'stale',
-    remove: async () => { removed = true; },
+    rename: async (_from, to) => { quarantine = to; },
+    removeQuarantine: async (path) => { assert.equal(path, quarantine); removed = true; },
   });
   assert.equal(removed, true);
 });
@@ -218,7 +284,7 @@ test('refuses to reclaim a live or unverifiable Unix socket', async () => {
   for (const probe of ['live', 'unknown'] as const) {
     let removed = false;
     await assert.rejects(
-      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true }), probe: async () => probe, remove: async () => { removed = true; } }),
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: 'inode:7' }), probe: async () => probe, rename: async () => { removed = true; }, removeQuarantine: async () => { removed = true; } }),
       /REPOSITORY_BUSY/,
     );
     assert.equal(removed, false);
@@ -227,12 +293,39 @@ test('refuses to reclaim a live or unverifiable Unix socket', async () => {
 
 test('refuses to reclaim a stale Unix socket with wrong ownership or permissions', async () => {
   for (const metadata of [
-    { kind: 'socket' as const, owner_identity: 'uid:2000', owner_only: true },
-    { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: false },
+    { kind: 'socket' as const, owner_identity: 'uid:2000', owner_only: true, object_identity: 'inode:7' },
+    { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: false, object_identity: 'inode:7' },
   ]) {
     await assert.rejects(
-      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => metadata, probe: async () => 'stale', remove: async () => {} }),
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => metadata, probe: async () => 'stale', rename: async () => {}, removeQuarantine: async () => {} }),
       /AUTHENTICATION_FAILED/,
     );
   }
+});
+
+test('concurrent Unix stale reclaimers cannot unlink a replacement socket', async () => {
+  let endpointIdentity: string | null = 'inode:7';
+  const quarantines = new Map<string, string>();
+  let renameWinners = 0;
+  const deps = {
+    metadata: async (path: string) => path === '/state/broker.sock'
+      ? endpointIdentity === null ? null : { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: true, object_identity: endpointIdentity }
+      : quarantines.has(path) ? { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: true, object_identity: quarantines.get(path)! } : null,
+    probe: async () => 'stale' as const,
+    rename: async (_from: string, to: string) => {
+      if (endpointIdentity === null) throw Object.assign(new Error('gone'), { code: 'ENOENT' });
+      quarantines.set(to, endpointIdentity);
+      endpointIdentity = null;
+      renameWinners += 1;
+    },
+    removeQuarantine: async (path: string) => { quarantines.delete(path); },
+  };
+
+  await Promise.all([
+    reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', deps),
+    reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', deps),
+  ]);
+
+  assert.equal(renameWinners, 1);
+  assert.equal(endpointIdentity, null);
 });

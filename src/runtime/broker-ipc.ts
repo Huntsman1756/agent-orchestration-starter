@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, stat, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
@@ -31,6 +31,8 @@ export interface BrokerIpcDependenciesV4 {
   platform?: NodeJS.Platform;
   platformVerifier?: BrokerIpcPlatformVerifierV4;
   requestDeadlineMs?: number;
+  loadToken?: (directory: string, platform: NodeJS.Platform) => Promise<string>;
+  closeServer?: (server: Server) => Promise<void>;
 }
 
 export interface BrokerIpcPlatformVerifierV4 {
@@ -38,11 +40,12 @@ export interface BrokerIpcPlatformVerifierV4 {
   verifyPeer(input: { socket?: Socket; endpoint: string; expected_owner_identity: string }): Promise<{ owner_identity: string } | null>;
 }
 
-export interface UnixSocketMetadataV4 { kind: 'socket' | 'other'; owner_identity: string; owner_only: boolean }
+export interface UnixSocketMetadataV4 { kind: 'socket' | 'other'; owner_identity: string; owner_only: boolean; object_identity: string }
 export interface UnixSocketReclaimDependenciesV4 {
   metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>;
   probe(endpoint: string): Promise<'live' | 'stale' | 'unknown'>;
-  remove(endpoint: string): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+  removeQuarantine(path: string): Promise<void>;
 }
 
 export interface BrokerIpcServerV4 {
@@ -55,6 +58,12 @@ export interface BrokerIpcClientConfigV4 {
   endpoint: string;
   token: string;
   requestDeadlineMs?: number;
+  platform?: NodeJS.Platform;
+  serverIdentityVerifier?: BrokerIpcServerIdentityVerifierV4;
+}
+
+export interface BrokerIpcServerIdentityVerifierV4 {
+  verifyServer(input: { socket: Socket; endpoint: string; expected_owner_identity: string }): Promise<{ owner_identity: string } | null>;
 }
 
 export interface BrokerIpcClientV4 {
@@ -116,13 +125,19 @@ function normalizedBoundaryMessage(error: unknown): string {
   return 'UNKNOWN_FAILURE: broker request failed';
 }
 
+export function normalizeBrokerResponseErrorV4(value: unknown): string {
+  const code = typeof value === 'string' ? /^([A-Z_]+):/.exec(value)?.[1] : undefined;
+  const safeCode = code !== undefined && RUNTIME_FAILURE_CODES_V4.includes(code as typeof RUNTIME_FAILURE_CODES_V4[number]) ? code : 'UNKNOWN_FAILURE';
+  return `${safeCode}: broker request failed`;
+}
+
 async function defaultUnixMetadata(endpoint: string): Promise<UnixSocketMetadataV4 | null> {
   const metadata = await lstat(endpoint).catch((error: NodeJS.ErrnoException) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   if (metadata === null) return null;
-  return { kind: metadata.isSocket() ? 'socket' : 'other', owner_identity: `uid:${metadata.uid}`, owner_only: (metadata.mode & 0o077) === 0 };
+  return { kind: metadata.isSocket() ? 'socket' : 'other', owner_identity: `uid:${metadata.uid}`, owner_only: (metadata.mode & 0o077) === 0, object_identity: `${metadata.dev}:${metadata.ino}` };
 }
 
 async function defaultUnixProbe(endpoint: string): Promise<'live' | 'stale' | 'unknown'> {
@@ -138,7 +153,7 @@ async function defaultUnixProbe(endpoint: string): Promise<'live' | 'stale' | 'u
 export async function reclaimUnixSocketV4(
   endpoint: string,
   expectedOwnerIdentity: string,
-  deps: UnixSocketReclaimDependenciesV4 = { metadata: defaultUnixMetadata, probe: defaultUnixProbe, remove: unlink },
+  deps: UnixSocketReclaimDependenciesV4 = { metadata: defaultUnixMetadata, probe: defaultUnixProbe, rename, removeQuarantine: unlink },
 ): Promise<void> {
   const metadata = await deps.metadata(endpoint);
   if (metadata === null) return;
@@ -147,7 +162,19 @@ export async function reclaimUnixSocketV4(
   }
   const status = await deps.probe(endpoint).catch(() => 'unknown' as const);
   if (status !== 'stale') throw new Error('REPOSITORY_BUSY: broker endpoint is live or unverifiable');
-  await deps.remove(endpoint);
+  const quarantine = `${endpoint}.stale-${process.pid}-${randomBytes(8).toString('hex')}`;
+  try {
+    await deps.rename(endpoint, quarantine);
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (await deps.metadata(endpoint) === null) return;
+      throw new Error('REPOSITORY_BUSY: broker endpoint changed during stale reclamation');
+    }
+    throw new Error('UNKNOWN_FAILURE: stale broker endpoint quarantine failed');
+  }
+  const quarantined = await deps.metadata(quarantine).catch(() => null);
+  if (quarantined?.object_identity !== metadata.object_identity) throw new Error('AUTHENTICATION_FAILED: quarantined endpoint identity changed');
+  await deps.removeQuarantine(quarantine).catch(() => { throw new Error('UNKNOWN_FAILURE: stale broker endpoint cleanup failed'); });
 }
 
 async function verifyOwnerOnlyState(directory: string, platform: NodeJS.Platform): Promise<void> {
@@ -212,8 +239,11 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   if (!Number.isSafeInteger(deadline) || deadline < 1 || deadline > 60_000) invalid('request deadline is invalid');
   if (deps.platformVerifier === undefined) throw new Error('AUTHENTICATION_FAILED: native platform verifier is required');
   const expectedOwnerIdentity = platformOwnerIdentity(platform);
-  await verifyOwnerOnlyState(deps.stateDirectory, platform);
-  const token = await loadOrCreateToken(deps.stateDirectory, platform);
+  await verifyOwnerOnlyState(deps.stateDirectory, platform).catch((error) => {
+    if (error instanceof Error && error.message.startsWith('AUTHENTICATION_FAILED:')) throw error;
+    throw new Error('AUTHENTICATION_FAILED: broker state verification failed');
+  });
+  const token = await (deps.loadToken ?? loadOrCreateToken)(deps.stateDirectory, platform).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
   const endpoint = deps.endpoint ?? defaultBrokerEndpointV4(deps.stateDirectory, platform);
   if (platform !== 'win32') {
     const stateRoot = `${resolve(deps.stateDirectory)}${process.platform === 'win32' ? '\\' : '/'}`;
@@ -289,14 +319,23 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     close: async () => {
       if (closed) return;
       closed = true;
-      await new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error)));
-      if (platform !== 'win32') await unlink(endpoint).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+      try {
+        await (deps.closeServer?.(server) ?? new Promise<void>((resolvePromise, reject) => server.close((error) => error === undefined ? resolvePromise() : reject(error))));
+      } catch {
+        throw new Error('UNKNOWN_FAILURE: local IPC close failed');
+      } finally {
+        if (platform !== 'win32') await unlink(endpoint).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
+        });
+      }
     },
   };
 }
 
 export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIpcClientV4 {
   const deadline = config.requestDeadlineMs ?? 5_000;
+  if (config.serverIdentityVerifier === undefined) throw new Error('AUTHENTICATION_FAILED: trusted server identity verifier is required');
+  const expectedOwnerIdentity = platformOwnerIdentity(config.platform ?? process.platform);
   let closed = false;
   return {
     submit: async (command) => {
@@ -309,7 +348,14 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
         let expectedLength: number | null = null;
         const fail = (error: Error) => { socket.destroy(); reject(new Error(normalizedBoundaryMessage(error))); };
         socket.setTimeout(deadline, () => fail(new Error('INVALID_CONTRACT: request deadline exceeded')));
-        socket.once('connect', () => socket.write(frame));
+        socket.once('connect', () => {
+          void config.serverIdentityVerifier!.verifyServer({ socket, endpoint: config.endpoint, expected_owner_identity: expectedOwnerIdentity })
+            .then((proof) => {
+              if (proof?.owner_identity !== expectedOwnerIdentity) return fail(new Error('AUTHENTICATION_FAILED: server ownership could not be established'));
+              socket.write(frame);
+            })
+            .catch(() => fail(new Error('AUTHENTICATION_FAILED: server ownership could not be established')));
+        });
         socket.on('data', (chunk: Buffer) => {
           buffer = Buffer.concat([buffer, chunk]);
           if (expectedLength === null && buffer.length >= 4) {
@@ -321,7 +367,9 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
             let response: BrokerIpcResponseV4;
             try { response = JSON.parse(buffer.toString('utf8')) as BrokerIpcResponseV4; } catch { return fail(new Error('INVALID_CONTRACT: malformed response')); }
             socket.end();
-            if (!response.ok || response.reply === undefined) reject(new Error(response.error ?? 'UNKNOWN_FAILURE: empty broker response'));
+            if (!response.ok || response.reply === undefined) {
+              reject(new Error(normalizeBrokerResponseErrorV4(response.error)));
+            }
             else resolvePromise(response.reply);
           }
         });

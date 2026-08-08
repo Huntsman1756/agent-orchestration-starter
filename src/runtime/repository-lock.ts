@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { canonicalJsonV4 } from './canonical.js';
+import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -139,16 +139,31 @@ export async function acquireRepositoryLockV4(options: RepositoryLockOptionsV4):
   };
 
   if (!(await attempt())) {
-    const reclaimPath = `${path}.reclaim`;
-    const guard = await open(reclaimPath, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'EEXIST') return null;
-      throw error;
-    });
-    if (guard === null) busy(options.repositoryId);
+    const recorded = await readOwner(path);
+    const reclaimPath = `${path}.reclaim-${hashCanonicalV4(recorded).slice(0, 16)}`;
+    const openGuard = async () => {
+      const handle = await open(reclaimPath, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => error.code === 'EEXIST' ? null : Promise.reject(error));
+      if (handle !== null) {
+        await handle.writeFile(`${canonicalJsonV4(owner)}\n`, 'utf8');
+        await handle.sync();
+        return handle;
+      }
+      const staleGuard = await readOwner(reclaimPath);
+      const guardStatus = await (options.ownerStatus ?? defaultOwnerStatus)(staleGuard).catch(() => 'unknown' as const);
+      if (guardStatus !== 'dead') busy(options.repositoryId);
+      const quarantine = `${reclaimPath}.stale-${randomBytes(8).toString('hex')}`;
+      await rename(reclaimPath, quarantine).catch(() => busy(options.repositoryId));
+      const quarantined = await readOwner(quarantine);
+      if (canonicalJsonV4(quarantined) !== canonicalJsonV4(staleGuard)) busy(options.repositoryId);
+      await unlink(quarantine);
+      const recovered = await open(reclaimPath, 'wx', 0o600).catch(() => null);
+      if (recovered === null) busy(options.repositoryId);
+      await recovered.writeFile(`${canonicalJsonV4(owner)}\n`, 'utf8');
+      await recovered.sync();
+      return recovered;
+    };
+    const guard = await openGuard();
     try {
-      await guard.writeFile(`${owner.boot_nonce}\n`, 'utf8');
-      await guard.sync();
-      const recorded = await readOwner(path);
       const status = await (options.ownerStatus ?? defaultOwnerStatus)(recorded).catch(() => 'unknown' as const);
       if (status !== 'dead') busy(options.repositoryId);
       const verification = await readOwner(path);
@@ -157,7 +172,8 @@ export async function acquireRepositoryLockV4(options: RepositoryLockOptionsV4):
       if (!(await attempt())) busy(options.repositoryId);
     } finally {
       await guard.close();
-      await unlink(reclaimPath).catch(() => undefined);
+      const guardOwner = await readOwner(reclaimPath).catch(() => null);
+      if (guardOwner !== null && canonicalJsonV4(guardOwner) === canonicalJsonV4(owner)) await unlink(reclaimPath).catch(() => undefined);
     }
   }
 
