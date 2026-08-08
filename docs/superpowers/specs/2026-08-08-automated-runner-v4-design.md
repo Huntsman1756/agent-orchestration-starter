@@ -2,7 +2,7 @@
 
 **Task:** `TASK-AGENT-ORCHESTRATION-AUTOMATED-RUNNER-V4-001`
 
-**Status:** Reworked design specification pending user approval
+**Status:** Approved design specification
 
 ## 1. Objective
 
@@ -107,7 +107,7 @@ Before every state-changing operation the broker verifies:
 - the supplied diff and tree hashes reproduce locally;
 - finalization reviews the exact tree being committed.
 
-Three additional boundaries are normative:
+Four additional boundaries are normative:
 
 - `ProcessSandbox`: an OS-enforced launcher for any process that handles repository-controlled content;
 - `ExecutorCapsule`: a broker-owned launch root for economy and frontier executors, with the isolated worktree exposed only as `repo/`;
