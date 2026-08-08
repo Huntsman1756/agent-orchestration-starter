@@ -81,7 +81,13 @@ function parseRecords(bytes: string): JournalRecordV4[] {
 }
 
 export async function appendJournalRecord(file: FileHandle, record: JournalRecordV4): Promise<void> {
-  await file.write(`${canonicalJsonV4(record)}\n`, null, 'utf8');
+  const bytes = Buffer.from(`${canonicalJsonV4(record)}\n`, 'utf8');
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesWritten } = await file.write(bytes, offset, bytes.length - offset, null);
+    if (bytesWritten <= 0 || bytesWritten > bytes.length - offset) throw new Error('BROKER_STATE_CORRUPT: journal write did not make valid forward progress');
+    offset += bytesWritten;
+  }
   await file.sync();
 }
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,12 +7,17 @@ import test from 'node:test';
 import {
   createBrokerIpcClient,
   createBrokerIpcServer,
+  reclaimUnixSocketV4,
   type BrokerIpcRequestV4,
+  type BrokerIpcPlatformVerifierV4,
 } from '../src/runtime/broker-ipc.js';
-import type { BrokerDaemonV4 } from '../src/runtime/broker-daemon.js';
+import { canonicalJsonV4 } from '../src/runtime/canonical.js';
+import { createBrokerDaemon, type BrokerDaemonV4 } from '../src/runtime/broker-daemon.js';
 import type { BrokerCommandV4 } from '../src/runtime/run-state.js';
-import type { RuntimeResultV4, RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
-import { validRuntimeResult, validTaskRequest } from './runtime-contracts.test.js';
+import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4, RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
+import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
+import { reopenJournalV4 } from '../src/runtime/journal.js';
+import { validRepositoryPolicy, validRuntimeProfile, validRuntimeResult, validTaskRequest } from './runtime-contracts.test.js';
 
 async function ipcFixture() {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
@@ -32,12 +37,16 @@ async function ipcFixture() {
     reinspect: async () => {},
     recordExternalProcessStarted: async () => {},
   };
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
   const server = await createBrokerIpcServer({
     daemon,
     stateDirectory,
     endpoint,
     platform: process.platform,
-    authenticatePeer: async () => true,
+    platformVerifier,
     requestDeadlineMs: 1_000,
   });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
@@ -87,7 +96,7 @@ test('rejects authenticated JSON that is not in canonical wire form', async () =
 for (const [name, payload] of [
   ['malformed JSON', Buffer.from('{', 'utf8')],
   ['oversized frame', Buffer.alloc(1_048_577)],
-  ['unknown command', Buffer.from(JSON.stringify({ token: 'TOKEN', command: { type: 'SHELL', command_id: 'x' } }), 'utf8')],
+  ['unknown command', Buffer.from(canonicalJsonV4({ token: 'TOKEN', command: { type: 'SHELL', command_id: 'x' } }), 'utf8')],
 ] as const) {
   test(`rejects ${name} without a journal mutation`, async () => {
     const fixture = await ipcFixture();
@@ -101,17 +110,129 @@ for (const [name, payload] of [
   });
 }
 
-test('production authentication fails closed when peer ownership cannot be established', async () => {
+test('production startup fails closed when no native platform verifier is provided', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
   const endpoint = process.platform === 'win32'
     ? `\\\\.\\pipe\\runner-v4-closed-${stateDirectory.replace(/[^A-Za-z0-9]/g, '')}`
     : join(stateDirectory, 'closed.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
-  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform });
+  await assert.rejects(
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform }),
+    /AUTHENTICATION_FAILED/,
+  );
+});
+
+test('startup fails closed when the platform verifier cannot prove token ACL ownership', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-acl-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-acl-${Date.now()}` : join(stateDirectory, 'acl.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async () => null,
+    verifyPeer: async () => null,
+  };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier }),
+    /AUTHENTICATION_FAILED/,
+  );
+});
+
+test('normalizes native verifier exceptions during IPC startup', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-verifier-leak-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-verifier-leak-${Date.now()}` : join(stateDirectory, 'verifier-leak.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async () => { throw new Error('ACL tool failed at C:\\Users\\secret-owner'); },
+    verifyPeer: async () => null,
+  };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier }),
+    (error: Error) => /^AUTHENTICATION_FAILED:/.test(error.message) && !/secret-owner|ACL tool/.test(error.message),
+  );
+});
+
+test('normalizes raw daemon errors before they cross IPC', async () => {
+  const fixture = await ipcFixture();
+  const leakingDaemon = fixture.server;
+  await leakingDaemon.close();
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-leak-'));
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-leak-${Date.now()}` : join(stateDirectory, 'leak.sock');
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+  const daemon = { ...({} as BrokerDaemonV4), submit: async () => { throw new Error('ENOENT C:\\Users\\secret-owner\\private'); } };
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
 
-  const response = await server.exchangeFrameForTest(Buffer.from(JSON.stringify(request(token)), 'utf8'));
+  const response = await server.exchangeFrameForTest(Buffer.from(canonicalJsonV4(request(token)), 'utf8'));
 
-  assert.match(response.error ?? '', /AUTHENTICATION_FAILED/);
+  assert.match(response.error ?? '', /^UNKNOWN_FAILURE:/);
+  assert.doesNotMatch(response.error ?? '', /secret-owner|ENOENT/);
   await server.close();
+});
+
+test('replayed mutation over IPC returns the original run without another journal append', async () => {
+  const repositoryRoot = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-repo-'));
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-replay-'));
+  await mkdir(join(repositoryRoot, 'src'));
+  await writeFile(join(repositoryRoot, 'src', 'greeting.ts'), 'export const greeting = true;');
+  const daemon = createBrokerDaemon({
+    stateDirectory,
+    registry: { repositories: [{ repository_id: 'fixture-repo', canonical_root: repositoryRoot, policy_ref: 'policy', profile_ref: 'profile', worktree_parent: join(repositoryRoot, '.worktrees'), state_path: stateDirectory }] },
+    loadPolicy: async () => freezeRepositoryPolicy(validRepositoryPolicy() as RuntimeRepositoryPolicyV4),
+    loadProfile: async () => validRuntimeProfile() as RuntimeProfileV4,
+    resolveBaseSha: async () => 'b'.repeat(40),
+    sandboxProfiles: { 'executor-networked': {}, 'frontier-networked': {}, 'validation-untrusted': {}, 'review-capsule': {} },
+    inspectChanges: async (input) => input.changes.map((change) => ({ ...change, canonical_parent: join(repositoryRoot, 'src'), existed_at_freeze: true })),
+    generateRunId: () => 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    lockOwnerStatus: async () => 'dead',
+  });
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-replay-${Date.now()}` : join(stateDirectory, 'replay.sock');
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+  const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier });
+  const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
+  const client = createBrokerIpcClient({ endpoint, token });
+  const command = request(token).command;
+
+  const first = await client.submit(command);
+  const replay = await client.submit({ ...command, command_id: 'command-replayed' });
+  assert.equal(replay.run_id, first.run_id);
+  await client.close();
+  await server.close();
+  await daemon.close();
+  const journal = await reopenJournalV4(stateDirectory);
+  assert.equal(journal.records.length, 1);
+  await journal.close();
+});
+
+test('reclaims only a proven-stale owner-only Unix socket', async () => {
+  let removed = false;
+  await reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', {
+    metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true }),
+    probe: async () => 'stale',
+    remove: async () => { removed = true; },
+  });
+  assert.equal(removed, true);
+});
+
+test('refuses to reclaim a live or unverifiable Unix socket', async () => {
+  for (const probe of ['live', 'unknown'] as const) {
+    let removed = false;
+    await assert.rejects(
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => ({ kind: 'socket', owner_identity: 'uid:1000', owner_only: true }), probe: async () => probe, remove: async () => { removed = true; } }),
+      /REPOSITORY_BUSY/,
+    );
+    assert.equal(removed, false);
+  }
+});
+
+test('refuses to reclaim a stale Unix socket with wrong ownership or permissions', async () => {
+  for (const metadata of [
+    { kind: 'socket' as const, owner_identity: 'uid:2000', owner_only: true },
+    { kind: 'socket' as const, owner_identity: 'uid:1000', owner_only: false },
+  ]) {
+    await assert.rejects(
+      () => reclaimUnixSocketV4('/state/broker.sock', 'uid:1000', { metadata: async () => metadata, probe: async () => 'stale', remove: async () => {} }),
+      /AUTHENTICATION_FAILED/,
+    );
+  }
 });

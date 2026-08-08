@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { hashCanonicalV4 } from './canonical.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4 } from './contracts.js';
+import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import { inspectAllowedChanges, type InspectedChangeV4, type PathInspectionInputV4 } from './path-policy.js';
@@ -47,6 +48,7 @@ export interface BrokerDaemonDependenciesV4 {
   now?: () => string;
   lockOwnerStatus?: (owner: RepositoryLockOwnerV4) => Promise<LockOwnerStatusV4>;
   reconcileExternalProcess?: (runId: string, process: ExternalProcessIdentityV4) => Promise<'running' | 'terminated' | 'unknown'>;
+  writeStateCache?: typeof writeBrokerStateCacheV4;
 }
 
 const terminalStates = new Set(['FAILED', 'ABORTED', 'FINALIZED']);
@@ -57,6 +59,16 @@ function defaultRunId(): string {
 
 function commandId(prefix: string): string {
   return `${prefix}-${randomBytes(16).toString('hex')}`;
+}
+
+function normalizePublicError(error: unknown): Error {
+  if (error instanceof Error) {
+    const match = /^([A-Z_]+):\s*(.*)$/s.exec(error.message);
+    if (match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as typeof RUNTIME_FAILURE_CODES_V4[number])) {
+      return new Error(`${match[1]}: ${(match[2] || 'broker operation failed').replace(/[\r\n\0]/g, ' ').slice(0, 512)}`);
+    }
+  }
+  return new Error('UNKNOWN_FAILURE: broker operation failed');
 }
 
 function asFrozenPolicy(value: FrozenRepositoryPolicyV4 | RuntimeRepositoryPolicyV4): FrozenRepositoryPolicyV4 {
@@ -105,7 +117,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     let release!: () => void;
     mutationTail = new Promise<void>((resolve) => { release = resolve; });
     await prior;
-    try { return await operation(); } finally { release(); }
+    try { return await operation(); } catch (error) { throw normalizePublicError(error); } finally { release(); }
   };
 
   const requireOpen = (): void => {
@@ -135,8 +147,18 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   const persist = async (command: BrokerCommandV4): Promise<void> => {
     if (state === null || journal === null) throw new Error('BROKER_STATE_CORRUPT: daemon was not recovered');
     const next = reduceBrokerStateV4(state, command);
-    await journal.append(command);
-    await writeBrokerStateCacheV4(deps.stateDirectory, next, journal.records.length);
+    try {
+      await journal.append(command);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('BROKER_STATE_CORRUPT:')) throw error;
+      throw new Error('BROKER_STATE_CORRUPT: durable journal append failed');
+    }
+    try {
+      await (deps.writeStateCache ?? writeBrokerStateCacheV4)(deps.stateDirectory, next, journal.records.length);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('BROKER_STATE_CORRUPT:')) throw error;
+      throw new Error('BROKER_STATE_CORRUPT: durable state cache replacement failed');
+    }
     state = next;
   };
 

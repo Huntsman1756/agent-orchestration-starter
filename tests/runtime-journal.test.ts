@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { mkdtemp } from 'node:fs/promises';
 
-import { createJournalV4, reopenJournalV4 } from '../src/runtime/journal.js';
+import { appendJournalRecord, createJournalV4, reopenJournalV4, type JournalRecordV4 } from '../src/runtime/journal.js';
+import type { FileHandle } from 'node:fs/promises';
 import { canonicalJsonV4, hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { BrokerCommandV4 } from '../src/runtime/run-state.js';
 import type { RuntimeResultV4, RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
@@ -120,4 +121,27 @@ test('refuses a caller command before it can corrupt the durable journal', async
 
   assert.equal(journal.records.length, 0);
   await journal.close();
+});
+
+test('loops over short writes before fsyncing a journal record', async () => {
+  const command = accepted('short-write');
+  const draft = { sequence: 1, previous_hash: null, command, recorded_at: '2026-08-08T12:00:00.000Z' };
+  const record = { ...draft, record_hash: hashCanonicalV4(draft) } as JournalRecordV4;
+  const expected = Buffer.from(`${canonicalJsonV4(record)}\n`, 'utf8');
+  let written = Buffer.alloc(0);
+  let synced = false;
+  const file = {
+    write: async (data: string | Uint8Array, offset = 0, length?: number) => {
+      const source = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data).subarray(offset, length === undefined ? undefined : offset + length);
+      const chunk = source.subarray(0, Math.max(1, Math.floor(source.length / 2)));
+      written = Buffer.concat([written, chunk]);
+      return { bytesWritten: chunk.length, buffer: data };
+    },
+    sync: async () => { synced = true; },
+  } as unknown as FileHandle;
+
+  await appendJournalRecord(file, record);
+
+  assert.deepEqual(written, expected);
+  assert.equal(synced, true);
 });

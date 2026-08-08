@@ -169,8 +169,10 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
   }
 
   const run = requireRun(state, command.run_id);
+  if (new Set(['FAILED', 'ABORTED', 'FINALIZED']).has(run.result.state)) corrupt(`terminal run ${command.run_id} cannot transition`);
   let nextRun: BrokerRunStateV4;
   if (command.type === 'ATTEMPT_RECORDED') {
+    if (run.result.state !== 'EXECUTION_STARTED' || run.external_process === null) corrupt(`attempt can only complete active execution for ${command.run_id}`);
     if (command.attempt.attempt !== run.result.attempts.length + 1) corrupt(`attempt sequence is invalid for ${command.run_id}`);
     nextRun = {
       ...run,
@@ -179,9 +181,11 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
       external_process: null,
     };
   } else if (command.type === 'PATHS_REINSPECTED') {
+    if (run.result.state !== 'AWAITING_REINSPECTION' || !run.inspection_required || run.external_process !== null) corrupt(`reinspection is not pending for ${command.run_id}`);
     if (command.inspection_epoch <= run.inspection_epoch) corrupt(`inspection epoch did not advance for ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'READY_FOR_EXECUTOR' }, inspection_epoch: command.inspection_epoch, inspection_required: false };
   } else if (command.type === 'EXTERNAL_PROCESS_STARTED') {
+    if (run.result.state !== 'READY_FOR_EXECUTOR' || run.inspection_required || run.external_process !== null) corrupt(`executor launch is not allowed for ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'EXECUTION_STARTED' }, external_process: command.process };
   } else {
     nextRun = { ...run, result: { ...run.result, state: 'FAILED', failure: command.failure }, external_process: null };
@@ -196,12 +200,22 @@ export function replayBrokerStateV4(commands: readonly BrokerCommandV4[]): Broke
 interface StateCacheV4 { sequence: number; state_hash: string; state: BrokerStateV4 }
 
 async function syncDirectory(directory: string): Promise<void> {
-  const handle = await open(directory, 'r').catch(() => null);
-  if (handle === null) return;
-  try { await handle.sync(); } catch { /* Windows may not fsync directories. */ } finally { await handle.close(); }
+  const handle = await open(directory, 'r');
+  try {
+    await handle.sync();
+  } catch (error: unknown) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // Node on Windows reports EPERM for directory fsync; the temp file itself was
+    // fsynced before the atomic MoveFileEx-backed rename. No other error is ignored.
+    if (!(process.platform === 'win32' && code === 'EPERM')) throw error;
+  } finally {
+    await handle.close();
+  }
 }
 
-export async function writeBrokerStateCacheV4(directory: string, state: BrokerStateV4, sequence: number): Promise<void> {
+export interface StateCacheDurabilityV4 { syncDirectory?: (directory: string) => Promise<void> }
+
+export async function writeBrokerStateCacheV4(directory: string, state: BrokerStateV4, sequence: number, durability: StateCacheDurabilityV4 = {}): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const target = join(directory, STATE_CACHE_FILE_V4);
   const temporary = join(directory, `${STATE_CACHE_FILE_V4}.${process.pid}.${Date.now()}.tmp`);
@@ -215,7 +229,7 @@ export async function writeBrokerStateCacheV4(directory: string, state: BrokerSt
   }
   try {
     await rename(temporary, target);
-    await syncDirectory(directory);
+    await (durability.syncDirectory ?? syncDirectory)(directory);
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
@@ -238,9 +252,10 @@ export async function recoverBrokerStateV4(directory: string): Promise<{ state: 
     }
     let cache: StateCacheV4;
     try { cache = JSON.parse(bytes) as StateCacheV4; } catch { corrupt('current-state cache is invalid JSON'); }
-    if (cache.sequence !== sequence || cache.state_hash !== hashCanonicalV4(state) || cache.state_hash !== hashCanonicalV4(cache.state)) {
-      corrupt('current-state cache disagrees with journal replay');
-    }
+    if (!Number.isSafeInteger(cache.sequence) || cache.sequence < 0 || cache.sequence > sequence) corrupt('current-state cache sequence is outside the journal');
+    const prefixState = replayBrokerStateV4(journal.records.slice(0, cache.sequence).map((record) => record.command));
+    if (cache.state_hash !== hashCanonicalV4(prefixState) || cache.state_hash !== hashCanonicalV4(cache.state)) corrupt('current-state cache disagrees with journal replay');
+    if (cache.sequence < sequence) await writeBrokerStateCacheV4(directory, state, sequence);
     return { state, sequence };
   } finally {
     await journal.close();
