@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 as win32Path } from 'node:path';
 import test from 'node:test';
 
-import { inspectAllowedChanges } from '../src/runtime/path-policy.js';
+import { inspectAllowedChanges, type PathMetadataProviderV4 } from '../src/runtime/path-policy.js';
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'runner-v4-paths-'));
@@ -16,13 +16,48 @@ function fixture() {
   return root;
 }
 
-async function launchAfterInspection(root: string, path: string, executor: () => void) {
+async function launchAfterInspection(
+  root: string,
+  changes: readonly { path: string; operations: readonly ('CREATE' | 'MODIFY' | 'DELETE')[] }[],
+  executor: () => void,
+  extra: Record<string, unknown> = {},
+) {
   await inspectAllowedChanges({
     repositoryRoot: root,
-    changes: [{ path, operations: ['MODIFY'] }],
-    platform: 'win32',
+    changes,
+    platform: process.platform,
+    ...extra,
   });
   executor();
+}
+
+function virtualWindowsMetadata(options: {
+  canonicalParents?: Readonly<Record<string, string>>;
+  mountIds?: Readonly<Record<string, string>>;
+  reparsePaths?: readonly string[];
+} = {}): PathMetadataProviderV4 {
+  const root = 'C:\\repo';
+  const source = 'C:\\repo\\src';
+  const directories = new Set([root, source, ...Object.values(options.canonicalParents ?? {})]);
+  const reparsePaths = new Set(options.reparsePaths ?? []);
+  const entry = (isDirectory: boolean) => ({ isDirectory: () => isDirectory, isSymbolicLink: () => false, dev: 7 });
+  const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
+  return {
+    realpath: async (path) => {
+      if (path === root || path === source || directories.has(path)) return options.canonicalParents?.[path] ?? path;
+      throw missing();
+    },
+    lstat: async (path) => {
+      if (directories.has(path)) return entry(true);
+      throw missing();
+    },
+    stat: async (path) => {
+      if (directories.has(path)) return entry(true);
+      throw missing();
+    },
+    mountIdentity: async (path) => options.mountIds?.[path] ?? 'volume-guid-a',
+    isReparsePoint: async (path) => reparsePaths.has(path),
+  };
 }
 
 test('records the canonical parent and existence of a safe allowed change', async () => {
@@ -31,7 +66,7 @@ test('records the canonical parent and existence of a safe allowed change', asyn
   const [change] = await inspectAllowedChanges({
     repositoryRoot: root,
     changes: [{ path: 'src/normal.ts', operations: ['MODIFY'] }],
-    platform: 'win32',
+    platform: process.platform,
   });
 
   assert.equal(change.existed_at_freeze, true);
@@ -43,7 +78,7 @@ test('rejects symlink escapes and prevents executor launch', async () => {
   let launched = false;
 
   await assert.rejects(
-    () => launchAfterInspection(root, 'escape/sentinel.txt', () => { launched = true; }),
+    () => launchAfterInspection(root, [{ path: 'escape/sentinel.txt', operations: ['MODIFY'] }], () => { launched = true; }),
     /OUT_OF_SCOPE_CHANGE/,
   );
 
@@ -55,33 +90,92 @@ test('rejects a missing path below a symlinked parent before launch', async () =
   let launched = false;
 
   await assert.rejects(
-    () => launchAfterInspection(root, 'escape/new-file.ts', () => { launched = true; }),
+    () => launchAfterInspection(root, [{ path: 'escape/new-file.ts', operations: ['MODIFY'] }], () => { launched = true; }),
     /OUT_OF_SCOPE_CHANGE/,
   );
 
   assert.equal(launched, false);
 });
 
-test('rejects Windows ADS-shaped names and case-fold collisions', async () => {
+test('rejects every lexical unsafe path before the executor launches', async () => {
   const root = fixture();
+  const unsafeChanges = [
+    [{ path: 'src/normal.ts:stream', operations: ['MODIFY'] }],
+    [
+      { path: 'src/Normal.ts', operations: ['MODIFY'] },
+      { path: 'src/normal.ts', operations: ['MODIFY'] },
+    ],
+  ] as const;
+
+  for (const changes of unsafeChanges) {
+    let launched = false;
+    await assert.rejects(
+      () => launchAfterInspection(root, changes, () => { launched = true; }),
+      /OUT_OF_SCOPE_CHANGE/,
+    );
+    assert.equal(launched, false);
+  }
+});
+
+test('rejects a same-device mount identity change before the executor launches', async () => {
+  let launched = false;
+  await assert.rejects(
+    () => launchAfterInspection('C:\\repo', [{ path: 'src/new.ts', operations: ['CREATE'] }], () => { launched = true; }, {
+      pathApi: win32Path,
+      metadata: virtualWindowsMetadata({ mountIds: { 'C:\\repo': 'volume-guid-a', 'C:\\repo\\src': 'volume-guid-b' } }),
+    }),
+    /mount identity changed/,
+  );
+  assert.equal(launched, false);
+});
+
+test('rejects generic Windows reparse metadata before the executor launches', async () => {
+  let launched = false;
+  await assert.rejects(
+    () => launchAfterInspection('C:\\repo', [{ path: 'src/new.ts', operations: ['CREATE'] }], () => { launched = true; }, {
+      pathApi: win32Path,
+      metadata: virtualWindowsMetadata({ reparsePaths: ['C:\\repo\\src'] }),
+    }),
+    /reparse metadata/,
+  );
+  assert.equal(launched, false);
+});
+
+test('rejects a Windows cross-volume canonical parent before the executor launches', async () => {
+  let launched = false;
+  await assert.rejects(
+    () => launchAfterInspection('C:\\repo', [{ path: 'src/new.ts', operations: ['CREATE'] }], () => { launched = true; }, {
+      pathApi: win32Path,
+      metadata: virtualWindowsMetadata({ canonicalParents: { 'C:\\repo\\src': 'D:\\external' } }),
+    }),
+    /canonical parent outside repository root/,
+  );
+  assert.equal(launched, false);
+});
+
+test('deep-freezes inspected operations against caller mutation', async () => {
+  const root = fixture();
+  const operations: ('MODIFY' | 'DELETE')[] = ['MODIFY'];
+  const [inspected] = await inspectAllowedChanges({
+    repositoryRoot: root,
+    changes: [{ path: 'src/normal.ts', operations }],
+    platform: process.platform,
+  });
+
+  operations[0] = 'DELETE';
+
+  assert.deepEqual(inspected.operations, ['MODIFY']);
+  assert.equal(Object.isFrozen(inspected.operations), true);
+});
+
+test('rejects unsupported platform metadata before the executor launches', async () => {
+  const root = fixture();
+  let launched = false;
 
   await assert.rejects(
-    () => inspectAllowedChanges({
-      repositoryRoot: root,
-      changes: [{ path: 'src/normal.ts:stream', operations: ['MODIFY'] }],
-      platform: 'win32',
-    }),
-    /OUT_OF_SCOPE_CHANGE/,
+    () => launchAfterInspection(root, [{ path: 'src/normal.ts', operations: ['MODIFY'] }], () => { launched = true; }, { platform: 'aix' }),
+    /mount identity unavailable/,
   );
-  await assert.rejects(
-    () => inspectAllowedChanges({
-      repositoryRoot: root,
-      changes: [
-        { path: 'src/Normal.ts', operations: ['MODIFY'] },
-        { path: 'src/normal.ts', operations: ['MODIFY'] },
-      ],
-      platform: 'win32',
-    }),
-    /OUT_OF_SCOPE_CHANGE/,
-  );
+
+  assert.equal(launched, false);
 });
