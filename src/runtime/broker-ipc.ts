@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
+import { join, posix, resolve, win32 } from 'node:path';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
@@ -44,11 +44,53 @@ export interface BrokerIpcDependenciesV4 {
   closeServer?: (server: Server) => Promise<void>;
   endpointCoordinator: ReclamationCoordinatorV4;
   allowInProcessCoordinatorForTests?: boolean;
+  unixPhysicalPathBackend?: UnixPhysicalPathBackendV4;
+  allowInProcessPhysicalPathBackendForTests?: boolean;
 }
 
 export interface BrokerIpcPlatformVerifierV4 {
   verifyOwnerOnlyPath(input: { path: string; kind: 'state-directory' | 'token-file' | 'endpoint'; expected_owner_identity: string }): Promise<{ owner_identity: string } | null>;
   verifyPeer(input: { socket?: Socket; endpoint: string; expected_owner_identity: string }): Promise<{ owner_identity: string } | null>;
+}
+
+export type UnixPhysicalPathComponentKindV4 = 'directory' | 'symbolic-link' | 'reparse-alias' | 'other' | 'unknown';
+
+export interface UnixPhysicalPathComponentV4 {
+  kind: UnixPhysicalPathComponentKindV4;
+  object_identity: string | null;
+  owner_identity: string | null;
+  owner_trusted: boolean;
+  writable_by_untrusted: boolean;
+  owner_only: boolean;
+}
+
+export interface UnixPhysicalPathInspectionV4 {
+  operation_path: string;
+  chain_complete: boolean;
+  components: readonly UnixPhysicalPathComponentV4[];
+}
+
+/**
+ * Trusted Unix boundary. A native implementation must walk every existing
+ * component with no-follow metadata and keep the proven physical directory
+ * binding valid for the complete callback. If it cannot bind that identity
+ * across the callback's syscall, it must reject instead of invoking it.
+ */
+export interface UnixPhysicalPathBackendV4 {
+  certification: { kind: 'native-physical-path' | 'in-process-test'; identity: string };
+  certifyStateDirectory(input: { state_directory: string; expected_owner_identity: string }): Promise<UnixPhysicalPathInspectionV4>;
+  withReprovedStateDirectory<T>(
+    input: { operation_path: string; expected_owner_identity: string; component_identities: readonly string[] },
+    operation: (inspection: UnixPhysicalPathInspectionV4) => Promise<T>,
+  ): Promise<T>;
+}
+
+export interface UnixPhysicalPathSecurityV4 {
+  stateDirectory: string;
+  expectedOwnerIdentity: string;
+  unixPhysicalPathBackend: UnixPhysicalPathBackendV4;
+  allowInProcessPhysicalPathBackendForTests?: boolean;
+  allowInProcessCoordinatorForTests?: boolean;
 }
 
 export interface UnixSocketMetadataV4 { kind: 'socket' | 'other'; owner_identity: string; owner_only: boolean; object_identity: string }
@@ -68,11 +110,16 @@ export interface BrokerIpcServerV4 {
 
 export interface BrokerIpcClientConfigV4 {
   endpoint: string;
+  stateDirectory?: string;
   token: string;
   requestDeadlineMs?: number;
   platform?: NodeJS.Platform;
   serverIdentityVerifier?: BrokerIpcServerIdentityVerifierV4;
   connect?: (endpoint: string) => Socket;
+  endpointCoordinator?: ReclamationCoordinatorV4;
+  allowInProcessCoordinatorForTests?: boolean;
+  unixPhysicalPathBackend?: UnixPhysicalPathBackendV4;
+  allowInProcessPhysicalPathBackendForTests?: boolean;
 }
 
 export interface BrokerIpcServerIdentityVerifierV4 {
@@ -123,18 +170,135 @@ function loadBrokerIpcLocationV4(
   stateDirectory: string,
   configuredEndpoint: string | undefined,
   platform: NodeJS.Platform,
+  certifiedUnixOperationPath?: string,
 ): { stateDirectory: string; endpoint: string } {
-  const canonicalStateDirectory = resolve(stateDirectory);
-  const requestedEndpoint = configuredEndpoint ?? defaultBrokerEndpointV4(canonicalStateDirectory, platform);
   if (platform === 'win32') {
+    const canonicalStateDirectory = resolve(stateDirectory);
+    const requestedEndpoint = configuredEndpoint ?? defaultBrokerEndpointV4(canonicalStateDirectory, platform);
     return { stateDirectory: canonicalStateDirectory, endpoint: canonicalWindowsNamedPipeEndpointV4(requestedEndpoint) };
   }
-  const canonicalEndpoint = resolve(requestedEndpoint);
-  const relativeEndpoint = relative(canonicalStateDirectory, canonicalEndpoint);
-  if (relativeEndpoint.length === 0 || relativeEndpoint === '..' || relativeEndpoint.startsWith(`..${sep}`) || isAbsolute(relativeEndpoint)) {
+  const requestedStateDirectory = posix.resolve(stateDirectory);
+  const requestedEndpoint = posix.resolve(configuredEndpoint ?? posix.join(requestedStateDirectory, 'broker.sock'));
+  const relativeEndpoint = posix.relative(requestedStateDirectory, requestedEndpoint);
+  if (relativeEndpoint.length === 0 || relativeEndpoint === '..' || relativeEndpoint.startsWith('../') || posix.isAbsolute(relativeEndpoint)) {
     throw new Error('AUTHENTICATION_FAILED: Unix socket must be inside owner-only state directory');
   }
-  return { stateDirectory: canonicalStateDirectory, endpoint: canonicalEndpoint };
+  const operationStateDirectory = certifiedUnixOperationPath ?? requestedStateDirectory;
+  return { stateDirectory: operationStateDirectory, endpoint: posix.join(operationStateDirectory, relativeEndpoint) };
+}
+
+interface CertifiedUnixPhysicalPathV4 {
+  display_path: string;
+  operation_path: string;
+  expected_owner_identity: string;
+  component_identities: readonly string[];
+  coordinator_key: string;
+}
+
+interface UnixPhysicalCriticalSectionV4 {
+  runSensitive<T>(operation: () => Promise<T>): Promise<T>;
+}
+
+function physicalPathRejected(): never {
+  throw new Error('AUTHENTICATION_FAILED: Unix physical state path verification failed');
+}
+
+function loadUnixPhysicalInspectionV4(inspection: UnixPhysicalPathInspectionV4, expectedOwnerIdentity: string): UnixPhysicalPathInspectionV4 {
+  if (inspection === null || typeof inspection !== 'object' || inspection.chain_complete !== true || !posix.isAbsolute(inspection.operation_path) || inspection.operation_path.includes('\0')) {
+    physicalPathRejected();
+  }
+  if (!Array.isArray(inspection.components) || inspection.components.length === 0) physicalPathRejected();
+  const identities = new Set<string>();
+  for (const component of inspection.components) {
+    if (component === null || typeof component !== 'object' || component.kind !== 'directory') physicalPathRejected();
+    if (typeof component.object_identity !== 'string' || component.object_identity.length < 1 || component.object_identity.length > 256 || /[\0\r\n]/.test(component.object_identity)) physicalPathRejected();
+    if (identities.has(component.object_identity)) physicalPathRejected();
+    identities.add(component.object_identity);
+    if (typeof component.owner_identity !== 'string' || component.owner_identity.length < 1 || component.owner_identity.length > 256 || /[\0\r\n]/.test(component.owner_identity)) physicalPathRejected();
+    if (component.owner_trusted !== true || component.writable_by_untrusted !== false) physicalPathRejected();
+  }
+  const stateDirectory = inspection.components.at(-1)!;
+  if (stateDirectory.owner_identity !== expectedOwnerIdentity || stateDirectory.owner_only !== true) physicalPathRejected();
+  return Object.freeze({
+    operation_path: inspection.operation_path,
+    chain_complete: true,
+    components: Object.freeze(inspection.components.map((component) => Object.freeze({ ...component }))),
+  });
+}
+
+function assertUnixPhysicalBackendV4(backend: UnixPhysicalPathBackendV4 | undefined, allowInProcessForTests: boolean | undefined): UnixPhysicalPathBackendV4 {
+  if (backend === undefined || backend === null || typeof backend !== 'object') throw new Error('AUTHENTICATION_FAILED: certified Unix physical-path backend is required');
+  const certification = backend.certification;
+  if (certification === null || typeof certification !== 'object' || certification.kind !== 'native-physical-path' && certification.kind !== 'in-process-test') {
+    throw new Error('AUTHENTICATION_FAILED: Unix physical-path backend certification is invalid');
+  }
+  if (certification.kind !== 'native-physical-path' && !allowInProcessForTests) {
+    throw new Error('AUTHENTICATION_FAILED: native Unix physical-path backend is required');
+  }
+  if (typeof certification.identity !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(certification.identity)) throw new Error('AUTHENTICATION_FAILED: Unix physical-path backend identity is invalid');
+  if (typeof backend.certifyStateDirectory !== 'function' || typeof backend.withReprovedStateDirectory !== 'function') {
+    throw new Error('AUTHENTICATION_FAILED: Unix physical-path backend contract is invalid');
+  }
+  return backend;
+}
+
+async function certifyUnixPhysicalPathV4(
+  stateDirectory: string,
+  expectedOwnerIdentity: string,
+  backend: UnixPhysicalPathBackendV4,
+): Promise<CertifiedUnixPhysicalPathV4> {
+  let inspection: UnixPhysicalPathInspectionV4;
+  try {
+    inspection = loadUnixPhysicalInspectionV4(
+      await callAdapter(() => backend.certifyStateDirectory({ state_directory: stateDirectory, expected_owner_identity: expectedOwnerIdentity })),
+      expectedOwnerIdentity,
+    );
+  } catch {
+    physicalPathRejected();
+  }
+  const componentIdentities = Object.freeze(inspection.components.map((component) => component.object_identity!));
+  return Object.freeze({
+    display_path: stateDirectory,
+    operation_path: inspection.operation_path,
+    expected_owner_identity: expectedOwnerIdentity,
+    component_identities: componentIdentities,
+    coordinator_key: `ipc-state-physical:${hashCanonicalV4({ component_identities: componentIdentities })}`,
+  });
+}
+
+function samePhysicalComponentIdentitiesV4(expected: readonly string[], observed: readonly UnixPhysicalPathComponentV4[]): boolean {
+  return expected.length === observed.length && expected.every((identity, index) => identity === observed[index]?.object_identity);
+}
+
+async function runUnixPhysicalCriticalSectionV4<T>(
+  certified: CertifiedUnixPhysicalPathV4,
+  backend: UnixPhysicalPathBackendV4,
+  coordinator: ReclamationCoordinatorV4,
+  operation: (critical: UnixPhysicalCriticalSectionV4) => Promise<T>,
+): Promise<T> {
+  return callAdapter(() => coordinator.runExclusive(certified.coordinator_key, async () => operation({
+    runSensitive: async <U>(sensitiveOperation: () => Promise<U>): Promise<U> => {
+      let sensitiveOperationEntered = false;
+      try {
+        return await callAdapter(() => backend.withReprovedStateDirectory(
+          {
+            operation_path: certified.operation_path,
+            expected_owner_identity: certified.expected_owner_identity,
+            component_identities: certified.component_identities,
+          },
+          async (inspection) => {
+            const observed = loadUnixPhysicalInspectionV4(inspection, certified.expected_owner_identity);
+            if (!samePhysicalComponentIdentitiesV4(certified.component_identities, observed.components)) physicalPathRejected();
+            sensitiveOperationEntered = true;
+            return sensitiveOperation();
+          },
+        ));
+      } catch (error) {
+        if (!sensitiveOperationEntered) physicalPathRejected();
+        throw error;
+      }
+    },
+  })));
 }
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[], name: string): void {
@@ -196,6 +360,13 @@ function failureCode(value: unknown): RuntimeFailureCodeV4 {
 function normalizedBoundaryMessage(error: unknown): string {
   const code = failureCode(error);
   return `${code}: ${PUBLIC_FAILURE_MESSAGES_V4[code]}`;
+}
+
+function isSafeOwnerProofFailureV4(error: unknown): error is Error {
+  return error instanceof Error && (
+    error.message === 'AUTHENTICATION_FAILED: native state-directory ownership/ACL proof failed'
+    || error.message === 'AUTHENTICATION_FAILED: native token-file ownership/ACL proof failed'
+  );
 }
 
 export function normalizeBrokerResponseErrorV4(value: unknown): string {
@@ -329,14 +500,22 @@ export async function removeOwnedUnixEndpointV4(
   ownedObjectIdentity: string,
   deps: { metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>; remove(endpoint: string): Promise<void> },
   coordinator: ReclamationCoordinatorV4,
+  security: UnixPhysicalPathSecurityV4,
 ): Promise<void> {
-  const canonicalEndpoint = posix.resolve(endpoint);
   try {
-    await callAdapter(() => coordinator.runExclusive(
-      `ipc-endpoint:${canonicalEndpoint}`,
-      () => removeOwnedUnixEndpointInsideCoordinatorV4(canonicalEndpoint, ownedObjectIdentity, deps),
+    if (coordinator.certification.kind !== 'native-cross-process' && !security.allowInProcessCoordinatorForTests) {
+      throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
+    }
+    if (coordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
+    const backend = assertUnixPhysicalBackendV4(security.unixPhysicalPathBackend, security.allowInProcessPhysicalPathBackendForTests);
+    const requestedLocation = loadBrokerIpcLocationV4(security.stateDirectory, endpoint, 'linux');
+    const certified = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, security.expectedOwnerIdentity, backend);
+    const location = loadBrokerIpcLocationV4(security.stateDirectory, endpoint, 'linux', certified.operation_path);
+    await runUnixPhysicalCriticalSectionV4(certified, backend, coordinator, (critical) => critical.runSensitive(
+      () => removeOwnedUnixEndpointInsideCoordinatorV4(location.endpoint, ownedObjectIdentity, deps),
     ));
-  } catch {
+  } catch (error) {
+    if (failureCode(error) === 'AUTHENTICATION_FAILED') throw new Error(normalizedBoundaryMessage(error));
     throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
   }
 }
@@ -442,17 +621,31 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
   }
   if (deps.endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
-  const location = loadBrokerIpcLocationV4(deps.stateDirectory, deps.endpoint, platform);
   const expectedOwnerIdentity = platformOwnerIdentity(platform);
-  await verifyOwnerOnlyState(location.stateDirectory, platform).catch((error) => {
-    if (error instanceof Error && error.message.startsWith('AUTHENTICATION_FAILED:')) throw error;
-    throw new Error('AUTHENTICATION_FAILED: broker state verification failed');
-  });
-  const token = await callAdapter(() => (deps.loadToken ?? loadOrCreateToken)(location.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
+  const requestedLocation = loadBrokerIpcLocationV4(deps.stateDirectory, deps.endpoint, platform);
+  let physicalBackend: UnixPhysicalPathBackendV4 | null = null;
+  let certifiedUnixPath: CertifiedUnixPhysicalPathV4 | null = null;
+  if (platform !== 'win32') {
+    physicalBackend = assertUnixPhysicalBackendV4(deps.unixPhysicalPathBackend, deps.allowInProcessPhysicalPathBackendForTests);
+    certifiedUnixPath = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, expectedOwnerIdentity, physicalBackend);
+  }
+  const location = platform === 'win32'
+    ? requestedLocation
+    : loadBrokerIpcLocationV4(deps.stateDirectory, deps.endpoint, platform, certifiedUnixPath!.operation_path);
+  let token = '';
+  if (platform === 'win32') {
+    await verifyOwnerOnlyState(location.stateDirectory, platform).catch((error) => {
+      if (error instanceof Error && error.message.startsWith('AUTHENTICATION_FAILED:')) throw error;
+      throw new Error('AUTHENTICATION_FAILED: broker state verification failed');
+    });
+    token = await callAdapter(() => (deps.loadToken ?? loadOrCreateToken)(location.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
+  }
   const endpoint = location.endpoint;
-  for (const [path, kind] of [[location.stateDirectory, 'state-directory'], [join(location.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
-    const proof = await callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity })).catch(() => null);
-    if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
+  if (platform === 'win32') {
+    for (const [path, kind] of [[location.stateDirectory, 'state-directory'], [join(location.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
+      const proof = await callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity })).catch(() => null);
+      if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
+    }
   }
 
   const exchange = async (payload: Buffer, socket?: Socket): Promise<BrokerIpcResponseV4> => {
@@ -511,23 +704,31 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   } catch {
     throw new Error('UNKNOWN_FAILURE: local IPC startup failed');
   }
-  const endpointCoordinatorKey = `ipc-endpoint:${endpoint}`;
+  const endpointCoordinatorKey = certifiedUnixPath?.coordinator_key ?? `ipc-endpoint:${endpoint}`;
+  const runEndpointCriticalSection = async <T>(operation: (critical: UnixPhysicalCriticalSectionV4) => Promise<T>): Promise<T> => {
+    if (platform !== 'win32') {
+      return runUnixPhysicalCriticalSectionV4(certifiedUnixPath!, physicalBackend!, deps.endpointCoordinator, operation);
+    }
+    return callAdapter(() => deps.endpointCoordinator.runExclusive(endpointCoordinatorKey, () => operation({
+      runSensitive: <U>(sensitiveOperation: () => Promise<U>) => callAdapter(sensitiveOperation),
+    })));
+  };
   let ownedUnixEndpointIdentity: string | null = null;
   const closeNativeServer = async (): Promise<void> => {
     if (!server.listening) return;
     await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error === undefined ? resolveClose() : rejectClose(error)));
   };
-  const closeAndCleanOwnedEndpoint = async (closeOperation: () => Promise<void>): Promise<Error | null> => {
+  const closeAndCleanOwnedEndpoint = async (closeOperation: () => Promise<void>, critical: UnixPhysicalCriticalSectionV4): Promise<Error | null> => {
     let failure: Error | null = null;
     try {
-      await callAdapter(closeOperation);
+      await critical.runSensitive(closeOperation);
     } catch {
       failure = new Error('UNKNOWN_FAILURE: local IPC close failed');
-      await closeNativeServer().catch(() => undefined);
+      await critical.runSensitive(closeNativeServer).catch(() => undefined);
     }
     if (platform !== 'win32' && ownedUnixEndpointIdentity !== null && !server.listening) {
       try {
-        await removeOwnedUnixEndpointInsideCoordinatorV4(endpoint, ownedUnixEndpointIdentity);
+        await critical.runSensitive(() => removeOwnedUnixEndpointInsideCoordinatorV4(endpoint, ownedUnixEndpointIdentity!));
         ownedUnixEndpointIdentity = null;
       } catch {
         failure = new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
@@ -536,37 +737,45 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     return failure;
   };
   try {
-    await callAdapter(() => deps.endpointCoordinator.runExclusive(endpointCoordinatorKey, async () => {
-      if (platform !== 'win32') await reclaimUnixSocketV4(endpoint, expectedOwnerIdentity);
-      await listen(server, endpoint).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+    await runEndpointCriticalSection(async (critical) => {
       if (platform !== 'win32') {
-        ownedUnixEndpointIdentity = await secureUnixEndpointV4(endpoint, expectedOwnerIdentity, {
+        token = await critical.runSensitive(() => (deps.loadToken ?? loadOrCreateToken)(location.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
+        for (const [path, kind] of [[location.stateDirectory, 'state-directory'], [posix.join(location.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
+          const proof = await critical.runSensitive(() => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity }))).catch(() => null);
+          if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
+        }
+        await critical.runSensitive(() => reclaimUnixSocketV4(endpoint, expectedOwnerIdentity));
+      }
+      await critical.runSensitive(() => listen(server, endpoint)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+      if (platform !== 'win32') {
+        ownedUnixEndpointIdentity = await critical.runSensitive(() => secureUnixEndpointV4(endpoint, expectedOwnerIdentity, {
           metadata: defaultUnixMetadata,
           secure: async (path) => chmod(path, 0o600),
           verify: async (path, owner) => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind: 'endpoint', expected_owner_identity: owner })),
           close: closeNativeServer,
           remove: unlink,
-        });
+        }));
       } else try {
-        const endpointProof = await callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity })).catch(() => null);
+        const endpointProof = await critical.runSensitive(() => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity }))).catch(() => null);
         if (endpointProof?.owner_identity !== expectedOwnerIdentity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
       } catch (error) {
-        await closeNativeServer().catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC close failed'); });
+        await critical.runSensitive(closeNativeServer).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC close failed'); });
         throw new Error(normalizedBoundaryMessage(error));
       }
-    }));
+    });
   } catch (error) {
     if (server.listening || ownedUnixEndpointIdentity !== null) {
       let cleanupEntered = false;
       try {
-        await callAdapter(() => deps.endpointCoordinator.runExclusive(endpointCoordinatorKey, async () => {
+        await runEndpointCriticalSection(async (critical) => {
           cleanupEntered = true;
-          await closeAndCleanOwnedEndpoint(closeNativeServer);
-        }));
+          await closeAndCleanOwnedEndpoint(closeNativeServer, critical);
+        });
       } catch {
-        if (!cleanupEntered) await closeNativeServer().catch(() => undefined);
+        if (platform === 'win32' && !cleanupEntered) await closeNativeServer().catch(() => undefined);
       }
     }
+    if (isSafeOwnerProofFailureV4(error)) throw error;
     throw new Error(normalizedBoundaryMessage(error));
   }
 
@@ -579,12 +788,10 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
       closePromise = (async () => {
         let closeFailure: Error | null;
         try {
-          closeFailure = await callAdapter(() => deps.endpointCoordinator.runExclusive(
-            endpointCoordinatorKey,
-            () => closeAndCleanOwnedEndpoint(
+          closeFailure = await runEndpointCriticalSection((critical) => closeAndCleanOwnedEndpoint(
               deps.closeServer === undefined ? closeNativeServer : () => callAdapter(() => deps.closeServer!(server)),
-            ),
-          ));
+              critical,
+            ));
         } catch {
           throw new Error('UNKNOWN_FAILURE: local IPC close failed');
         }
@@ -598,7 +805,18 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
 export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIpcClientV4 {
   const deadline = config.requestDeadlineMs ?? 5_000;
   if (config.serverIdentityVerifier === undefined) throw new Error('AUTHENTICATION_FAILED: trusted server identity verifier is required');
-  const expectedOwnerIdentity = platformOwnerIdentity(config.platform ?? process.platform);
+  const platform = config.platform ?? process.platform;
+  const expectedOwnerIdentity = platformOwnerIdentity(platform);
+  let physicalBackend: UnixPhysicalPathBackendV4 | null = null;
+  let endpointCoordinator: ReclamationCoordinatorV4 | null = null;
+  if (platform !== 'win32') {
+    physicalBackend = assertUnixPhysicalBackendV4(config.unixPhysicalPathBackend, config.allowInProcessPhysicalPathBackendForTests);
+    endpointCoordinator = config.endpointCoordinator ?? null;
+    if (endpointCoordinator === null || endpointCoordinator.certification.kind !== 'native-cross-process' && !config.allowInProcessCoordinatorForTests) {
+      throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
+    }
+    if (endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
+  }
   const acceptedRuns = new Map<string, string>();
   let closed = false;
   return {
@@ -609,16 +827,32 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
       catch (error) { throw new Error(normalizedBoundaryMessage(error)); }
       const request: BrokerIpcRequestV4 = { token: config.token, command: submittedCommand };
       const frame = encodeFrame(request);
+      let endpoint = config.endpoint;
+      let socket: Socket;
+      if (platform !== 'win32') {
+        const configuredStateDirectory = config.stateDirectory ?? posix.dirname(config.endpoint);
+        const requestedLocation = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform);
+        const certified = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, expectedOwnerIdentity, physicalBackend!);
+        const location = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform, certified.operation_path);
+        endpoint = location.endpoint;
+        try {
+          socket = await runUnixPhysicalCriticalSectionV4(certified, physicalBackend!, endpointCoordinator!, (critical) => critical.runSensitive(async () => (
+            config.connect ?? createConnection
+          )(endpoint)));
+        } catch (error) {
+          throw new Error(normalizedBoundaryMessage(error));
+        }
+      } else {
+        try { socket = (config.connect ?? createConnection)(endpoint); }
+        catch { throw new Error('UNKNOWN_FAILURE: broker request failed'); }
+      }
       return new Promise<BrokerReplyV4>((resolvePromise, reject) => {
-        let socket: Socket;
-        try { socket = (config.connect ?? createConnection)(config.endpoint); }
-        catch { reject(new Error('UNKNOWN_FAILURE: broker request failed')); return; }
         let buffer = Buffer.alloc(0);
         let expectedLength: number | null = null;
         const fail = (error: Error) => { socket.destroy(); reject(new Error(normalizedBoundaryMessage(error))); };
         socket.setTimeout(deadline, () => fail(new Error('INVALID_CONTRACT: request deadline exceeded')));
         socket.once('connect', () => {
-          void callAdapter(() => config.serverIdentityVerifier!.verifyServer({ socket, endpoint: config.endpoint, expected_owner_identity: expectedOwnerIdentity }))
+          void callAdapter(() => config.serverIdentityVerifier!.verifyServer({ socket, endpoint, expected_owner_identity: expectedOwnerIdentity }))
             .then((proof) => {
               if (proof?.owner_identity !== expectedOwnerIdentity) return fail(new Error('AUTHENTICATION_FAILED: server ownership could not be established'));
               socket.write(frame);
