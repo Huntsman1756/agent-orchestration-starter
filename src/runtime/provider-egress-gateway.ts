@@ -1,12 +1,13 @@
-import { spawn, execFile } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { createInterface } from 'node:readline';
-import { promisify } from 'node:util';
 
 import { createDockerContainerRemovalControllerV4 } from './process-sandbox.js';
+import { runBoundedProcessV4, startBoundedProcessV4, type BoundedProcessHandleV4 } from './bounded-process.js';
+import { registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
+import { createBrokerOwnedDockerContainerV4 } from './docker-container-transaction.js';
 
 export interface ProviderGatewayLeaseV4 {
   readonly container_id: string;
@@ -36,7 +37,6 @@ interface GatewayBootPayloadV4 {
   readonly listen_address: string;
 }
 
-const execFileAsync = promisify(execFile);
 const maxRequestBytes = 1024 * 1024;
 const maxResponseBytes = 4 * 1024 * 1024;
 
@@ -51,14 +51,15 @@ function dockerEnvironment(): NodeJS.ProcessEnv {
 
 async function docker(executable: string, argv: readonly string[]): Promise<string> {
   try {
-    const result = await execFileAsync(executable, [...argv], {
-      encoding: 'utf8',
-      windowsHide: true,
-      maxBuffer: 512 * 1024,
-      env: dockerEnvironment(),
-      timeout: 10_000,
-      killSignal: 'SIGKILL',
+    await registerOrReproveDockerLauncherV4(executable);
+    const result = await runBoundedProcessV4({
+      executable,
+      argv,
+      environment: dockerEnvironment(),
+      deadline_ms: 10_000,
+      max_output_bytes: 512 * 1024,
     });
+    if (result.termination !== null || result.exit_code !== 0 || result.stdout_truncated || result.stderr_truncated) unavailable();
     return result.stdout.trim();
   } catch {
     unavailable();
@@ -72,10 +73,6 @@ async function exactContainerIdPresentV4(executable: string, containerId: string
   if (output === '') return false;
   if (output === containerId) return true;
   unavailable();
-}
-
-function gatewayContainerName(executionId: string): string {
-  return `ao-gateway-${executionId.replaceAll('_', '-')}`;
 }
 
 export function validateProviderGatewayOriginV4(value: string): URL {
@@ -187,9 +184,8 @@ export async function startProviderEgressGatewayV4(
     validateNetwork(request.docker_executable, request.internal_network, request.execution_id, true),
     validateNetwork(request.docker_executable, request.outbound_network, request.execution_id, false),
   ]);
-  const name = gatewayContainerName(request.execution_id);
   const createArgs = [
-    'create', '--interactive', `--name=${name}`,
+    '--interactive',
     '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=32',
     '--memory=256m', '--cpus=1', '--user=1000:1000',
     '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m', '--network=none',
@@ -199,35 +195,35 @@ export async function startProviderEgressGatewayV4(
     '--allowed-method=POST',
     '--allowed-path=/v1/chat/completions',
   ];
-  const containerId = await docker(request.docker_executable, createArgs);
-  if (!/^[a-f0-9]{64}$/.test(containerId)) unavailable();
-  let attach: ReturnType<typeof spawn> | null = null;
-  const removal = createDockerContainerRemovalControllerV4(containerId, {
-    inspect_exact_id: async (id) => await exactContainerIdPresentV4(request.docker_executable, id),
-    force_remove_exact_id: async (id) => {
-      const removed = await docker(request.docker_executable, ['rm', '--force', id]);
-      if (removed !== id) unavailable();
-    },
-    poll_interval_ms: 25,
-    absence_timeout_ms: 5_000,
+  const owned = await createBrokerOwnedDockerContainerV4({
+    docker_executable: request.docker_executable,
+    image_id: request.image_id,
+    execution_id: request.execution_id,
+    kind: 'gateway',
+    create_arguments: createArgs,
   });
+  const containerId = owned.container_id;
+  let attach: BoundedProcessHandleV4 | null = null;
+  const removal = owned.removal;
   const cleanup = async (): Promise<void> => {
     await removal.remove();
-    if (attach !== null && attach.exitCode === null && attach.signalCode === null) attach.kill('SIGKILL');
+    if (attach !== null) await attach.terminate().catch(() => unavailable());
   };
   try {
     await docker(request.docker_executable, ['network', 'disconnect', 'none', containerId]);
     await docker(request.docker_executable, ['network', 'connect', '--alias=provider-gateway', request.internal_network, containerId]);
     await docker(request.docker_executable, ['network', 'connect', `--ip=${request.outbound_address}`, request.outbound_network, containerId]);
-    attach = spawn(request.docker_executable, ['start', '--attach', '--interactive', containerId], {
-      shell: false,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: dockerEnvironment(),
+    await registerOrReproveDockerLauncherV4(request.docker_executable);
+    attach = startBoundedProcessV4({
+      executable: request.docker_executable,
+      argv: ['start', '--attach', '--interactive', containerId],
+      environment: dockerEnvironment(),
+      deadline_ms: 3_600_000,
+      max_output_bytes: 4 * 1024 * 1024,
     });
     const attached = attach;
-    const attachedStdin = attached.stdin;
-    const attachedStdout = attached.stdout;
+    const attachedStdin = attached.child.stdin;
+    const attachedStdout = attached.child.stdout;
     if (attachedStdin === null || attachedStdout === null) unavailable();
     const listenAddress = await waitForGatewayNetworkBindingV4(request, containerId);
     await new Promise<void>((resolvePromise, reject) => {
@@ -256,8 +252,10 @@ export async function startProviderEgressGatewayV4(
           }
         }
       });
-      attached.once('error', () => finish(new Error('gateway attach failed')));
-      attached.once('close', () => finish(new Error('gateway exited before readiness')));
+      void attached.completion.then(
+        () => finish(new Error('gateway exited before readiness')),
+        () => finish(new Error('gateway attach failed')),
+      );
       attachedStdin.end(`${JSON.stringify({ api_key: request.real_api_key, ca_pem: request.ca_pem, listen_address: listenAddress })}\n`);
     });
   } catch {

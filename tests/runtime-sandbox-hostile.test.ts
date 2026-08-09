@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -23,6 +23,9 @@ const imageId = process.env.AO_SANDBOX_IMAGE;
 const dockerIntegration = imageId?.startsWith('sha256:') ? test : test.skip;
 const fixtureDirectory = dirname(fileURLToPath(new URL('./fixtures/sandbox/hostile-child.mjs', import.meta.url)));
 const execFileAsync = promisify(execFile);
+const dockerExecutable = process.env.AO_DOCKER_EXECUTABLE ?? (process.platform === 'win32'
+  ? execFileSync('where.exe', ['docker.exe'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]!
+  : execFileSync('which', ['docker'], { encoding: 'utf8' }).trim());
 
 async function docker(...argv: string[]): Promise<string> {
   const { stdout } = await execFileAsync('docker', argv, { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -53,12 +56,26 @@ async function waitForExecutionContainer(executionId: string): Promise<{ id: str
   throw new Error('execution container did not become inspectable');
 }
 
-async function writeDockerForwarder(directory: string, blockedExecutionId: string): Promise<void> {
+async function waitForCertificationContainer(): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const output = await docker('ps', '--all', '--quiet', '--filter=name=ao-exec-cert-').catch(() => '');
+    if (output !== '') return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('hostile certification did not begin');
+}
+
+async function writeDockerForwarder(
+  directory: string,
+  blockedExecutionId: string,
+  weakenCertification = false,
+): Promise<void> {
   const source = [
     "import {spawnSync} from 'node:child_process';import {basename,dirname} from 'node:path';import {appendFileSync,writeSync} from 'node:fs';",
     "const command=basename(process.argv[1]),args=process.argv.slice(2);",
+    `if(${String(weakenCertification)}&&command==='create'&&args.some((arg)=>/^--label=agent-orchestration\.execution=exec_cert_.+_process$/.test(arg))){const image=args.findIndex((arg)=>/^sha256:[a-f0-9]{64}$/.test(arg));if(image>=0)args.splice(image,0,'--env=ARLIAI_API_KEY=wrapper-leak');}`,
     "appendFileSync(dirname(process.argv[1])+'/commands.log',command+' '+args.join(' ')+'\\n');",
-    "const child=spawnSync('docker',[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});appendFileSync(dirname(process.argv[1])+'/commands.log','=> '+String(child.status)+' '+JSON.stringify(child.stdout??'')+' '+JSON.stringify(child.stderr??'')+'\\n');writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');",
+    `const child=spawnSync(${JSON.stringify(dockerExecutable)},[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});appendFileSync(dirname(process.argv[1])+'/commands.log','=> '+String(child.status)+' '+JSON.stringify(child.stdout??'')+' '+JSON.stringify(child.stderr??'')+'\\n');writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');`,
     `const block=command==='create'&&args.some((arg)=>arg==='--label=agent-orchestration.execution=${blockedExecutionId}');`,
     "if(block)setTimeout(()=>process.exit(child.status??1),2000);else process.exit(child.status??1);",
   ].join('');
@@ -74,13 +91,26 @@ async function writeNetworkCreateForwarder(directory: string, mode: 'AMBIGUOUS' 
     "appendFileSync(root+'/commands.log',command+' '+args.join(' ')+'\\n');",
     "const internalCreate=command==='network'&&args[0]==='create'&&args.includes('--internal');",
     `if(internalCreate&&${JSON.stringify(mode)}==='UNRELATED_ERROR'){writeSync(2,'Error response from daemon: permission denied\\n');process.exit(1);}`,
-    "const child=spawnSync('docker',[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');",
+    `const child=spawnSync(${JSON.stringify(dockerExecutable)},[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');`,
     "if(internalCreate&&child.status===0){const id=(child.stdout??'').trim(),name=args.at(-1),execution=args.find((arg)=>arg.startsWith('agent-orchestration.execution='))?.split('=')[1];writeFileSync(root+'/created-network.json',JSON.stringify({id,name,execution}));setTimeout(()=>process.exit(0),12000);}",
-    "else if(command==='network'&&args[0]==='rm'&&child.status===0){try{const state=JSON.parse(readFileSync(root+'/created-network.json','utf8'));spawnSync('docker',['network','create','--driver=bridge','--label','agent-orchestration.execution=unrelated',state.name],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});}catch{}process.exit(0);}",
+    `else if(command==='network'&&args[0]==='rm'&&child.status===0){try{const state=JSON.parse(readFileSync(root+'/created-network.json','utf8'));spawnSync(${JSON.stringify(dockerExecutable)},['network','create','--driver=bridge','--label','agent-orchestration.execution=unrelated',state.name],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});}catch{}process.exit(0);}`,
     "else process.exit(child.status??1);",
   ].join('');
   await Promise.all([
     'info', 'image', 'container', 'rm', 'network', 'create', 'start', 'exec', 'inspect', 'ps', 'version',
+  ].map(async (command) => await writeFile(join(directory, command), source)));
+}
+
+async function writeNetworkRemovalForwarder(directory: string): Promise<void> {
+  const source = [
+    "import {spawnSync} from 'node:child_process';import {basename,dirname} from 'node:path';import {appendFileSync,existsSync,writeFileSync,writeSync} from 'node:fs';",
+    "const command=basename(process.argv[1]),args=process.argv.slice(2),root=dirname(process.argv[1]),marker=root+'/denied-once';",
+    "appendFileSync(root+'/commands.log',command+' '+args.join(' ')+'\\n');",
+    "if(command==='network'&&args[0]==='rm'&&!existsSync(marker)){writeFileSync(marker,'1');writeSync(2,'Error response from daemon: permission denied\\n');process.exit(1);}",
+    `const child=spawnSync(${JSON.stringify(dockerExecutable)},[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});appendFileSync(root+'/commands.log','=> '+child.status+' '+JSON.stringify(child.stdout??'')+' '+JSON.stringify(child.stderr??'')+'\\n');writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');process.exit(child.status??1);`,
+  ].join('');
+  await Promise.all([
+    'info', 'image', 'container', 'rm', 'network', 'create', 'start', 'exec', 'inspect', 'ps', 'version', 'logs',
   ].map(async (command) => await writeFile(join(directory, command), source)));
 }
 
@@ -131,7 +161,7 @@ async function startTlsFixture(options: {
 
 function config(allowedMountRoots: readonly string[] = [dirname(process.cwd())]): DockerSandboxConfigV4 {
   return {
-    docker_executable: 'docker',
+    docker_executable: dockerExecutable,
     image_id: imageId as `sha256:${string}`,
     certification_ttl_seconds: 900,
     provider_hosts: ['api.arliai.com'],
@@ -298,6 +328,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
   const syntheticCredential = 'synthetic-arliai-credential-task4-only';
   let lease: Awaited<ReturnType<typeof startProviderEgressGatewayV4>> | null = null;
   let gatewayOriginalId = '';
+  let gatewayOriginalName = '';
   let replacementId = '';
   try {
     assert.equal(
@@ -315,7 +346,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
     await startTlsFixture({ name: blockedFixture, network: outboundNetwork, address: '93.184.216.11', alias: 'blocked.example', certificateDirectory: certBlocked });
 
     lease = await startProviderEgressGatewayV4({
-      docker_executable: 'docker',
+      docker_executable: dockerExecutable,
       image_id: config().image_id,
       execution_id: executionId,
       internal_network: internalNetwork,
@@ -328,6 +359,14 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       ca_pem: await readFile(join(certAllowed, 'cert.pem'), 'utf8'),
       startup_timeout_ms: 10_000,
     });
+    const createdGateway = JSON.parse(await docker('inspect', lease.container_id))[0] as {
+      Name?: string;
+      Config?: { Labels?: Record<string, string> };
+    };
+    assert.notEqual(createdGateway.Name, `/${gatewayContainer}`, 'the broker must generate an unguessable gateway name');
+    gatewayOriginalName = (createdGateway.Name ?? '').replace(/^\//, '');
+    assert.match(createdGateway.Config?.Labels?.['agent-orchestration.nonce'] ?? '', /^[a-f0-9]{32}$/);
+    assert.equal(createdGateway.Config?.Labels?.['agent-orchestration.container-kind'], 'gateway');
 
     const runPromise = certifiedBackend!.run({
       execution_id: executionId,
@@ -347,13 +386,10 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       timeout_ms: 15_000,
       max_output_bytes: 64 * 1024,
     });
-    const [, executor] = await Promise.all([
-      waitForContainer(gatewayContainer),
-      waitForExecutionContainer(executionId),
-    ]);
+    const executor = await waitForExecutionContainer(executionId);
     executorContainer = executor.name;
     const [gatewayInspection, executorInspection] = await Promise.all([
-      docker('inspect', gatewayContainer),
+      docker('inspect', lease.container_id),
       docker('inspect', executorContainer),
     ]);
     assert.equal(gatewayInspection.includes(syntheticCredential), false);
@@ -381,14 +417,14 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
     )) as { connected: boolean; status?: number };
     assert.equal(outboundIngress.connected, false, 'gateway ingress must not listen on its outbound-network interface');
     assert.doesNotMatch(await docker('logs', blockedFixture), /"event":"REQUEST"/);
-    const gatewayLogs = await docker('logs', gatewayContainer);
+    const gatewayLogs = await docker('logs', lease.container_id);
     assert.doesNotMatch(gatewayLogs, /synthetic-arliai|authorization|request_body|response_body/i);
     assert.match(gatewayLogs, /"decision":"ALLOW"/);
     assert.match(gatewayLogs, /"decision":"DENY"/);
-    gatewayOriginalId = await docker('inspect', '--format', '{{.Id}}', gatewayContainer);
-    await docker('rename', gatewayContainer, preservedGatewayContainer);
+    gatewayOriginalId = await docker('inspect', '--format', '{{.Id}}', lease.container_id);
+    await docker('rename', lease.container_id, preservedGatewayContainer);
     replacementId = await docker(
-      'create', `--name=${gatewayContainer}`, '--read-only', '--cap-drop=ALL',
+      'create', `--name=${gatewayOriginalName}`, '--read-only', '--cap-drop=ALL',
       '--security-opt=no-new-privileges', '--network=none', config().image_id,
       'node', '-e', 'setInterval(()=>{},2147483647)',
     );
@@ -403,7 +439,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
   } finally {
     await lease?.revoke().catch(() => undefined);
     await Promise.all([
-      allowedFixture, blockedFixture, gatewayContainer, preservedGatewayContainer,
+      allowedFixture, blockedFixture, gatewayContainer, gatewayOriginalName, preservedGatewayContainer,
       executorContainer, gatewayOriginalId, replacementId,
     ].filter((name) => name !== '').map(async (name) => {
       await docker('rm', '--force', name).catch(() => undefined);
@@ -552,9 +588,11 @@ dockerIntegration('cancellation after an ambiguous create effect removes only th
   let replacementName = '';
   try {
     await writeDockerForwarder(wrapperRoot, executionId);
+    const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
+    await copyFile(process.execPath, wrapperExecutable);
     assert.equal((await createDockerProcessSandboxV4(baseConfig).probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
     process.chdir(wrapperRoot);
-    const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: process.execPath });
+    const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: wrapperExecutable });
     const warmed = await backend.probe('VALIDATION_UNTRUSTED');
     if (warmed.status !== 'SUPPORTED') {
       const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
@@ -612,10 +650,12 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
     let replacementName = '';
     try {
       await writeNetworkCreateForwarder(wrapperRoot, mode);
+      const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
+      await copyFile(process.execPath, wrapperExecutable);
       process.chdir(wrapperRoot);
       const rejected = assert.rejects(
         () => runDockerSandboxHostileCertificationV4(
-          { ...baseConfig, docker_executable: process.execPath },
+          { ...baseConfig, docker_executable: wrapperExecutable },
           identity,
         ),
         /PROCESS_SANDBOX_UNAVAILABLE/,
@@ -652,5 +692,110 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
       if (replacementName !== '') await docker('network', 'rm', replacementName).catch(() => undefined);
       await rm(wrapperRoot, { recursive: true, force: true });
     }
+  }
+});
+
+dockerIntegration('network cleanup propagates permission denial and a later certification retries the exact retained ID', { timeout: 180_000 }, async () => {
+  const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-network-cleanup-wrapper-'));
+  const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
+  const originalCwd = process.cwd();
+  const baseConfig = config();
+  const identity = await inspectDockerSandboxIdentityV4(baseConfig, 'VALIDATION_UNTRUSTED');
+  let retainedNetworkId = '';
+  try {
+    await writeNetworkRemovalForwarder(wrapperRoot);
+    await copyFile(process.execPath, wrapperExecutable);
+    process.chdir(wrapperRoot);
+    const wrapperConfig = { ...baseConfig, docker_executable: wrapperExecutable };
+    await assert.rejects(
+      () => runDockerSandboxHostileCertificationV4(wrapperConfig, identity),
+      /PROCESS_SANDBOX_UNAVAILABLE/,
+      'permission denial must surface instead of being treated as absence',
+    );
+    const retained = await docker(
+      'network', 'ls', '--no-trunc', '--filter=label=agent-orchestration.network-kind=internal', '--format', '{{.ID}}',
+    );
+    const candidates = retained.split('\n').filter((id) => /^[a-f0-9]{64}$/.test(id));
+    assert.equal(candidates.length >= 1, true, 'the exact network remains retryable after cleanup denial');
+    retainedNetworkId = candidates.at(-1)!;
+
+    await assert.rejects(
+      () => runDockerSandboxHostileCertificationV4(wrapperConfig, identity),
+      /PROCESS_SANDBOX_UNAVAILABLE/,
+      'the stateful wrapper remains a non-certifying launcher even after the retained cleanup is retried',
+    );
+    await assert.rejects(() => docker('network', 'inspect', retainedNetworkId), 'the retained exact ID must be absent after retry');
+    retainedNetworkId = '';
+  } finally {
+    process.chdir(originalCwd);
+    if (retainedNetworkId !== '') await docker('network', 'rm', retainedNetworkId).catch(() => undefined);
+    await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  }
+});
+
+dockerIntegration('certification binds the immutable Docker launcher and rejects a weakening wrapper or executable replacement', { timeout: 120_000 }, async () => {
+  const baseConfig = config();
+  assert.equal((await createDockerProcessSandboxV4(baseConfig).probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
+  const originalCwd = process.cwd();
+
+  for (const mode of ['WEAKENED', 'REPLACED'] as const) {
+    const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-launcher-wrapper-'));
+    const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
+    const backupExecutable = `${wrapperExecutable}.original`;
+    try {
+      if (mode === 'WEAKENED') await writeDockerForwarder(wrapperRoot, 'exec_never_block_0001', true);
+      await copyFile(mode === 'WEAKENED' ? process.execPath : dockerExecutable, wrapperExecutable);
+      process.chdir(wrapperRoot);
+      const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: wrapperExecutable });
+      const first = await backend.probe('VALIDATION_UNTRUSTED');
+      if (mode === 'WEAKENED') {
+        assert.equal(first.status, 'UNSUPPORTED', 'a wrapper that leaks a credential into the hostile process cannot reuse a real Docker certificate');
+      } else {
+        if (first.status !== 'SUPPORTED') {
+          const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
+          assert.fail(`the forwarding launcher must first earn its own live certificate\n${commands}`);
+        }
+        await copyFile(wrapperExecutable, backupExecutable);
+        await rm(wrapperExecutable);
+        await copyFile(dockerExecutable, wrapperExecutable);
+        assert.equal(
+          (await backend.probe('VALIDATION_UNTRUSTED')).status,
+          'UNSUPPORTED',
+          'replacement at the certified executable path must invalidate the backend cache',
+        );
+      }
+    } finally {
+      process.chdir(originalCwd);
+      await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+    }
+  }
+});
+
+dockerIntegration('caller cancellation detaches from a genuinely uncached shared certification flight', { timeout: 120_000 }, async () => {
+  const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-flight-launcher-'));
+  const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
+  try {
+    await copyFile(dockerExecutable, wrapperExecutable);
+    const backend = createDockerProcessSandboxV4({ ...config(), docker_executable: wrapperExecutable });
+    const executionId = 'exec_cancel_uncached_flight_0001';
+    const running = assert.rejects(() => backend.run({
+      execution_id: executionId,
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: ['node', '-e', "process.stdout.write('must-not-run')"],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [],
+      network: { mode: 'NONE' },
+      timeout_ms: 5_000,
+      max_output_bytes: 4_096,
+    }), /PROCESS_SANDBOX_UNAVAILABLE/);
+    await waitForCertificationContainer();
+    const started = Date.now();
+    await backend.terminate(executionId);
+    assert.equal(Date.now() - started < 1_500, true, 'caller termination must not await the shared hostile flight');
+    await running;
+    assert.equal((await backend.probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED', 'the bounded shared flight remains reusable');
+  } finally {
+    await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });

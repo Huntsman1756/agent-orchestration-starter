@@ -3,8 +3,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer as createTcpServer } from 'node:net';
-import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 
 import { hashCanonicalV4 } from './canonical.js';
 import type {
@@ -23,6 +22,9 @@ import {
   type SandboxCertificationTranscriptV4,
 } from './sandbox-certification.js';
 import { startProviderEgressGatewayV4 } from './provider-egress-gateway.js';
+import { runBoundedProcessV4, startBoundedProcessV4 } from './bounded-process.js';
+import { registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
+import { createBrokerOwnedDockerContainerV4 } from './docker-container-transaction.js';
 
 export interface DockerSandboxConfigV4 {
   docker_executable: string;
@@ -69,7 +71,10 @@ function overlaps(left: string, right: string): boolean {
 }
 
 export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): void {
-  if (config.docker_executable.length === 0 || config.docker_executable.includes('\0')) unavailable();
+  if (!isAbsolute(config.docker_executable)
+    || resolve(config.docker_executable) !== config.docker_executable
+    || !/^docker(?:\.exe)?$/i.test(basename(config.docker_executable))
+    || config.docker_executable.includes('\0')) unavailable();
   if (!/^sha256:[a-f0-9]{64}$/.test(config.image_id)) unavailable();
   if (!Number.isSafeInteger(config.certification_ttl_seconds)
     || config.certification_ttl_seconds < 1
@@ -275,6 +280,11 @@ export function dockerSandboxPolicyHashV4(config: DockerSandboxConfigV4, profile
   return `sha256:${hashCanonicalV4({
     backend: 'docker-engine-linux-v4',
     broker_version: '0.1.0-v4',
+    docker_endpoint: {
+      context: process.env.DOCKER_CONTEXT ?? null,
+      host: process.env.DOCKER_HOST ?? null,
+    },
+    docker_executable: config.docker_executable,
     image_id: config.image_id,
     isolation_args: DOCKER_ISOLATION_ARGS_V4,
     profile,
@@ -333,91 +343,24 @@ async function runDockerCliV4(
   maxOutputBytes: number,
   options: DockerCliOptionsV4 = {},
 ): Promise<CapturedProcessV4> {
-  return await new Promise((resolvePromise, reject) => {
-    const child = spawn(executable, [...argv], {
-      shell: false,
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: dockerCliEnvironment(),
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-    child.stdout.on('data', (value: Buffer | string) => {
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-      const appended = appendBounded(stdout, stdoutBytes, chunk, maxOutputBytes);
-      stdoutBytes = appended.size;
-      stdoutTruncated ||= appended.truncated;
-    });
-    child.stderr.on('data', (value: Buffer | string) => {
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-      const appended = appendBounded(stderr, stderrBytes, chunk, maxOutputBytes);
-      stderrBytes = appended.size;
-      stderrTruncated ||= appended.truncated;
-    });
-    let settled = false;
-    let stopping = false;
-    let settlementDeadline: NodeJS.Timeout | null = null;
-    const failure = new Error('PROCESS_SANDBOX_UNAVAILABLE: Docker CLI did not settle within policy');
-    const cleanup = () => {
-      clearTimeout(deadline);
-      if (settlementDeadline !== null) clearTimeout(settlementDeadline);
-      options.signal?.removeEventListener('abort', stop);
-    };
-    const fail = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(failure);
-    };
-    const killTree = () => {
-      if (child.pid === undefined) return;
-      if (process.platform === 'win32') {
-        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
-          shell: false, windowsHide: true, stdio: 'ignore',
-        });
-        const killerDeadline = setTimeout(() => killer.kill('SIGKILL'), 1_000);
-        killerDeadline.unref();
-        killer.once('close', () => clearTimeout(killerDeadline));
-        killer.once('error', () => child.kill('SIGKILL'));
-      } else {
-        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
-      }
-    };
-    const stop = () => {
-      if (stopping || settled) return;
-      stopping = true;
-      killTree();
-      settlementDeadline = setTimeout(fail, 1_500);
-      settlementDeadline.unref();
-    };
-    const deadline = setTimeout(stop, DOCKER_COMMAND_DEADLINES_V4[options.command_class ?? 'CONTROL']);
-    deadline.unref();
-    if (options.signal?.aborted === true) stop();
-    else options.signal?.addEventListener('abort', stop, { once: true });
-    child.once('error', fail);
-    child.once('close', (exitCode, signal) => {
-      if (settled) return;
-      if (stopping) {
-        fail();
-        return;
-      }
-      settled = true;
-      cleanup();
-      resolvePromise({
-        exitCode,
-        signal,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-        stdoutTruncated,
-        stderrTruncated,
-      });
-    });
+  await registerOrReproveDockerLauncherV4(executable, options.signal);
+  const result = await runBoundedProcessV4({
+    executable,
+    argv,
+    environment: dockerCliEnvironment(),
+    deadline_ms: DOCKER_COMMAND_DEADLINES_V4[options.command_class ?? 'CONTROL'],
+    max_output_bytes: maxOutputBytes,
+    signal: options.signal,
   });
+  if (result.termination !== null) unavailable();
+  return {
+    exitCode: result.exit_code,
+    signal: result.signal,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    stdoutTruncated: result.stdout_truncated,
+    stderrTruncated: result.stderr_truncated,
+  };
 }
 
 async function exactContainerIdPresentV4(config: DockerSandboxConfigV4, containerId: string, signal?: AbortSignal): Promise<boolean> {
@@ -484,68 +427,36 @@ async function runAttachedContainerProcessV4(
   executableArgs: readonly string[],
 ): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
   const startedAt = Date.now();
-  const child = spawn(config.docker_executable, [...executableArgs], {
-    shell: false,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: dockerCliEnvironment(),
+  await registerOrReproveDockerLauncherV4(config.docker_executable);
+  const processHandle = startBoundedProcessV4({
+    executable: config.docker_executable,
+    argv: executableArgs,
+    environment: dockerCliEnvironment(),
+    deadline_ms: request.timeout_ms,
+    max_output_bytes: request.max_output_bytes,
   });
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  let stdoutBytes = 0;
-  let stderrBytes = 0;
-  let stdoutTruncated = false;
-  let stderrTruncated = false;
-  child.stdout.on('data', (value: Buffer | string) => {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    const appended = appendBounded(stdout, stdoutBytes, chunk, request.max_output_bytes);
-    stdoutBytes = appended.size;
-    stdoutTruncated ||= appended.truncated;
-  });
-  child.stderr.on('data', (value: Buffer | string) => {
-    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    const appended = appendBounded(stderr, stderrBytes, chunk, request.max_output_bytes);
-    stderrBytes = appended.size;
-    stderrTruncated ||= appended.truncated;
-  });
-  let timedOut = false;
-  let timeoutCleanup: Promise<void> | null = null;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    timeoutCleanup = removal.remove().finally(() => {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    });
-  }, request.timeout_ms);
-  timeout.unref();
-  let outcome: { exitCode: number | null; signal: NodeJS.Signals | null };
+  processHandle.child.stdin.end();
+  let outcome: Awaited<typeof processHandle.completion>;
   try {
-    outcome = await new Promise((resolvePromise, reject) => {
-      child.once('error', reject);
-      child.once('close', (exitCode, signal) => resolvePromise({ exitCode, signal }));
-    });
+    outcome = await processHandle.completion;
   } catch {
-    clearTimeout(timeout);
     await removal.remove();
     unavailable();
   }
-  clearTimeout(timeout);
-  if (timedOut) {
-    if (timeoutCleanup === null) unavailable();
-    try {
-      await timeoutCleanup;
-    } catch {
-      unavailable();
-    }
+  const timedOut = outcome.termination === 'TIMEOUT';
+  if (outcome.termination !== null) {
+    await removal.remove().catch(() => unavailable());
+    if (!timedOut) unavailable();
   }
   return Object.freeze({
     execution_id: request.execution_id,
-    exit_code: outcome.exitCode,
+    exit_code: outcome.exit_code,
     signal: outcome.signal,
     timed_out: timedOut,
-    stdout: Buffer.concat(stdout).toString('utf8'),
-    stderr: Buffer.concat(stderr).toString('utf8'),
-    stdout_truncated: stdoutTruncated,
-    stderr_truncated: stderrTruncated,
+    stdout: outcome.stdout,
+    stderr: outcome.stderr,
+    stdout_truncated: outcome.stdout_truncated,
+    stderr_truncated: outcome.stderr_truncated,
     duration_ms: Date.now() - startedAt,
   });
 }
@@ -625,7 +536,6 @@ async function runDockerSandboxCandidateOwnedV4(
   await cancellationCheckpointV4(lifecycle);
   const mountProof = await proveDockerSandboxMountsV4(config, request);
   await cancellationCheckpointV4(lifecycle);
-  const authority = createDockerAuthorityV4(request.execution_id, config.image_id);
   if (request.network.mode === 'INTERNAL') {
     await cancellationCheckpointV4(lifecycle);
     await assertInternalNetworkV4(config, request, lifecycle?.abort_controller.signal);
@@ -636,10 +546,7 @@ async function runDockerSandboxCandidateOwnedV4(
   await cancellationCheckpointV4(lifecycle);
   const networkless = request.network.mode === 'NONE';
   const createArgs = [
-    'create',
     ...DOCKER_ISOLATION_ARGS_V4.slice(1),
-    `--name=${authority.name}`,
-    ...authority.label_args,
     '--init',
     `--workdir=${request.working_directory}`,
     ...(networkless ? environmentArgs(request) : []),
@@ -648,33 +555,25 @@ async function runDockerSandboxCandidateOwnedV4(
     ...(networkless ? request.argv : ['node', '-e', 'setInterval(()=>{},2147483647)']),
   ];
   await cancellationCheckpointV4(lifecycle);
-  let created: CapturedProcessV4;
+  let owned: Awaited<ReturnType<typeof createBrokerOwnedDockerContainerV4>>;
   try {
-    created = await runDockerCliV4(config.docker_executable, createArgs, 16_384, {
-      command_class: 'CREATE', signal: lifecycle?.abort_controller.signal,
+    owned = await createBrokerOwnedDockerContainerV4({
+      docker_executable: config.docker_executable,
+      image_id: config.image_id,
+      execution_id: request.execution_id,
+      kind: 'executor',
+      create_arguments: createArgs,
+      signal: lifecycle?.abort_controller.signal,
     });
   } catch {
-    const recovered = await recoverCreatedContainerV4(config, request, authority);
-    if (recovered !== null) {
-      if (lifecycle !== undefined) lifecycle.controller = recovered;
-      onController?.(recovered);
-      await recovered.remove();
-    }
     unavailable();
   }
-  const containerId = created.stdout.trim();
-  let removal: DockerContainerRemovalControllerV4 | null = null;
-  if (/^[a-f0-9]{64}$/.test(containerId)) removal = removalControllerV4(config, containerId);
-  else removal = await recoverCreatedContainerV4(config, request, authority);
-  if (removal === null) unavailable();
+  const containerId = owned.container_id;
+  const removal = owned.removal;
   if (lifecycle !== undefined) lifecycle.controller = removal;
   onController?.(removal);
   try {
-    if (created.exitCode !== 0
-      || created.stdoutTruncated
-      || created.stderrTruncated
-      || containerId !== removal.container_id
-      || !await exactContainerIdPresentV4(config, containerId, lifecycle?.abort_controller.signal)) unavailable();
+    if (!await exactContainerIdPresentV4(config, containerId, lifecycle?.abort_controller.signal)) unavailable();
     await cancellationCheckpointV4(lifecycle);
     if (networkless) {
       await cancellationCheckpointV4(lifecycle);
@@ -733,6 +632,7 @@ export async function inspectDockerSandboxIdentityV4(
   signal?: AbortSignal,
 ): Promise<SandboxCertificationIdentityV4> {
   validateDockerSandboxConfigV4(config);
+  const launcher = await registerOrReproveDockerLauncherV4(config.docker_executable, signal);
   const [serverOutput, imageOutput] = await Promise.all([
     runDockerCliV4(config.docker_executable, ['info', '--format', '{{json .}}'], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
     runDockerCliV4(config.docker_executable, ['image', 'inspect', config.image_id], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
@@ -784,7 +684,10 @@ export async function inspectDockerSandboxIdentityV4(
       image_os: 'linux',
       image_architecture: imageArchitecture,
       profile,
-      policy_hash: dockerSandboxPolicyHashV4(config, profile),
+      policy_hash: `sha256:${hashCanonicalV4({
+        launcher,
+        policy_hash: dockerSandboxPolicyHashV4(config, profile),
+      })}`,
       broker_version: '0.1.0-v4',
     });
   } catch {
@@ -806,6 +709,17 @@ export function isDockerNetworkSubnetOverlapV4(stderr: string): boolean {
   return /^Error response from daemon: Pool overlaps with other one on this address space\r?\n?$/.test(stderr);
 }
 
+export function isDockerNetworkAbsentV4(
+  networkId: string,
+  exitCode: number | null,
+  stdout: string,
+  stderr: string,
+): boolean {
+  return exitCode === 1
+    && stdout === '[]\n'
+    && stderr === `Error response from daemon: network ${networkId} not found\n`;
+}
+
 interface CertificationNetworkAuthorityV4 {
   readonly execution_id: string;
   readonly image_id: `sha256:${string}`;
@@ -814,6 +728,27 @@ interface CertificationNetworkAuthorityV4 {
   readonly name: string;
   readonly nonce: string;
   readonly subnet?: string;
+}
+
+const pendingCertificationNetworkCleanupV4 = new Map<string, {
+  readonly config: DockerSandboxConfigV4;
+  readonly network_id: string;
+}>();
+
+function certificationNetworkCleanupKeyV4(config: DockerSandboxConfigV4, networkId: string): string {
+  return `${config.docker_executable}\0${networkId}`;
+}
+
+function retainCertificationNetworkCleanupV4(config: DockerSandboxConfigV4, networkId: string): void {
+  pendingCertificationNetworkCleanupV4.set(certificationNetworkCleanupKeyV4(config, networkId), { config, network_id: networkId });
+}
+
+async function retryPendingCertificationNetworkCleanupV4(config: DockerSandboxConfigV4): Promise<void> {
+  for (const pending of [...pendingCertificationNetworkCleanupV4.values()]) {
+    if (pending.config.docker_executable === config.docker_executable) {
+      await removeCertificationNetworkV4(pending.config, pending.network_id);
+    }
+  }
 }
 
 async function recoverCertificationNetworkV4(
@@ -893,6 +828,9 @@ async function createCertificationNetworkV4(
         && !created.stdoutTruncated
         && !created.stderrTruncated
         && /^[a-f0-9]{64}$/.test(networkId)) {
+        const proved = await recoverCertificationNetworkV4(config, authority);
+        if (proved !== networkId) unavailable();
+        retainCertificationNetworkCleanupV4(config, networkId);
         register(networkId);
         return networkId;
       }
@@ -902,6 +840,7 @@ async function createCertificationNetworkV4(
 
     const recovered = await recoverCertificationNetworkV4(config, authority);
     if (recovered !== null) {
+      retainCertificationNetworkCleanupV4(config, recovered);
       register(recovered);
       await removeCertificationNetworkV4(config, recovered);
       unavailable();
@@ -919,14 +858,28 @@ async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, netwo
     16_384,
     { command_class: 'CLEANUP' },
   ).catch(() => unavailable());
-  if (removed.exitCode !== 0 || removed.stdoutTruncated || removed.stderrTruncated) unavailable();
-  const inspected = await runDockerCliV4(
-    config.docker_executable,
-    ['network', 'inspect', networkId],
-    16_384,
-    { command_class: 'CLEANUP' },
-  ).catch(() => unavailable());
-  if (inspected.exitCode === 0) unavailable();
+  if (removed.exitCode !== 0
+    || removed.stdoutTruncated
+    || removed.stderrTruncated
+    || removed.stdout.trim() !== networkId
+    || removed.stderr !== '') unavailable();
+  const deadline = Date.now() + 5_000;
+  do {
+    const inspected = await runDockerCliV4(
+      config.docker_executable,
+      ['network', 'inspect', networkId],
+      16_384,
+      { command_class: 'CLEANUP' },
+    ).catch(() => unavailable());
+    if (inspected.stdoutTruncated || inspected.stderrTruncated) unavailable();
+    if (isDockerNetworkAbsentV4(networkId, inspected.exitCode, inspected.stdout, inspected.stderr)) {
+      pendingCertificationNetworkCleanupV4.delete(certificationNetworkCleanupKeyV4(config, networkId));
+      return;
+    }
+    if (inspected.exitCode !== 0) unavailable();
+    if (Date.now() >= deadline) unavailable();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  } while (true);
 }
 
 async function waitForExactContainerRunningV4(config: DockerSandboxConfigV4, containerId: string): Promise<void> {
@@ -958,17 +911,22 @@ async function startCertificationTlsFixtureV4(
     "res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({auth_hash:authHash,bytes}));});});",
     "server.listen(443,'0.0.0.0');",
   ].join('');
-  const name = `ao-cert-upstream-${suffix}`;
   const createArgs = [
-    'create', `--name=${name}`, '--read-only', '--cap-drop=ALL',
+    '--read-only', '--cap-drop=ALL',
     '--security-opt=no-new-privileges', '--pids-limit=32', '--memory=256m', '--cpus=1',
     '--user=1000:1000', '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m', '--network=none',
     '--mount', `type=bind,src=${certificateDirectory},dst=/scratch,readonly`,
     config.image_id, 'node', '-e', source,
   ];
-  const containerId = await requiredDockerOutputV4(config, createArgs, 16_384);
-  if (!/^[a-f0-9]{64}$/.test(containerId) || !await exactContainerIdPresentV4(config, containerId)) unavailable();
-  const removal = removalControllerV4(config, containerId);
+  const owned = await createBrokerOwnedDockerContainerV4({
+    docker_executable: config.docker_executable,
+    image_id: config.image_id,
+    execution_id: `exec_cert_${suffix}_network`,
+    kind: 'tls-fixture',
+    create_arguments: createArgs,
+  });
+  const containerId = owned.container_id;
+  const removal = owned.removal;
   try {
     await requiredDockerOutputV4(config, ['network', 'disconnect', 'none', containerId], 16_384);
     await requiredDockerOutputV4(config, ['network', 'connect', '--alias=api.arliai.com', `--ip=${address}`, networkId, containerId], 16_384);
@@ -1006,6 +964,7 @@ export async function runDockerSandboxHostileCertificationV4(
   config: DockerSandboxConfigV4,
   identity: SandboxCertificationIdentityV4,
 ): Promise<SandboxCertificationTranscriptV4> {
+  await retryPendingCertificationNetworkCleanupV4(config).catch(() => unavailable());
   const runSuffix = randomBytes(16).toString('hex');
   const root = await mkdtemp(join(config.allowed_mount_roots[0]!, `.ao-cert-${runSuffix}-`)).catch(() => unavailable());
   if (overlaps(root, homedir()) || overlaps(root, config.active_worktree) || overlaps(root, config.broker_state_directory)) {
@@ -1272,6 +1231,7 @@ const hostileCertificationEvidenceV4 = new Map<string, SandboxCertificationTrans
 async function runSingleFlightHostileCertificationV4(
   config: DockerSandboxConfigV4,
   identity: SandboxCertificationIdentityV4,
+  signal?: AbortSignal,
 ): Promise<SandboxCertificationTranscriptV4> {
   const key = hashCanonicalV4(identity);
   const cached = hostileCertificationEvidenceV4.get(key);
@@ -1279,16 +1239,31 @@ async function runSingleFlightHostileCertificationV4(
     && new Date(cached.completed_at).getTime() + config.certification_ttl_seconds * 1_000 >= Date.now()) return cached;
   hostileCertificationEvidenceV4.delete(key);
   const existing = hostileCertificationFlightsV4.get(key);
-  if (existing !== undefined) return await existing;
-  const flight = runDockerSandboxHostileCertificationV4(config, identity);
-  hostileCertificationFlightsV4.set(key, flight);
-  try {
-    const transcript = await flight;
+  const awaitForCaller = async (flight: Promise<SandboxCertificationTranscriptV4>): Promise<SandboxCertificationTranscriptV4> => {
+    if (signal === undefined) return await flight;
+    if (signal.aborted) unavailable();
+    return await new Promise((resolvePromise, reject) => {
+      const aborted = () => {
+        signal.removeEventListener('abort', aborted);
+        reject(new Error('PROCESS_SANDBOX_UNAVAILABLE: process sandbox is unavailable'));
+      };
+      signal.addEventListener('abort', aborted, { once: true });
+      void flight.then(
+        (value) => { signal.removeEventListener('abort', aborted); resolvePromise(value); },
+        (error: unknown) => { signal.removeEventListener('abort', aborted); reject(error); },
+      );
+    });
+  };
+  if (existing !== undefined) return await awaitForCaller(existing);
+  const flight = runDockerSandboxHostileCertificationV4(config, identity).then((transcript) => {
     hostileCertificationEvidenceV4.set(key, transcript);
     return transcript;
-  } finally {
+  });
+  hostileCertificationFlightsV4.set(key, flight);
+  void flight.finally(() => {
     if (hostileCertificationFlightsV4.get(key) === flight) hostileCertificationFlightsV4.delete(key);
-  }
+  }).catch(() => undefined);
+  return await awaitForCaller(flight);
 }
 
 export function createDockerProcessSandboxV4(
@@ -1358,7 +1333,7 @@ export function createDockerProcessSandboxV4(
       const checkedAt = new Date().toISOString();
       let certification = cache.get(profile);
       if (certification === undefined || !matches(certification, identity, checkedAt)) {
-        const transcript = await runSingleFlightHostileCertificationV4(config, identity);
+        const transcript = await runSingleFlightHostileCertificationV4(config, identity, signal);
         const issuedAt = new Date().toISOString();
         certification = issue(identity, transcript, issuedAt);
         if (!matches(certification, identity, issuedAt)) return unsupportedResult;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import {
   createDockerContainerRemovalControllerV4,
   createDockerProcessSandboxV4,
   dockerSandboxPolicyHashV4,
+  isDockerNetworkAbsentV4,
   proveDockerSandboxMountsV4,
   reproveDockerSandboxMountsV4,
   validateDockerSandboxConfigV4,
@@ -18,6 +19,7 @@ import {
   type DockerSandboxConfigV4,
 } from '../src/runtime/docker-sandbox.js';
 import type { SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
+import { createBrokerOwnedDockerContainerV4 } from '../src/runtime/docker-container-transaction.js';
 import {
   isProviderEgressAddressAllowedV4,
   validateProviderGatewayOriginV4,
@@ -31,7 +33,7 @@ import {
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
 const config: DockerSandboxConfigV4 = {
-  docker_executable: 'docker',
+  docker_executable: join(tmpdir(), process.platform === 'win32' ? 'docker.exe' : 'docker'),
   image_id: imageId,
   certification_ttl_seconds: 900,
   provider_hosts: ['api.arliai.com'],
@@ -95,6 +97,10 @@ test('Docker policy hashes bind the profile, provider origin, and host mount pol
 });
 
 test('Docker config rejects mutable images and non-canonical provider origins', () => {
+  assert.throws(
+    () => validateDockerSandboxConfigV4({ ...config, docker_executable: 'docker' }),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
   assert.throws(
     () => validateDockerSandboxConfigV4({ ...config, image_id: 'agent-orchestration-sandbox:v4' as `sha256:${string}` }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
@@ -436,31 +442,47 @@ test('certification transcript contains exactly one artifact of each required ki
   );
 });
 
-test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 7_000 }, async () => {
+test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'ao-cli-block-'));
   const previousCwd = process.cwd();
   try {
     await Promise.all([
       mkdir(join(root, 'active')),
       mkdir(join(root, 'broker')),
-      writeFile(join(root, 'info'), 'setTimeout(()=>process.exit(2),2000);'),
-      writeFile(join(root, 'image'), 'setTimeout(()=>process.exit(2),2000);'),
+      copyFile(process.execPath, join(root, process.platform === 'win32' ? 'docker.exe' : 'docker')),
+      writeFile(join(root, 'info'), "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});writeFileSync('info-child.pid',String(child.pid));setInterval(()=>{},2147483647);"),
+      writeFile(join(root, 'image'), "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});writeFileSync('image-child.pid',String(child.pid));setInterval(()=>{},2147483647);"),
     ]);
     process.chdir(root);
     const backend = createDockerProcessSandboxV4({
       ...config,
-      docker_executable: process.execPath,
+      docker_executable: join(root, process.platform === 'win32' ? 'docker.exe' : 'docker'),
       allowed_mount_roots: [root],
       active_worktree: join(root, 'active'),
       broker_state_directory: join(root, 'broker'),
     });
     const request = validationRequest({ execution_id: 'exec_blocked_probe_0001' });
     const firstRun = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    let descendantPid: number | undefined;
+    const pidDeadline = Date.now() + 10_000;
+    while (descendantPid === undefined && Date.now() < pidDeadline) {
+      try {
+        descendantPid = Number(await readFile(join(root, 'info-child.pid'), 'utf8'));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    assert.notEqual(descendantPid, undefined, 'the fake Docker identity command must reach its blocked descendant');
     const started = Date.now();
     await backend.terminate(request.execution_id);
     assert.equal(Date.now() - started < 1_000, true, 'terminate must abort the blocked CLI rather than await its natural exit');
     await firstRun;
+    assert.throws(
+      () => process.kill(descendantPid!, 0),
+      { code: 'ESRCH' },
+      'the blocked identity command descendant must not retain inherited stdio',
+    );
 
     const reused = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -468,7 +490,7 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     await reused;
   } finally {
     process.chdir(previousCwd);
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
 
@@ -485,4 +507,62 @@ test('network retry classification accepts only Docker subnet-overlap failures',
     'Error response from daemon: network already exists',
     'Error response from daemon: Pool overlaps with other one on this address space; ignored suffix',
   ]) assert.equal(classify!(error), false, error);
+});
+
+test('network absence classification accepts only the exact immutable ID not-found response', () => {
+  const id = 'c'.repeat(64);
+  assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', `Error response from daemon: network ${id} not found\n`), true);
+  assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', 'permission denied\n'), false);
+  assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', 'Cannot connect to the Docker daemon\n'), false);
+  assert.equal(isDockerNetworkAbsentV4(id, 0, '[]\n', `Error response from daemon: network ${id} not found\n`), false);
+  assert.equal(isDockerNetworkAbsentV4(id, 1, '', `Error response from daemon: network ${id} not found\n`), false);
+  assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', `Error response from daemon: network ${'d'.repeat(64)} not found\n`), false);
+});
+
+test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 10_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-container-transaction-'));
+  const previousCwd = process.cwd();
+  const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
+  const statePath = join(root, 'state.json');
+  const queryPath = join(root, 'queries.log');
+  const removedPath = join(root, 'removed.log');
+  try {
+    await copyFile(process.execPath, executable);
+    if (process.platform !== 'win32') await chmod(executable, 0o755);
+    await writeFile(join(root, 'create'), [
+      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+      "const args=process.argv.slice(2),id='d'.repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7);",
+      "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
+      "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
+      `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),200)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
+      `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
+    ].join(''));
+    await writeFile(join(root, 'container'), [
+      "const{appendFileSync,existsSync,readFileSync}=require('node:fs'),args=process.argv.slice(2);",
+      `appendFileSync(${JSON.stringify(queryPath)},args.join(' ')+'\\n');if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);`,
+      `const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
+      "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
+    ].join(''));
+    await writeFile(join(root, 'rm'), [
+      "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
+      `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
+    ].join(''));
+    process.chdir(root);
+
+    for (const kind of ['gateway', 'tls-fixture'] as const) {
+      await assert.rejects(() => createBrokerOwnedDockerContainerV4({
+        docker_executable: executable,
+        image_id: imageId,
+        execution_id: `exec_transaction_${kind.replace('-', '_')}_0001`,
+        kind,
+        create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
+      }), /PROCESS_SANDBOX_UNAVAILABLE/);
+    }
+    assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'd'.repeat(64)]);
+    assert.equal((await readFile(queryPath, 'utf8')).split('\n').filter((line) => line.startsWith('ls ')).length >= 3, true,
+      'the delayed effect must require at least one bounded recovery retry');
+  } finally {
+    process.chdir(previousCwd);
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
 });
