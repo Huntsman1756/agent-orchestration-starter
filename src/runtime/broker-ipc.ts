@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve, sep, win32 } from 'node:path';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
@@ -107,6 +107,34 @@ export function defaultBrokerEndpointV4(stateDirectory: string, platform: NodeJS
   return platform === 'win32'
     ? `\\\\.\\pipe\\agent-orchestration-${userIdentityHash()}`
     : join(stateDirectory, 'broker.sock');
+}
+
+function canonicalWindowsNamedPipeEndpointV4(endpoint: string): string {
+  const normalized = win32.normalize(endpoint);
+  const canonical = normalized.toLowerCase();
+  const prefix = '\\\\.\\pipe\\';
+  if (endpoint.includes('\0') || !canonical.startsWith(prefix) || canonical.length === prefix.length) {
+    throw new Error('AUTHENTICATION_FAILED: broker named-pipe endpoint is invalid');
+  }
+  return canonical;
+}
+
+function loadBrokerIpcLocationV4(
+  stateDirectory: string,
+  configuredEndpoint: string | undefined,
+  platform: NodeJS.Platform,
+): { stateDirectory: string; endpoint: string } {
+  const canonicalStateDirectory = resolve(stateDirectory);
+  const requestedEndpoint = configuredEndpoint ?? defaultBrokerEndpointV4(canonicalStateDirectory, platform);
+  if (platform === 'win32') {
+    return { stateDirectory: canonicalStateDirectory, endpoint: canonicalWindowsNamedPipeEndpointV4(requestedEndpoint) };
+  }
+  const canonicalEndpoint = resolve(requestedEndpoint);
+  const relativeEndpoint = relative(canonicalStateDirectory, canonicalEndpoint);
+  if (relativeEndpoint.length === 0 || relativeEndpoint === '..' || relativeEndpoint.startsWith(`..${sep}`) || isAbsolute(relativeEndpoint)) {
+    throw new Error('AUTHENTICATION_FAILED: Unix socket must be inside owner-only state directory');
+  }
+  return { stateDirectory: canonicalStateDirectory, endpoint: canonicalEndpoint };
 }
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[], name: string): void {
@@ -302,10 +330,11 @@ export async function removeOwnedUnixEndpointV4(
   deps: { metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>; remove(endpoint: string): Promise<void> },
   coordinator: ReclamationCoordinatorV4,
 ): Promise<void> {
+  const canonicalEndpoint = posix.resolve(endpoint);
   try {
     await callAdapter(() => coordinator.runExclusive(
-      `ipc-endpoint:${endpoint}`,
-      () => removeOwnedUnixEndpointInsideCoordinatorV4(endpoint, ownedObjectIdentity, deps),
+      `ipc-endpoint:${canonicalEndpoint}`,
+      () => removeOwnedUnixEndpointInsideCoordinatorV4(canonicalEndpoint, ownedObjectIdentity, deps),
     ));
   } catch {
     throw new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
@@ -413,18 +442,15 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
   }
   if (deps.endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
+  const location = loadBrokerIpcLocationV4(deps.stateDirectory, deps.endpoint, platform);
   const expectedOwnerIdentity = platformOwnerIdentity(platform);
-  await verifyOwnerOnlyState(deps.stateDirectory, platform).catch((error) => {
+  await verifyOwnerOnlyState(location.stateDirectory, platform).catch((error) => {
     if (error instanceof Error && error.message.startsWith('AUTHENTICATION_FAILED:')) throw error;
     throw new Error('AUTHENTICATION_FAILED: broker state verification failed');
   });
-  const token = await callAdapter(() => (deps.loadToken ?? loadOrCreateToken)(deps.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
-  const endpoint = deps.endpoint ?? defaultBrokerEndpointV4(deps.stateDirectory, platform);
-  if (platform !== 'win32') {
-    const stateRoot = `${resolve(deps.stateDirectory)}${process.platform === 'win32' ? '\\' : '/'}`;
-    if (!resolve(endpoint).startsWith(stateRoot)) throw new Error('AUTHENTICATION_FAILED: Unix socket must be inside owner-only state directory');
-  }
-  for (const [path, kind] of [[deps.stateDirectory, 'state-directory'], [join(deps.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
+  const token = await callAdapter(() => (deps.loadToken ?? loadOrCreateToken)(location.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
+  const endpoint = location.endpoint;
+  for (const [path, kind] of [[location.stateDirectory, 'state-directory'], [join(location.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
     const proof = await callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity })).catch(() => null);
     if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
   }

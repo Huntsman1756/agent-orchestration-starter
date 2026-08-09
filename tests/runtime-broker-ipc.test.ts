@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer, Server, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -253,6 +253,105 @@ test('running-server close uses the same endpoint coordinator as startup', async
   await server.close();
 
   assert.deepEqual(keys, [`ipc-endpoint:${endpoint}`, `ipc-endpoint:${endpoint}`]);
+});
+
+test('canonicalizes state and endpoint configuration before every IPC lifecycle operation', async () => {
+  const createdStateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-canonical-'));
+  const stateDirectory = `${createdStateDirectory}${sep}.${sep}`;
+  const canonicalStateDirectory = resolve(createdStateDirectory);
+  const pipeName = `runner-v4-canonical-${Date.now()}`;
+  const endpoint = process.platform === 'win32'
+    ? `//./PIPE/${pipeName.toUpperCase()}`
+    : `${stateDirectory}canonical.sock`;
+  const canonicalEndpoint = process.platform === 'win32'
+    ? `\\\\.\\pipe\\${pipeName}`
+    : join(canonicalStateDirectory, 'canonical.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifiedPaths: Array<{ path: string; kind: 'state-directory' | 'token-file' | 'endpoint' }> = [];
+  const peerEndpoints: string[] = [];
+  const verifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ path, kind, expected_owner_identity }) => {
+      verifiedPaths.push({ path, kind });
+      return { owner_identity: expected_owner_identity };
+    },
+    verifyPeer: async ({ endpoint: verifiedEndpoint, expected_owner_identity }) => {
+      peerEndpoints.push(verifiedEndpoint);
+      return { owner_identity: expected_owner_identity };
+    },
+  };
+  const delegate = createInProcessReclamationCoordinatorV4('canonical-endpoint-delegate');
+  const coordinatorKeys: string[] = [];
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'canonical-endpoint' },
+    runExclusive: async (key, operation) => {
+      coordinatorKeys.push(key);
+      return delegate.runExclusive(key, operation);
+    },
+  };
+  const tokenDirectories: string[] = [];
+  const server = await createBrokerIpcServer({
+    daemon,
+    stateDirectory,
+    endpoint,
+    platform: process.platform,
+    platformVerifier: verifier,
+    endpointCoordinator: coordinator,
+    allowInProcessCoordinatorForTests: true,
+    loadToken: async (directory) => {
+      tokenDirectories.push(directory);
+      return 'a'.repeat(64);
+    },
+  });
+
+  try {
+    const response = await server.exchangeFrameForTest(Buffer.from('{', 'utf8'));
+    assert.equal(response.error, 'INVALID_CONTRACT: request contract rejected');
+  } finally {
+    await server.close();
+  }
+
+  assert.equal(server.endpoint, canonicalEndpoint);
+  assert.deepEqual(tokenDirectories, [canonicalStateDirectory]);
+  assert.deepEqual(verifiedPaths, [
+    { path: canonicalStateDirectory, kind: 'state-directory' },
+    { path: join(canonicalStateDirectory, 'broker.token'), kind: 'token-file' },
+    { path: canonicalEndpoint, kind: 'endpoint' },
+  ]);
+  assert.deepEqual(peerEndpoints, [canonicalEndpoint]);
+  assert.deepEqual(coordinatorKeys, [`ipc-endpoint:${canonicalEndpoint}`, `ipc-endpoint:${canonicalEndpoint}`]);
+});
+
+test('rejects ambiguous or out-of-state endpoint configuration before coordination', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-invalid-location-'));
+  const endpoint = process.platform === 'win32'
+    ? 'relative-pipe-name'
+    : join(stateDirectory, '..', 'outside.sock');
+  const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
+  const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
+  const delegate = createInProcessReclamationCoordinatorV4('invalid-location-delegate');
+  let coordinatorCalls = 0;
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'invalid-location' },
+    runExclusive: async (key, operation) => {
+      coordinatorCalls += 1;
+      return delegate.runExclusive(key, operation);
+    },
+  };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({
+      daemon,
+      stateDirectory,
+      endpoint,
+      platform: process.platform,
+      platformVerifier: verifier,
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      loadToken: async () => 'a'.repeat(64),
+    }),
+    (error: Error) => error.message.startsWith('AUTHENTICATION_FAILED:'),
+  );
+  assert.equal(coordinatorCalls, 0);
 });
 
 test('cleans a listener when the endpoint coordinator rejects after a successful startup callback', async () => {
@@ -654,6 +753,40 @@ test('owned Unix endpoint cleanup keeps a replacement scheduled after its first 
   await Promise.all([cleanup, replacement]);
 
   assert.equal(endpointIdentity, 'inode:8');
+});
+
+test('equivalent Unix endpoint aliases share cleanup coordination and preserve a live replacement', async () => {
+  const aliasEndpoint = '/state/./broker.sock';
+  const canonicalEndpoint = '/state/broker.sock';
+  const coordinator = createInProcessReclamationCoordinatorV4('owned-cleanup-alias-race');
+  const observedPaths: string[] = [];
+  let endpointIdentity: string | null = 'inode:7';
+  let releaseMetadata!: () => void;
+  const metadataCanReturn = new Promise<void>((resolve) => { releaseMetadata = resolve; });
+  let observedMetadata!: () => void;
+  const metadataObserved = new Promise<void>((resolve) => { observedMetadata = resolve; });
+  const cleanup = removeOwnedUnixEndpointV4(aliasEndpoint, 'inode:7', {
+    metadata: async (path) => {
+      observedPaths.push(path);
+      const observedIdentity = endpointIdentity;
+      observedMetadata();
+      await metadataCanReturn;
+      return observedIdentity === null ? null : { kind: 'socket', owner_identity: 'uid:1000', owner_only: true, object_identity: observedIdentity };
+    },
+    remove: async (path) => {
+      observedPaths.push(path);
+      endpointIdentity = null;
+    },
+  }, coordinator);
+
+  await metadataObserved;
+  const replacement = coordinator.runExclusive(`ipc-endpoint:${canonicalEndpoint}`, async () => { endpointIdentity = 'inode:8'; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releaseMetadata();
+  await Promise.all([cleanup, replacement]);
+
+  assert.equal(endpointIdentity, 'inode:8');
+  assert.deepEqual(observedPaths, [canonicalEndpoint, canonicalEndpoint]);
 });
 
 test('normalizes Unix endpoint metadata failure and closes the listening server', async () => {
