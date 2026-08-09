@@ -12,7 +12,6 @@ const cleanupNamespace = join(projectRoot, '.agent-orchestration-native-clean');
 const compilerPath = '/usr/bin/cc';
 const helperName = 'agent-orchestration-renameat2';
 const supportedTargets = new Set(['linux-x64']);
-const cleanupHolderNamePattern = /^holder-[A-Za-z0-9]{6}$/;
 const legacyCleanupHolderNamePattern = /^\.native-clean-[A-Za-z0-9]{6}$/;
 const argumentsAfterScript = process.argv.slice(2);
 if (
@@ -55,9 +54,10 @@ function requireSameObjectIdentity(actualMetadata, expectedMetadata) {
 
 async function createCleanupNamespace() {
   const projectMetadata = requirePhysicalDirectory(await loadMetadataOrNull(projectRoot));
-  await mkdir(cleanupNamespace, { mode: 0o700 }).catch((error) => {
-    if (error.code !== 'EEXIST') throw error;
-  });
+  if (await loadMetadataOrNull(cleanupNamespace) !== null) {
+    throw new Error('Inherited native cleanup state requires offline remediation');
+  }
+  await mkdir(cleanupNamespace, { mode: 0o700 });
   const cleanupMetadata = requirePhysicalDirectory(await loadMetadataOrNull(cleanupNamespace));
   requireSameFilesystem(projectMetadata, cleanupMetadata);
   return cleanupMetadata;
@@ -127,23 +127,6 @@ async function detachAndRemove(source, sourceMetadata, cleanupMetadata, allowedC
   await rm(reaper, { recursive: true, force: true });
 }
 
-async function auditCurrentCleanupHolders(cleanupMetadata) {
-  await reproveCleanupNamespace(cleanupMetadata);
-  const names = (await readdir(cleanupNamespace)).sort();
-  for (const name of names) {
-    if (!cleanupHolderNamePattern.test(name)) {
-      throw new Error('Native cleanup holder name is invalid');
-    }
-    const path = join(cleanupNamespace, name);
-    const metadata = await validateCleanupHolder(path, 'detached', cleanupMetadata);
-    await detachAndRemove(path, metadata, cleanupMetadata, 'detached');
-  }
-  await reproveCleanupNamespace(cleanupMetadata);
-  if ((await readdir(cleanupNamespace)).length !== 0) {
-    throw new Error('Native cleanup namespace changed during audit');
-  }
-}
-
 async function auditLegacyCleanupHolders(cleanupMetadata) {
   const distMetadata = await loadMetadataOrNull(distRoot);
   if (distMetadata === null) return;
@@ -162,7 +145,6 @@ async function auditLegacyCleanupHolders(cleanupMetadata) {
 
 async function cleanNativeRoot() {
   const cleanupMetadata = await createCleanupNamespace();
-  await auditCurrentCleanupHolders(cleanupMetadata);
   await auditLegacyCleanupHolders(cleanupMetadata);
 
   const nativeMetadata = await loadMetadataOrNull(nativeRoot);

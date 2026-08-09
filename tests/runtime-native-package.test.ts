@@ -138,7 +138,7 @@ test('clean-only refuses a bind-mounted native root without traversing external 
   }
 });
 
-test('Linux prepack recovers interrupted native cleanup holders before creating its tarball', {
+test('Linux prepack recovers a legacy cleanup holder within the current invocation', {
   skip: process.platform !== 'linux' || process.env.AO_NATIVE_PACKAGE_TEST !== '1',
 }, async () => {
   const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-native-interruption-'));
@@ -146,11 +146,8 @@ test('Linux prepack recovers interrupted native cleanup holders before creating 
   try {
     const project = await createDisposablePackageProjectForTest(fixtureRoot);
     const legacyHolder = join(project, 'dist', '.native-clean-ABC123');
-    const currentHolder = join(project, '.agent-orchestration-native-clean', 'holder-ABC123');
     await mkdir(join(legacyHolder, 'native', 'linux-arm64'), { recursive: true });
     await writeFile(join(legacyHolder, 'native', 'linux-arm64', 'foreign-helper'), 'legacy foreign helper\n');
-    await mkdir(join(currentHolder, 'detached', 'linux-arm64'), { recursive: true });
-    await writeFile(join(currentHolder, 'detached', 'linux-arm64', 'foreign-helper'), 'current foreign helper\n');
     await writeFile(join(project, 'src', 'index.ts'), 'export const packageFixture = true;\n');
     await mkdir(packageDirectory);
     assert.equal(await lstat(join(project, 'dist', 'native')).catch(() => null), null);
@@ -166,7 +163,34 @@ test('Linux prepack recovers interrupted native cleanup holders before creating 
     assert.equal(listed.stdout.includes('.agent-orchestration-native-clean'), false);
     assert.equal(listed.stdout.includes('foreign-helper'), false);
     await assert.rejects(() => lstat(legacyHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
-    await assert.rejects(() => lstat(currentHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('Linux prepack fails closed on an inherited current cleanup holder without changing it', {
+  skip: process.platform !== 'linux' || process.env.AO_NATIVE_PACKAGE_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-native-inherited-holder-'));
+  const packageDirectory = join(fixtureRoot, 'packed');
+  try {
+    const project = await createDisposablePackageProjectForTest(fixtureRoot);
+    const currentHolder = join(project, '.agent-orchestration-native-clean', 'holder-ABC123');
+    const currentMarker = join(currentHolder, 'detached', 'linux-arm64', 'foreign-helper');
+    await mkdir(join(currentHolder, 'detached', 'linux-arm64'), { recursive: true });
+    await writeFile(currentMarker, 'inherited holder requires offline remediation\n');
+    await writeFile(join(project, 'src', 'index.ts'), 'export const inheritedHolderFixture = true;\n');
+    await mkdir(packageDirectory);
+    const holderBefore = await lstat(currentHolder);
+
+    const command = npmPackCommandForTest(['--pack-destination', packageDirectory]);
+    const packed = await runForPackageTest(command.executable, command.args, project);
+    assert.notEqual(packed.code, 0, `${packed.stdout}\n${packed.stderr}`);
+    assert.deepEqual((await readdir(packageDirectory)).filter((name) => name.endsWith('.tgz')), []);
+    const holderAfter = await lstat(currentHolder);
+    assert.equal(holderAfter.dev, holderBefore.dev);
+    assert.equal(holderAfter.ino, holderBefore.ino);
+    assert.equal(await readFile(currentMarker, 'utf8'), 'inherited holder requires offline remediation\n');
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -190,6 +214,7 @@ test('Linux prepack retains a same-device holder substitution and emits no tarba
     await writeFile(join(project, 'src', 'index.ts'), 'export const substitutionFixture = true;\n');
     await mkdir(packageDirectory);
     const originalMetadata = await lstat(legacyHolder);
+    const unrelatedMetadata = await lstat(unrelated);
 
     const command = npmPackCommandForTest(['--pack-destination', packageDirectory]);
     const packedPromise = runForPackageTest(command.executable, command.args, project, {
@@ -228,6 +253,32 @@ test('Linux prepack retains a same-device holder substitution and emits no tarba
       await readFile(join(retainedSubstitute[0]!, 'native', 'linux-arm64', 'substitute-helper'), 'utf8'),
       'substitute holder must survive\n',
     );
+
+    for (const subsequentRun of [2, 3]) {
+      const retried = await runForPackageTest(command.executable, command.args, project);
+      assert.notEqual(retried.code, 0, `run ${subsequentRun}: ${retried.stdout}\n${retried.stderr}`);
+      assert.deepEqual((await readdir(packageDirectory)).filter((name) => name.endsWith('.tgz')), []);
+
+      const retainedMetadata = await lstat(retainedSubstitute[0]!);
+      assert.equal(retainedMetadata.dev, substituteMetadata.dev);
+      assert.equal(retainedMetadata.ino, substituteMetadata.ino);
+      assert.equal(
+        await readFile(join(retainedSubstitute[0]!, 'native', 'linux-arm64', 'substitute-helper'), 'utf8'),
+        'substitute holder must survive\n',
+      );
+
+      const originalAfterRetry = await lstat(preservedOriginal);
+      assert.equal(originalAfterRetry.dev, originalMetadata.dev);
+      assert.equal(originalAfterRetry.ino, originalMetadata.ino);
+      assert.equal(
+        await readFile(join(preservedOriginal, 'native', 'linux-arm64', 'original-helper'), 'utf8'),
+        'original holder must survive\n',
+      );
+      const unrelatedAfterRetry = await lstat(unrelated);
+      assert.equal(unrelatedAfterRetry.dev, unrelatedMetadata.dev);
+      assert.equal(unrelatedAfterRetry.ino, unrelatedMetadata.ino);
+      assert.equal(await readFile(unrelated, 'utf8'), 'unrelated name must survive\n');
+    }
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
