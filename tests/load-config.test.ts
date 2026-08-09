@@ -103,3 +103,29 @@ assignments:
   assert.equal(policy.isolation.required, 'hard');
   assert.equal(profile.assignments.executor.model, 'economy-b');
 });
+
+test('loads qualification metadata without introducing provider names into policy', async () => {
+  const path = await yamlFile('profile.yaml', `
+version: 1
+id: qualified-example
+assignments:
+  orchestrator: { provider: vendor-a, model: frontier-a, tier: frontier, reasoningEffort: high, capabilities: [planning] }
+  executor:
+    provider: vendor-b
+    model: economy-b
+    tier: economy
+    reasoningEffort: low
+    capabilities: [coding, agentic_tool_execution]
+    qualification:
+      policyVersion: agentic-tool-qualification-v1
+      status: VERIFIED
+      cleanRuns: 3
+      requiredCleanRuns: 3
+      evidenceHash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  reviewer: { provider: vendor-a, model: frontier-review, tier: frontier, reasoningEffort: high, capabilities: [review] }
+`);
+
+  const profile = await loadProfile(path);
+  assert.equal(profile.assignments.executor.qualification?.requiredCleanRuns, 3);
+  assert.equal(profile.assignments.executor.qualification?.status, 'VERIFIED');
+});

@@ -103,6 +103,25 @@ La API pública equivalente se importa desde `agent-orchestration-starter/pilot-
 
 `writeIsolation` forma parte del contrato. Codex y OpenCode ofrecen `hard`; Hermes ofrece `degraded` porque hereda la superficie de herramientas del padre. Una política `hard` rechaza Hermes salvo aceptación exacta con `--accept-degraded-isolation hermes`. El manifiesto registra aislamiento requerido y efectivo.
 
+## Cualificación de ejecutores con herramientas
+
+El núcleo no habilita por defecto ningún binding externo para
+`agentic_tool_execution`. Un perfil que declare esa capacidad debe incluir una
+cualificación verificable con tres ejecuciones limpias consecutivas usando el
+mismo perfil, harness, binding, baseline, política de shell y protocolo de
+herramientas. Sin esa evidencia, la resolución falla cerrada antes de ejecutar
+el repositorio.
+
+La salida textual de herramientas (por ejemplo, etiquetas como
+`<tool_call>`) es una salida inválida. El runtime no la convierte en una
+llamada sintética. La generación de parches es una capacidad distinta que
+puede probarse en un piloto independiente con aplicación y validación
+deterministas.
+
+La decisión y la evidencia histórica de los bindings externos no cualificados
+se conservan en
+[`docs/decisions/2026-08-09-external-agentic-binding-qualification.md`](docs/decisions/2026-08-09-external-agentic-binding-qualification.md).
+
 ## Diseño e investigación
 
 - `docs/plans/2026-08-08-provider-agnostic-orchestration-design.md`

@@ -15,7 +15,7 @@
 - The repository currently contains the V3 specification and plan but no `src/pilot/` implementation. V4 must not invent or duplicate V3; Task 12 exposes a typed adapter port and keeps concrete V3 import disabled until the separate V3 plan is implemented.
 - Node.js floor remains `>=20`; public JSON Schemas and strict Zod loaders must reject unknown properties and agree for every parity fixture.
 - Stable repository policy contains no provider/model name. Concrete providers/models remain in `profiles/*.yaml`.
-- ArliAI economy execution accepts only `SOURCE_CODE_ONLY + PUBLIC`. `PRIVATE` must route to an explicitly compatible frontier binding or fail with `SOURCE_SENSITIVITY_UNSUPPORTED`.
+- External economy execution is disabled by default. A qualified binding may process only the data scope and source sensitivity declared by its immutable profile; `PRIVATE` must route to an explicitly compatible frontier binding or fail with `SOURCE_SENSITIVITY_UNSUPPORTED`.
 - No model or MCP caller may choose `run_id`, effective route, effective risk, data scope, source sensitivity, command argv, environment variables, credentials, repository root, or sandbox expansion.
 - No source mutation outside exact normalized `allowed_changes`; operation kind is one of `CREATE`, `MODIFY`, or `DELETE`.
 - No generic shell, Git, filesystem, provider, or repository-registration operation is exposed over MCP.
@@ -219,7 +219,7 @@ git commit -m "feat(runtime): add strict v4 contracts"
 - Create: `src/runtime/bindings.ts`
 - Create: `src/runtime/routing.ts`
 - Create: `src/runtime/path-policy.ts`
-- Create: `profiles/arliai-opencode.example.yaml`
+- Create: `profiles/runtime.example.yaml`
 - Create: `policies/repository-policy.example.yaml`
 - Create: `tests/runtime-repository-policy.test.ts`
 - Create: `tests/runtime-repository-registry.test.ts`
@@ -242,7 +242,8 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
 - [ ] **Step 1: Write failing separation and routing tests**
 
 ```ts
-assert.equal(profile.bindings.executor.model, 'MiMo-V2.5');
+assert.equal(profile.bindings.executor.capability, 'verified-agentic-coding');
+assert.equal(profile.bindings.executor.qualification.requiredCleanRuns, 3);
 assert.equal('model' in repositoryPolicy, false);
 assert.equal(loadRepositoryRegistration('fixture-repo', registry).canonical_root, fixtureRoot);
 assert.throws(() => loadRepositoryRegistration('missing-repo', registry), /REPOSITORY_NOT_ALLOWED/);
@@ -294,7 +295,7 @@ Create a repository fixture containing a normal file, a directory symlink/juncti
 
 - [ ] **Step 6: Add generic example profile and repository policy**
 
-The profile contains Sol/MiMo/GLM concrete bindings and `allowedSourceSensitivity`; the repository policy contains only branches, routing classes/paths, exact validation argv, source policy, sandbox requirements, and approved instruction sources. Assert `rg -i "esdata" profiles policies contracts src/runtime` returns no match.
+The profile contains concrete bindings and `allowedSourceSensitivity`; the repository policy contains only branches, routing classes/paths, exact validation argv, source policy, sandbox requirements, and approved instruction sources. Assert that no concrete provider/model identifier appears in policy or stable contracts, and that an executor declaring `agentic_tool_execution` without three clean runs is rejected.
 
 - [ ] **Step 7: Run Task 2 GREEN gates**
 
@@ -307,7 +308,7 @@ Expected: all Task 2 tests PASS; TypeScript exits 0.
 - [ ] **Step 8: Commit Task 2**
 
 ```bash
-git add src/runtime/canonical.ts src/runtime/repository-registry.ts src/runtime/repository-policy.ts src/runtime/bindings.ts src/runtime/routing.ts src/runtime/path-policy.ts profiles/arliai-opencode.example.yaml policies/repository-policy.example.yaml tests/runtime-repository-registry.test.ts tests/runtime-repository-policy.test.ts tests/runtime-bindings.test.ts tests/runtime-routing.test.ts tests/runtime-path-policy.test.ts
+git add src/runtime/canonical.ts src/runtime/repository-registry.ts src/runtime/repository-policy.ts src/runtime/bindings.ts src/runtime/routing.ts src/runtime/path-policy.ts profiles/runtime.example.yaml policies/repository-policy.example.yaml tests/runtime-repository-registry.test.ts tests/runtime-repository-policy.test.ts tests/runtime-bindings.test.ts tests/runtime-routing.test.ts tests/runtime-path-policy.test.ts
 git commit -m "feat(runtime): resolve repository policy and routing"
 ```
 
@@ -506,7 +507,7 @@ Run the proxy as a sibling container with no repository mount. The target contai
 
 - [ ] **Step 6: Add hostile fixtures that attempt real effects**
 
-`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, read injected `ARLIAI_API_KEY`/`OPENAI_API_KEY`, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the proxy and fail against a second non-allowlisted fixture plus a direct IP.
+`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, read injected provider credential names, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the proxy and fail against a second non-allowlisted fixture plus a direct IP.
 
 - [ ] **Step 7: Run hostile certification early**
 
@@ -630,7 +631,7 @@ git commit -m "feat(runtime): isolate worktrees and executor capsules"
 
 ---
 
-### Task 6: OpenCode MiMo/GLM runner and versioned capability probes
+### Task 6: Qualified executor runner and versioned capability probes
 
 **Files:**
 
@@ -641,7 +642,7 @@ git commit -m "feat(runtime): isolate worktrees and executor capsules"
 - Create: `tests/fixtures/bin/fake-opencode.mjs`
 - Create: `tests/runtime-opencode.test.ts`
 - Create: `tests/runtime-capabilities.test.ts`
-- Modify: `profiles/arliai-opencode.example.yaml`
+- Modify: `profiles/runtime.example.yaml`
 
 **Interfaces:**
 
@@ -662,7 +663,7 @@ export function assertFreshCapability(record: CapabilityRecordV4, expected: Capa
 
 - [ ] **Step 1: Write failing fake-harness argv/env/config tests**
 
-The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains `run --pure --auto --dir /capsule --model arliai/MiMo-V2.5 --agent executor --format json`; no shell fragment exists; and environment contains only the credential lease plus explicit OpenCode/runtime variables.
+The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains the profile-resolved model and agent, no shell fragment exists, and environment contains only the credential lease plus explicit harness/runtime variables.
 
 - [ ] **Step 2: Add hostile configuration-discovery tests**
 
@@ -672,7 +673,7 @@ Put conflicting model/provider values and executable custom tools in `repo/`, sy
 {
   "share": "disabled",
   "autoupdate": false,
-  "enabled_providers": ["arliai"],
+  "enabled_providers": ["profile-selected-provider"],
   "permission": {
     "*": "deny",
     "read": { "*": "deny", "repo/**": "allow" },
@@ -691,11 +692,16 @@ Expected: FAIL because the credential adapter, runner, and probe registry do not
 
 - [ ] **Step 4: Implement broker-owned config and structured result parser**
 
-Set `OPENCODE_CONFIG_DIR=/capsule/config`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_MODELS_FETCH=1`, and `OPENCODE_DISABLE_CLAUDE_CODE=1`. Define the ArliAI provider with its fixed base URL and an environment credential reference; never serialize the key. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
+Set the broker-owned harness configuration and disable auto-update, default plugins, unmanaged model discovery, and global/project configuration. Resolve the provider endpoint and credential reference from the profile without serializing keys. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, textual `<tool_call>` leakage, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
 
-- [ ] **Step 5: Implement sandboxed MiMo then GLM attempt execution**
+- [ ] **Step 5: Implement sandboxed qualified-executor attempt execution**
 
-Run OpenCode only through a freshly certified `EXECUTOR_NETWORKED` backend. MiMo may perform the initial attempt and one repair from stored findings. GLM-4.7 is legal only after two persisted review rejections and a typed `ESCALATION_DECIDED` event. Every attempt is followed immediately by `enforceDiffPolicy`.
+Run the profile-selected executor only through a freshly certified
+`EXECUTOR_NETWORKED` backend. It may perform the initial attempt and one
+repair from stored findings only when its qualification is `VERIFIED`. A
+frontier executor is legal only after two persisted review rejections and a
+typed `ESCALATION_DECIDED` event. Every attempt is followed immediately by
+`enforceDiffPolicy`.
 
 - [ ] **Step 6: Implement versioned capability probes and TTL**
 
@@ -712,9 +718,13 @@ const identity: CapabilityIdentityV4 = {
 
 Probe structured result, exact bounded edit, multi-step file-tool use, and repair from supplied failed-validation evidence without shell. Store content-addressed evidence with `probed_at`/`expires_at`. Any identity mismatch or expiry yields `CAPABILITY_UNVERIFIED`.
 
-- [ ] **Step 7: Add opt-in live ArliAI probe**
+- [ ] **Step 7: Add opt-in live binding probe**
 
-Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the user credential adapter and a disposable public fixture only. Default CI asserts the test is not run and no network call occurs.
+Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the user credential adapter
+and a disposable fixture only. Default CI asserts the test is not run and no
+network call occurs. A live probe never promotes a binding by itself; three
+identical clean runs and a content-addressed qualification record are still
+required.
 
 - [ ] **Step 8: Run Task 6 GREEN gates**
 
@@ -727,8 +737,8 @@ Expected: fake harness tests PASS with no provider call; TypeScript exits 0.
 - [ ] **Step 9: Commit Task 6**
 
 ```bash
-git add src/runtime/credential-adapter.ts src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/arliai-opencode.example.yaml
-git commit -m "feat(runtime): run verified opencode executors"
+git add src/runtime/credential-adapter.ts src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/runtime.example.yaml
+git commit -m "feat(runtime): run qualified executor bindings"
 ```
 
 ---
@@ -971,7 +981,7 @@ Recompute `attestation_hash`, reject stale/forged/session-reused attestations, a
 
 - [ ] **Step 7: Encode the economy review/repair/escalation sequence**
 
-Test exactly: MiMo → validation → review 1 → MiMo repair → validation → review 2 → typed GLM escalation → validation → final fresh review. A fourth attempt, second MiMo repair, early GLM, validation failure, or final rejection is terminal without commit.
+Test exactly: qualified executor → validation → review 1 → one bounded repair → validation → review 2 → typed frontier escalation → validation → final fresh review. A fourth attempt, second repair, early escalation, validation failure, or final rejection is terminal without commit.
 
 - [ ] **Step 8: Run Task 9 GREEN gates**
 
@@ -1234,15 +1244,15 @@ Wire Tasks 1–11 in this order: request/idempotency → policy/routing → lock
 
 - [ ] **Step 6: Add fake-harness normal/economy E2E**
 
-Prove one MCP task automatically executes MiMo, validates, receives fresh Sol acceptance, commits exact accepted bytes on `codex/auto/run_01HZX3YH8C7Y9QJ4J6M2G5K8N1`, leaves the active worktree untouched, and performs no push. Assert journal, artifact manifest, attestation, tree, diff, and commit hashes reproduce.
+Prove one MCP task automatically executes the qualified executor, validates, receives fresh Sol acceptance, commits exact accepted bytes on `codex/auto/run_01HZX3YH8C7Y9QJ4J6M2G5K8N1`, leaves the active worktree untouched, and performs no push. Assert journal, artifact manifest, attestation, tree, diff, and commit hashes reproduce.
 
 - [ ] **Step 7: Add repair/escalation/frontier/failure E2E matrix**
 
-Cover: MiMo repair acceptance; second rejection then GLM acceptance; final rejection without commit; private source routed to Sol; security task routed to Sol; frontier rejection terminal; validation failure; sandbox unavailable; stale capability; forged attestation; out-of-scope path; daemon restart; abort; and broker failure with no direct-edit fallback.
+Cover: bounded repair acceptance; second rejection then frontier acceptance; final rejection without commit; private source routed to Sol; security task routed to Sol; frontier rejection terminal; validation failure; sandbox unavailable; stale qualification; forged attestation; out-of-scope path; daemon restart; abort; and broker failure with no direct-edit fallback.
 
 - [ ] **Step 8: Add package exports and operator documentation**
 
-Publish `./runtime-v4` from `src/runtime/index.ts`. Document installation, repository registry/profile/policy separation, Docker sandbox build/certification, OpenCode/Codex authentication, public-only ArliAI default, MCP project config, run/status/abort, artifact retention/cleanup, typed failures, no-push guarantee, and the currently unavailable concrete V3 adapter.
+Publish `./runtime-v4` from `src/runtime/index.ts`. Document installation, repository registry/profile/policy separation, Docker sandbox build/certification, supported harness authentication, the qualified-executor gate, MCP project config, run/status/abort, artifact retention/cleanup, typed failures, no-push guarantee, and the currently unavailable concrete V3 adapter.
 
 - [ ] **Step 9: Run focused V4 verification**
 

@@ -37,7 +37,20 @@
         "model": { "type": "string", "minLength": 1 },
         "tier": { "enum": ["frontier", "economy"] },
         "reasoningEffort": { "enum": ["low", "medium", "high", "xhigh", "max"] },
-        "capabilities": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+        "capabilities": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "qualification": { "$ref": "#/$defs/qualification" }
+      }
+    },
+    "qualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyVersion", "status", "cleanRuns", "requiredCleanRuns", "evidenceHash"],
+      "properties": {
+        "policyVersion": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["VERIFIED", "UNQUALIFIED"] },
+        "cleanRuns": { "type": "integer", "minimum": 0 },
+        "requiredCleanRuns": { "const": 3 },
+        "evidenceHash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
       }
     }
   }

@@ -27,6 +27,12 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     if (missing.length > 0) {
       throw new Error(`${roleName} is missing required capabilities: ${missing.join(', ')}`);
     }
+    if (roleName === 'executor' && assignment.capabilities.includes('agentic_tool_execution')) {
+      const qualification = assignment.qualification;
+      if (!qualification || qualification.status !== 'VERIFIED' || qualification.cleanRuns < qualification.requiredCleanRuns) {
+        throw new Error('executor agentic_tool_execution requires three clean qualification runs');
+      }
+    }
     roles[roleName] = {
       ...assignment,
       modelRef: `${assignment.provider}/${assignment.model}`,
