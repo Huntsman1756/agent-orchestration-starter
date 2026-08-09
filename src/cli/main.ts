@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { parse as parseYaml } from 'yaml';
 
 import type { Harness } from '../adapters/index.js';
 import { compileHarness } from '../adapters/index.js';
@@ -10,6 +12,17 @@ import { checkProject, renderProject } from '../core/render.js';
 import { resolveRoles } from '../core/resolve.js';
 import { evaluateRouting } from '../routing/evaluate.js';
 import { loadBenchmarkObservations, loadRoutingGatePolicy } from '../routing/load.js';
+import { canonicalize } from '../pilot/canonical-json.js';
+import { evaluatePilot, type PilotEvaluationContextV3 } from '../pilot/evaluate.js';
+import {
+  loadPilotEvaluationReportV3,
+  loadPilotEventV3,
+  loadPilotManifestV3,
+  loadPilotRoutingGateV3,
+} from '../pilot/load.js';
+import { verifyManifest } from '../pilot/manifest.js';
+import { reduceEvents } from '../pilot/reducer.js';
+import type { PilotEventV3 } from '../pilot/contracts.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -53,11 +66,122 @@ async function resolvedFromArgs(argv: string[]) {
   return resolveRoles(await loadPolicy(policyPath), await loadProfile(profilePath));
 }
 
+function pilotArgumentError(message: string): Error {
+  return new Error(`PILOT_V3_ARGUMENT_ERROR: ${message}`);
+}
+
+function pilotInputError(message: string): Error {
+  return new Error(`PILOT_V3_INPUT_ERROR: ${message}`);
+}
+
+const pilotV3Options = new Set([
+  '--manifest', '--events', '--gate', '--evaluation-id', '--evaluation-version', '--prior-report',
+]);
+
+function parsePilotV3Options(argv: string[]): ReadonlyMap<string, string> {
+  const parsed = new Map<string, string>();
+  const seen = new Set<string>();
+  for (let index = 0; index < argv.length; index += 1) {
+    const name = argv[index];
+    if (!pilotV3Options.has(name)) throw pilotArgumentError(`unsupported option ${name}`);
+    if (seen.has(name)) throw pilotArgumentError(`duplicate option ${name}`);
+    seen.add(name);
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith('--')) continue;
+    parsed.set(name, value);
+    index += 1;
+  }
+  return parsed;
+}
+
+async function readPilotYaml(path: string, kind: 'manifest' | 'gate'): Promise<unknown> {
+  try {
+    return parseYaml(await readFile(path, 'utf8'));
+  } catch {
+    throw pilotInputError(`${kind} YAML is not valid`);
+  }
+}
+
+async function readPilotEvents(path: string): Promise<PilotEventV3[]> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch {
+    throw pilotInputError('events JSONL could not be read');
+  }
+  const lines = text.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  if (lines.length === 0) throw pilotInputError('events JSONL is empty');
+  return lines.map((line, index) => {
+    try {
+      return loadPilotEventV3(JSON.parse(line));
+    } catch {
+      throw pilotInputError(`event line ${index + 1} is not valid V3 evidence`);
+    }
+  });
+}
+
+async function runPilotV3Evaluate(argv: string[], stdout: (line: string) => void): Promise<number> {
+  const options = parsePilotV3Options(argv);
+  const manifestPath = options.get('--manifest');
+  const eventsPath = options.get('--events');
+  const gatePath = options.get('--gate');
+  if (!manifestPath || !eventsPath || !gatePath) {
+    throw pilotArgumentError('--manifest, --events, and --gate are required');
+  }
+  const evaluationId = options.get('--evaluation-id');
+  const evaluationVersionText = options.get('--evaluation-version');
+  if (!evaluationId || !evaluationVersionText) {
+    throw pilotArgumentError('--evaluation-id and --evaluation-version are required');
+  }
+  const evaluationVersion = Number(evaluationVersionText);
+  if (!Number.isSafeInteger(evaluationVersion) || evaluationVersion <= 0) {
+    throw pilotArgumentError('--evaluation-version must be a positive integer');
+  }
+  const priorReportPath = options.get('--prior-report');
+  if (evaluationVersion === 1 && priorReportPath) {
+    throw pilotArgumentError('--prior-report is forbidden for evaluation version 1');
+  }
+  if (evaluationVersion > 1 && !priorReportPath) {
+    throw pilotArgumentError('--prior-report is required when --evaluation-version is greater than 1');
+  }
+
+  let manifest;
+  let gate;
+  let priorReport = null;
+  try {
+    manifest = loadPilotManifestV3(await readPilotYaml(manifestPath, 'manifest'));
+    gate = loadPilotRoutingGateV3(await readPilotYaml(gatePath, 'gate'));
+    if (priorReportPath) priorReport = loadPilotEvaluationReportV3(JSON.parse(await readFile(priorReportPath, 'utf8')));
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('PILOT_V3_')) throw error;
+    throw pilotInputError('manifest, gate, or prior report is not valid V3 evidence');
+  }
+  if (!verifyManifest(manifest).ok) throw pilotInputError('manifest verification failed');
+  const events = await readPilotEvents(eventsPath);
+  const context: PilotEvaluationContextV3 = {
+    evaluation_id: evaluationId,
+    evaluation_version: evaluationVersion,
+    prior_report: priorReport,
+  };
+  try {
+    const observations = reduceEvents(manifest, events);
+    const report = evaluatePilot(manifest, observations, gate, context);
+    stdout(canonicalize({ schema_version: 3, observations, report }));
+    return 0;
+  } catch {
+    throw new Error('PILOT_V3_EVALUATION_ERROR: supplied evidence could not be reduced or evaluated');
+  }
+}
+
 export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
   const stdout = io.stdout ?? console.log;
   const stderr = io.stderr ?? console.error;
   try {
     const command = argv[0];
+    if (command === 'pilot-v3') {
+      if (argv[1] !== 'evaluate') throw pilotArgumentError('pilot-v3 requires the evaluate subcommand');
+      return await runPilotV3Evaluate(argv.slice(2), stdout);
+    }
     if (command === 'benchmark') {
       const observationsPath = option(argv, '--observations');
       const routingPolicyPath = option(argv, '--routing-policy');
@@ -88,7 +212,7 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       return missing ? 1 : 0;
     }
     if (!['init', 'render', 'check'].includes(command ?? '')) {
-      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark> [options]');
+      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark|pilot-v3> [options]');
       return 2;
     }
     const targetDir = option(argv, '--target') ?? process.cwd();

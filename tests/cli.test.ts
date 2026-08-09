@@ -124,6 +124,71 @@ maxCriticalSeverityPostAcceptanceDefects: 0
   });
 
   assert.equal(code, 0);
+  assert.equal(output.join('\n'), `{
+  "schemaVersion": 2,
+  "decisions": [
+    {
+      "taskClass": "mechanical-change",
+      "candidateRoute": "economy_only",
+      "baselineRoute": "frontier_execution",
+      "pairedSamples": 1,
+      "decision": "promote",
+      "reasons": [],
+      "candidate": {
+        "samples": 1,
+        "firstPassAcceptanceRate": 1,
+        "finalAcceptanceRate": 1,
+        "acceptedTaskCostUsd": 0.5,
+        "escalationRate": 0,
+        "postAcceptanceDefectIncidenceRate": 0,
+        "postAcceptanceDefectCount": 0,
+        "postAcceptanceDefectsBySeverity": {
+          "low": 0,
+          "medium": 0,
+          "high": 0,
+          "critical": 0
+        },
+        "totalCostUsd": 0.5,
+        "totalLatencyMs": 100,
+        "totalRepairs": 0,
+        "frontierTokens": {
+          "input": 0,
+          "output": 0
+        },
+        "economyTokens": {
+          "input": 100,
+          "output": 0
+        }
+      },
+      "baseline": {
+        "samples": 1,
+        "firstPassAcceptanceRate": 1,
+        "finalAcceptanceRate": 1,
+        "acceptedTaskCostUsd": 1,
+        "escalationRate": 0,
+        "postAcceptanceDefectIncidenceRate": 0,
+        "postAcceptanceDefectCount": 0,
+        "postAcceptanceDefectsBySeverity": {
+          "low": 0,
+          "medium": 0,
+          "high": 0,
+          "critical": 0
+        },
+        "totalCostUsd": 1,
+        "totalLatencyMs": 100,
+        "totalRepairs": 0,
+        "frontierTokens": {
+          "input": 100,
+          "output": 0
+        },
+        "economyTokens": {
+          "input": 0,
+          "output": 0
+        }
+      }
+    }
+  ]
+}`);
   const report = JSON.parse(output.join('\n'));
   assert.equal(report.decisions[0].decision, 'promote');
   assert.equal(report.decisions[0].candidateRoute, 'economy_only');

@@ -10,6 +10,10 @@
     "./fingerprint": {
       "types": "./dist/routing/fingerprint.d.ts",
       "import": "./dist/routing/fingerprint.js"
+    },
+    "./pilot-v3": {
+      "types": "./dist/pilot/index.d.ts",
+      "import": "./dist/pilot/index.js"
     }
   },
   "scripts": {
