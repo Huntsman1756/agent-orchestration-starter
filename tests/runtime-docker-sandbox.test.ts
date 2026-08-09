@@ -358,12 +358,17 @@ test('certification rejects a forged all-true boolean record without bounded run
   );
 });
 
-test('production backend rejects injected certification records and exposes no arbitrary issuer', async () => {
+test('production backend rejects every injected identity, runner, or clock authority', async () => {
   const certificationModule = await import('../src/runtime/sandbox-certification.js');
   assert.equal('createSandboxCertificationV4' in certificationModule, false);
   assert.throws(
-    () => createDockerProcessSandboxV4(config, {
-      certifications: [{ identity: certificationIdentity }],
+    () => (createDockerProcessSandboxV4 as unknown as (...args: unknown[]) => unknown)(config, {
+      now: () => '2026-08-09T10:00:01.000Z',
+      test_only: {
+        explicit_test_only: true,
+        inspect_identity: async () => certificationIdentity,
+        run_hostile_certification: async () => validTranscript(),
+      },
     } as never),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
@@ -405,53 +410,19 @@ test('certification transcript binds artifact bytes, exact identity, config TTL,
   );
 });
 
-test('backend probe owns transcript issuance, applies configured TTL, and caches only its live exact binding', async () => {
-  let runnerCalls = 0;
-  let now = '2026-08-09T10:00:01.000Z';
-  const backend = createDockerProcessSandboxV4(config, {
-    now: () => now,
-    test_only: {
-      explicit_test_only: true,
-      inspect_identity: async () => certificationIdentity,
-      run_hostile_certification: async (identity) => {
-        runnerCalls += 1;
-        assert.deepEqual(identity, certificationIdentity);
-        return validTranscript();
-      },
-    },
-  });
-
-  const first = await backend.probe('VALIDATION_UNTRUSTED');
-  assert.equal(first.status, 'SUPPORTED');
-  if (first.status !== 'SUPPORTED') assert.fail('probe must certify the completed transcript');
-  assert.equal(first.expires_at, '2026-08-09T10:15:01.000Z');
-  assert.match(first.certification_hash, /^sha256:[a-f0-9]{64}$/);
-  assert.equal(runnerCalls, 1);
-
-  now = '2026-08-09T10:14:59.000Z';
-  assert.equal((await backend.probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
-  assert.equal(runnerCalls, 1, 'an unexpired exact live binding may be reused');
-
-  now = '2026-08-09T10:15:02.000Z';
-  assert.equal((await backend.probe('VALIDATION_UNTRUSTED')).status, 'UNSUPPORTED');
-  assert.equal(runnerCalls, 2, 'expiry requires a new hostile run; a stale record is not accepted');
-});
-
-test('backend probe cannot certify an injected all-true record through the test-only runner seam', async () => {
-  const backend = createDockerProcessSandboxV4(config, {
-    now: () => '2026-08-09T10:00:01.000Z',
-    test_only: {
-      explicit_test_only: true,
-      inspect_identity: async () => certificationIdentity,
-      run_hostile_certification: async () => ({
-        identity: certificationIdentity,
-        observations: Object.fromEntries(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => [effect, true])),
-      }) as never,
-    },
-  });
-
-  assert.deepEqual(await backend.probe('VALIDATION_UNTRUSTED'), {
-    status: 'UNSUPPORTED',
-    failure: 'PROCESS_SANDBOX_UNAVAILABLE',
-  });
+test('certification transcript contains exactly one artifact of each required kind', () => {
+  const valid = validTranscript();
+  const duplicate = {
+    ...valid.artifacts[1]!,
+    artifact_id: 'artifact_process_duplicate_0001',
+  };
+  assert.throws(
+    () => validateSandboxCertificationTranscriptV4(
+      { ...valid, artifacts: [...valid.artifacts, duplicate] },
+      certificationIdentity,
+      900,
+      '2026-08-09T10:00:01.000Z',
+    ),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
 });

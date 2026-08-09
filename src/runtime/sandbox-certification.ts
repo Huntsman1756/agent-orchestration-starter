@@ -132,7 +132,7 @@ export function validateSandboxCertificationTranscriptV4(
   const completed = new Date(transcript.completed_at).getTime();
   const checked = new Date(checkedAt).getTime();
   if (completed < started || completed - started > 10 * 60_000 || completed > checked) unavailable();
-  if (transcript.artifacts.length < 4 || transcript.artifacts.length > 32) unavailable();
+  if (transcript.artifacts.length !== artifactKinds.size) unavailable();
 
   const artifacts = new Map<string, SandboxCertificationArtifactV4>();
   const seenKinds = new Set<SandboxCertificationArtifactKindV4>();
@@ -150,7 +150,8 @@ export function validateSandboxCertificationTranscriptV4(
       || !exactIsoTimestamp(artifact.started_at)
       || !exactIsoTimestamp(artifact.completed_at)
       || !/^[A-Za-z0-9+/]+={0,2}$/.test(artifact.content_base64)
-      || !/^sha256:[a-f0-9]{64}$/.test(artifact.content_hash)) unavailable();
+      || !/^sha256:[a-f0-9]{64}$/.test(artifact.content_hash)
+      || seenKinds.has(artifact.kind)) unavailable();
     const artifactStarted = new Date(artifact.started_at).getTime();
     const artifactCompleted = new Date(artifact.completed_at).getTime();
     if (artifactStarted < started || artifactCompleted > completed || artifactCompleted < artifactStarted) unavailable();
@@ -164,7 +165,7 @@ export function validateSandboxCertificationTranscriptV4(
     artifacts.set(artifact.artifact_id, artifact);
     seenKinds.add(artifact.kind);
   }
-  if ([...artifactKinds].some((kind) => !seenKinds.has(kind))) unavailable();
+  if (seenKinds.size !== artifactKinds.size) unavailable();
   const identityArtifacts = [...artifacts.values()].filter((artifact) => artifact.kind === 'DOCKER_IDENTITY_RESULT');
   if (identityArtifacts.length !== 1) unavailable();
   try {
@@ -176,6 +177,7 @@ export function validateSandboxCertificationTranscriptV4(
 
   if (transcript.observations.length !== REQUIRED_SANDBOX_EFFECTS_V4.length) unavailable();
   const effects = new Set<SandboxHostileEffectV4>();
+  const referencedArtifacts = new Set<string>();
   for (const candidateObservation of transcript.observations) {
     if (typeof candidateObservation !== 'object'
       || candidateObservation === null
@@ -190,9 +192,12 @@ export function validateSandboxCertificationTranscriptV4(
       || observation.artifact_ids.length > 4) unavailable();
     const requiredKind = artifactKindForEffect(observation.effect);
     if (observation.artifact_ids.some((artifactId) => artifacts.get(artifactId)?.kind !== requiredKind)) unavailable();
+    for (const artifactId of observation.artifact_ids) referencedArtifacts.add(artifactId);
     effects.add(observation.effect);
   }
   if (REQUIRED_SANDBOX_EFFECTS_V4.some((effect) => !effects.has(effect))) unavailable();
+  if ([...artifacts.values()].some((artifact) => artifact.kind !== 'DOCKER_IDENTITY_RESULT'
+    && !referencedArtifacts.has(artifact.artifact_id))) unavailable();
   const expiresAt = new Date(completed + ttlSeconds * 1_000).toISOString();
   return Object.freeze({
     evidence_hash: `sha256:${hashCanonicalV4(transcript)}`,

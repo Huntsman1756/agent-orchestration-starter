@@ -462,16 +462,52 @@ async function runAttachedContainerProcessV4(
   });
 }
 
+interface DockerExecutionLifecycleV4 {
+  cancelled: boolean;
+  controller: DockerContainerRemovalControllerV4 | null;
+  cleanup_error: unknown | null;
+  readonly settled: Promise<void>;
+  readonly settle: () => void;
+}
+
+function createDockerExecutionLifecycleV4(): DockerExecutionLifecycleV4 {
+  let settle!: () => void;
+  const settled = new Promise<void>((resolvePromise) => { settle = resolvePromise; });
+  return { cancelled: false, controller: null, cleanup_error: null, settled, settle };
+}
+
+async function cancellationCheckpointV4(lifecycle?: DockerExecutionLifecycleV4): Promise<void> {
+  if (lifecycle?.cancelled !== true) return;
+  if (lifecycle.controller !== null) {
+    try {
+      await lifecycle.controller.remove();
+    } catch (error) {
+      lifecycle.cleanup_error = error;
+      throw error;
+    }
+  }
+  unavailable();
+}
+
 async function runDockerSandboxCandidateOwnedV4(
   config: DockerSandboxConfigV4,
   request: SandboxRunRequestV4,
-  lifecycle?: (controller: DockerContainerRemovalControllerV4 | null) => void,
+  lifecycle?: DockerExecutionLifecycleV4,
+  onController?: (controller: DockerContainerRemovalControllerV4) => void,
 ): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
   validateDockerSandboxRequestV4(config, request);
+  await cancellationCheckpointV4(lifecycle);
   const mountProof = await proveDockerSandboxMountsV4(config, request);
+  await cancellationCheckpointV4(lifecycle);
   const name = containerName(request.execution_id);
-  if (request.network.mode === 'INTERNAL') await assertInternalNetworkV4(config, request);
+  if (request.network.mode === 'INTERNAL') {
+    await cancellationCheckpointV4(lifecycle);
+    await assertInternalNetworkV4(config, request);
+    await cancellationCheckpointV4(lifecycle);
+  }
+  await cancellationCheckpointV4(lifecycle);
   await reproveDockerSandboxMountsV4(config, request, mountProof);
+  await cancellationCheckpointV4(lifecycle);
   const networkless = request.network.mode === 'NONE';
   const createArgs = [
     'create',
@@ -484,6 +520,7 @@ async function runDockerSandboxCandidateOwnedV4(
     config.image_id,
     ...(networkless ? request.argv : ['node', '-e', 'setInterval(()=>{},2147483647)']),
   ];
+  await cancellationCheckpointV4(lifecycle);
   const created = await runDockerCliV4(config.docker_executable, createArgs, 16_384).catch(() => unavailable());
   const containerId = created.stdout.trim();
   if (created.exitCode !== 0
@@ -492,27 +529,45 @@ async function runDockerSandboxCandidateOwnedV4(
     || !/^[a-f0-9]{64}$/.test(containerId)
     || !await exactContainerIdPresentV4(config, containerId)) unavailable();
   const removal = removalControllerV4(config, containerId);
-  lifecycle?.(removal);
+  if (lifecycle !== undefined) lifecycle.controller = removal;
+  onController?.(removal);
   try {
+    await cancellationCheckpointV4(lifecycle);
     if (networkless) {
-      return await runAttachedContainerProcessV4(config, request, removal, ['start', '--attach', containerId]);
+      await cancellationCheckpointV4(lifecycle);
+      const result = await runAttachedContainerProcessV4(config, request, removal, ['start', '--attach', containerId]);
+      await cancellationCheckpointV4(lifecycle);
+      return result;
     }
     const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', containerId], 16_384);
+    await cancellationCheckpointV4(lifecycle);
     if (disconnected.exitCode !== 0) unavailable();
     const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, containerId], 16_384);
+    await cancellationCheckpointV4(lifecycle);
     if (connected.exitCode !== 0) unavailable();
+    await cancellationCheckpointV4(lifecycle);
     const started = await runDockerCliV4(config.docker_executable, ['start', containerId], 16_384);
+    await cancellationCheckpointV4(lifecycle);
     if (started.exitCode !== 0 || started.stdout.trim() !== containerId) unavailable();
-    return await runAttachedContainerProcessV4(config, request, removal, [
+    await cancellationCheckpointV4(lifecycle);
+    const result = await runAttachedContainerProcessV4(config, request, removal, [
       'exec',
       `--workdir=${request.working_directory}`,
       ...environmentArgs(request),
       containerId,
       ...request.argv,
     ]);
+    await cancellationCheckpointV4(lifecycle);
+    return result;
   } finally {
-    await removal.remove();
-    lifecycle?.(null);
+    try {
+      await removal.remove();
+    } catch (error) {
+      if (lifecycle !== undefined) lifecycle.cleanup_error = error;
+      throw error;
+    } finally {
+      if (lifecycle !== undefined && lifecycle.controller === removal) lifecycle.controller = null;
+    }
   }
 }
 
@@ -607,10 +662,19 @@ async function requiredDockerOutputV4(
 async function createCertificationNetworkV4(
   config: DockerSandboxConfigV4,
   argv: readonly string[],
+  overlapRetryMs = 0,
 ): Promise<string> {
-  const networkId = await requiredDockerOutputV4(config, ['network', 'create', ...argv], 16_384);
-  if (!/^[a-f0-9]{64}$/.test(networkId)) unavailable();
-  return networkId;
+  const deadline = Date.now() + overlapRetryMs;
+  do {
+    const created = await runDockerCliV4(config.docker_executable, ['network', 'create', ...argv], 16_384).catch(() => unavailable());
+    const networkId = created.stdout.trim();
+    if (created.exitCode === 0
+      && !created.stdoutTruncated
+      && !created.stderrTruncated
+      && /^[a-f0-9]{64}$/.test(networkId)) return networkId;
+    if (Date.now() >= deadline) unavailable();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  } while (true);
 }
 
 async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, networkId: string): Promise<void> {
@@ -808,7 +872,7 @@ export async function runDockerSandboxHostileCertificationV4(
     ]);
     outboundNetworkId = await createCertificationNetworkV4(config, [
       '--driver=bridge', '--subnet=93.184.216.0/24', '--label', `agent-orchestration.execution=${executionPrefix}_network`, outboundName,
-    ]);
+    ], 30_000);
     upstream = await startCertificationTlsFixtureV4(
       config,
       outboundNetworkId,
@@ -848,8 +912,8 @@ export async function runDockerSandboxHostileCertificationV4(
       network: { mode: 'INTERNAL', name: internalName },
       timeout_ms: 15_000,
       max_output_bytes: 64 * 1024,
-    }, (controller) => {
-      if (controller !== null) executorId = controller.container_id;
+    }, undefined, (controller) => {
+      executorId = controller.container_id;
     });
     const executorDeadline = Date.now() + 5_000;
     while (executorId === '' && Date.now() < executorDeadline) {
@@ -939,29 +1003,34 @@ export async function runDockerSandboxHostileCertificationV4(
   unavailable();
 }
 
-export interface DockerProcessSandboxDependenciesV4 {
-  readonly now?: () => string;
-  readonly test_only?: {
-    readonly explicit_test_only: true;
-    readonly inspect_identity: (profile: SandboxProfileV4) => Promise<SandboxCertificationIdentityV4>;
-    readonly run_hostile_certification: (identity: SandboxCertificationIdentityV4) => Promise<SandboxCertificationTranscriptV4>;
-  };
-}
-
 const unsupportedResult: SandboxProbeResultV4 = Object.freeze({
   status: 'UNSUPPORTED',
   failure: 'PROCESS_SANDBOX_UNAVAILABLE',
 });
 
+const hostileCertificationFlightsV4 = new Map<string, Promise<SandboxCertificationTranscriptV4>>();
+
+async function runSingleFlightHostileCertificationV4(
+  config: DockerSandboxConfigV4,
+  identity: SandboxCertificationIdentityV4,
+): Promise<SandboxCertificationTranscriptV4> {
+  const key = hashCanonicalV4(identity);
+  const existing = hostileCertificationFlightsV4.get(key);
+  if (existing !== undefined) return await existing;
+  const flight = runDockerSandboxHostileCertificationV4(config, identity);
+  hostileCertificationFlightsV4.set(key, flight);
+  try {
+    return await flight;
+  } finally {
+    if (hostileCertificationFlightsV4.get(key) === flight) hostileCertificationFlightsV4.delete(key);
+  }
+}
+
 export function createDockerProcessSandboxV4(
   config: DockerSandboxConfigV4,
-  dependencies: DockerProcessSandboxDependenciesV4 = {},
 ): ProcessSandboxBackendV4 {
   validateDockerSandboxConfigV4(config);
-  if (Object.keys(dependencies).some((key) => key !== 'now' && key !== 'test_only')
-    || (dependencies.test_only !== undefined
-      && (dependencies.test_only.explicit_test_only !== true
-        || Object.keys(dependencies.test_only).some((key) => !['explicit_test_only', 'inspect_identity', 'run_hostile_certification'].includes(key))))) unavailable();
+  if (arguments.length !== 1) unavailable();
   interface IssuedCertificationV4 {
     readonly identity: SandboxCertificationIdentityV4;
     readonly evidence_hash: `sha256:${string}`;
@@ -1017,20 +1086,15 @@ export function createDockerProcessSandboxV4(
       identity: certification.identity,
     })}`;
   };
-  const inspectIdentity = dependencies.test_only?.inspect_identity
-    ?? ((profile: SandboxProfileV4) => inspectDockerSandboxIdentityV4(config, profile));
-  const runCertification = dependencies.test_only?.run_hostile_certification
-    ?? (async (identity: SandboxCertificationIdentityV4) => await runDockerSandboxHostileCertificationV4(config, identity));
-  const active = new Map<string, DockerContainerRemovalControllerV4>();
-  const starting = new Set<string>();
+  const executions = new Map<string, DockerExecutionLifecycleV4>();
   const probe = async (profile: SandboxProfileV4): Promise<SandboxProbeResultV4> => {
     try {
-      const identity = await inspectIdentity(profile);
-      const checkedAt = dependencies.now?.() ?? new Date().toISOString();
+      const identity = await inspectDockerSandboxIdentityV4(config, profile);
+      const checkedAt = new Date().toISOString();
       let certification = cache.get(profile);
       if (certification === undefined || !matches(certification, identity, checkedAt)) {
-        const transcript = await runCertification(identity);
-        const issuedAt = dependencies.now?.() ?? new Date().toISOString();
+        const transcript = await runSingleFlightHostileCertificationV4(config, identity);
+        const issuedAt = new Date().toISOString();
         certification = issue(identity, transcript, issuedAt);
         if (!matches(certification, identity, issuedAt)) return unsupportedResult;
         cache.set(profile, certification);
@@ -1050,27 +1114,35 @@ export function createDockerProcessSandboxV4(
     id: 'docker-engine-linux-v4',
     probe,
     run: async (request: SandboxRunRequestV4) => {
-      if ((await probe(request.profile)).status !== 'SUPPORTED'
-        || active.has(request.execution_id)
-        || starting.has(request.execution_id)) unavailable();
-      starting.add(request.execution_id);
+      if (executions.has(request.execution_id)) unavailable();
+      const lifecycle = createDockerExecutionLifecycleV4();
+      executions.set(request.execution_id, lifecycle);
       try {
-        return await runDockerSandboxCandidateOwnedV4(config, request, (controller) => {
-          if (controller === null) active.delete(request.execution_id);
-          else {
-            starting.delete(request.execution_id);
-            active.set(request.execution_id, controller);
-          }
-        });
+        await cancellationCheckpointV4(lifecycle);
+        const supported = await probe(request.profile);
+        await cancellationCheckpointV4(lifecycle);
+        if (supported.status !== 'SUPPORTED') unavailable();
+        const result = await runDockerSandboxCandidateOwnedV4(config, request, lifecycle);
+        await cancellationCheckpointV4(lifecycle);
+        return result;
       } finally {
-        starting.delete(request.execution_id);
+        lifecycle.settle();
+        if (executions.get(request.execution_id) === lifecycle) executions.delete(request.execution_id);
       }
     },
     terminate: async (executionId: string) => {
-      const controller = active.get(executionId);
-      if (controller === undefined) return;
-      await controller.remove();
-      if (active.get(executionId) === controller) active.delete(executionId);
+      const lifecycle = executions.get(executionId);
+      if (lifecycle === undefined) return;
+      lifecycle.cancelled = true;
+      if (lifecycle.controller !== null) {
+        try {
+          await lifecycle.controller.remove();
+        } catch (error) {
+          lifecycle.cleanup_error = error;
+        }
+      }
+      await lifecycle.settled;
+      if (lifecycle.cleanup_error !== null) throw lifecycle.cleanup_error;
     },
   });
 }

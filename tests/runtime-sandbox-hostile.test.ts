@@ -372,7 +372,7 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
   let terminatingId = '';
   let replacementId = '';
   try {
-    const terminating = backend.run({
+    const terminating = assert.rejects(() => backend.run({
       execution_id: 'exec_certified_terminate_0001',
       profile: 'VALIDATION_UNTRUSTED',
       argv: ['node', '-e', 'setInterval(()=>{},2147483647)'],
@@ -382,7 +382,7 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
       network: { mode: 'NONE' },
       timeout_ms: 10_000,
       max_output_bytes: 4_096,
-    });
+    }), /PROCESS_SANDBOX_UNAVAILABLE/);
     await waitForContainer(terminatingName);
     terminatingId = await docker('inspect', '--format', '{{.Id}}', terminatingName);
     await docker('rename', terminatingName, preservedName);
@@ -405,4 +405,57 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
       await docker('rm', '--force', value).catch(() => undefined);
     }));
   }
+});
+
+dockerIntegration('terminate persists cancellation while the production probe is still starting', { timeout: 60_000 }, async () => {
+  const backend = createDockerProcessSandboxV4(config());
+  const executionId = 'exec_cancel_during_probe_0001';
+  const running = backend.run({
+    execution_id: executionId,
+    profile: 'VALIDATION_UNTRUSTED',
+    argv: ['node', '-e', "process.stdout.write('must-not-run')"],
+    working_directory: '/capsule',
+    environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+    mounts: [],
+    network: { mode: 'NONE' },
+    timeout_ms: 5_000,
+    max_output_bytes: 4_096,
+  });
+
+  await backend.terminate(executionId);
+  await assert.rejects(() => running, /PROCESS_SANDBOX_UNAVAILABLE/);
+  await assert.rejects(() => docker('inspect', 'ao-exec-cancel-during-probe-0001'));
+});
+
+dockerIntegration('concurrent production probes share one exact hostile certification run', { timeout: 90_000 }, async () => {
+  const firstBackend = createDockerProcessSandboxV4(config());
+  const secondBackend = createDockerProcessSandboxV4(config());
+  const [first, second] = await Promise.all([
+    firstBackend.probe('VALIDATION_UNTRUSTED'),
+    secondBackend.probe('VALIDATION_UNTRUSTED'),
+  ]);
+
+  assert.equal(first.status, 'SUPPORTED');
+  assert.equal(second.status, 'SUPPORTED');
+  if (first.status !== 'SUPPORTED' || second.status !== 'SUPPORTED') assert.fail('both probes require the shared live certification');
+  assert.equal(second.certification_hash, first.certification_hash, 'one in-process flight must issue from one exact transcript');
+});
+
+dockerIntegration('independent hostile runners wait out fixed-subnet overlap without false failure', { timeout: 120_000 }, async () => {
+  const encodedConfig = Buffer.from(JSON.stringify(config())).toString('base64');
+  const source = [
+    "const runtime=await import('./dist/runtime/docker-sandbox.js');",
+    "const config=JSON.parse(Buffer.from(process.argv[1],'base64').toString('utf8'));",
+    "const identity=await runtime.inspectDockerSandboxIdentityV4(config,'VALIDATION_UNTRUSTED');",
+    'await runtime.runDockerSandboxHostileCertificationV4(config,identity);',
+  ].join('');
+  const launch = async () => await execFileAsync(process.execPath, ['--input-type=module', '-e', source, encodedConfig], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 110_000,
+    maxBuffer: 1024 * 1024,
+  });
+
+  await Promise.all([launch(), launch()]);
 });
