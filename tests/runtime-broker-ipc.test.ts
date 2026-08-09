@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { createServer, Server, Socket } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { createConnection, createServer, Server, Socket } from 'node:net';
+import { homedir, tmpdir } from 'node:os';
+import { join, posix, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -16,6 +18,8 @@ import {
   type BrokerIpcRequestV4,
   type BrokerIpcPlatformVerifierV4,
   type BrokerIpcServerIdentityVerifierV4,
+  type UnixBrokerListenerBindingV4,
+  type UnixPhysicalDirectoryCapabilityV4,
   type UnixPhysicalPathBackendV4,
   type UnixPhysicalPathInspectionV4,
 } from '../src/runtime/broker-ipc.js';
@@ -29,6 +33,83 @@ import { createInProcessReclamationCoordinatorV4, type ReclamationCoordinatorV4 
 import { validRepositoryPolicy, validRuntimeProfile, validRuntimeResult, validTaskRequest } from './runtime-contracts.test.js';
 
 const endpointCoordinator = createInProcessReclamationCoordinatorV4('ipc-test');
+
+type LinuxNativePhysicalPathFactoryV4 = () => UnixPhysicalPathBackendV4;
+
+async function linuxNativePhysicalPathBackendForTest(): Promise<UnixPhysicalPathBackendV4> {
+  const runtimeModule = await import('../src/runtime/broker-ipc.js') as unknown as {
+    createLinuxNativeUnixPhysicalPathBackendV4?: LinuxNativePhysicalPathFactoryV4;
+  };
+  assert.equal(
+    typeof runtimeModule.createLinuxNativeUnixPhysicalPathBackendV4,
+    'function',
+    'production must provide the branded Linux physical-path backend',
+  );
+  return runtimeModule.createLinuxNativeUnixPhysicalPathBackendV4!();
+}
+
+async function linuxSecureDirectoryForTest(prefix: string): Promise<string> {
+  const directory = await mkdtemp(join(homedir(), prefix));
+  await chmod(directory, 0o700);
+  return directory;
+}
+
+function currentUnixOwnerIdentityForTest(): string {
+  assert.equal(typeof process.getuid, 'function');
+  return `uid:${process.getuid!()}`;
+}
+
+function waitForChildIpcMessageForTest(child: ChildProcess, expectedKind: string): Promise<void> {
+  return new Promise<void>((resolvePromise, reject) => {
+    const onMessage = (message: unknown) => {
+      if (message === null || typeof message !== 'object' || (message as { kind?: unknown }).kind !== expectedKind) return;
+      cleanup();
+      resolvePromise();
+    };
+    const onFailure = (error: Error) => { cleanup(); reject(error); };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`replacement process exited before ${expectedKind}: ${String(code)} ${String(signal)}`));
+    };
+    const cleanup = () => {
+      child.off('message', onMessage);
+      child.off('error', onFailure);
+      child.off('exit', onExit);
+    };
+    child.on('message', onMessage);
+    child.once('error', onFailure);
+    child.once('exit', onExit);
+  });
+}
+
+function minimalDaemonForIpcTest(submitted: BrokerCommandV4[] = []): BrokerDaemonV4 {
+  const status = {
+    ...validRuntimeResult(),
+    state: 'READY_FOR_EXECUTOR',
+    attempts: [],
+    validation_results: [],
+    head_sha: null,
+    review_attestation_hash: null,
+    commit_sha: null,
+  } as RuntimeResultV4;
+  return {
+    submit: async (command) => {
+      submitted.push(command);
+      return {
+        request_id: command.type === 'RUN_CODING_TASK' ? command.request.request_id : 'req_unknown',
+        run_id: status.run_id,
+        state: status.state,
+        status_token: hashCanonicalV4({ run_id: status.run_id, state: status.state, artifact_manifest_hash: status.artifact_manifest_hash }),
+      };
+    },
+    status: async () => status,
+    recover: async () => {},
+    close: async () => {},
+    recordAttempt: async () => {},
+    reinspect: async () => {},
+    recordExternalProcessStarted: async () => {},
+  };
+}
 
 function physicalInspection(
   operationPath: string,
@@ -51,13 +132,79 @@ function physicalPathBackend(
   inspect: (input: { state_directory: string; expected_owner_identity: string }) => Promise<UnixPhysicalPathInspectionV4>,
   identity = 'physical-path-test',
 ): UnixPhysicalPathBackendV4 {
+  const capability = async (input: { operation_path: string; expected_owner_identity: string }): Promise<UnixPhysicalDirectoryCapabilityV4> => {
+    const inspection = await inspect({ state_directory: input.operation_path, expected_owner_identity: input.expected_owner_identity });
+    const endpoint = posix.join(input.operation_path, 'broker.sock');
+    return {
+      inspection,
+      loadToken: async ({ platform, loadToken }) => {
+        if (loadToken !== undefined) return loadToken(input.operation_path, platform);
+        const tokenPath = posix.join(input.operation_path, 'broker.token');
+        const token = 'a'.repeat(64);
+        await writeFile(tokenPath, `${token}\n`, { flag: 'wx', mode: 0o600 }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EEXIST') throw error;
+        });
+        return (await readFile(tokenPath, 'utf8')).trim();
+      },
+      verifyOwnerOnlyPath: ({ kind, expected_owner_identity, verifier }) => verifier.verifyOwnerOnlyPath({
+        path: kind === 'state-directory' ? input.operation_path : posix.join(input.operation_path, 'broker.token'),
+        kind,
+        expected_owner_identity,
+      }),
+      reclaimBrokerSocket: (expectedOwnerIdentity) => reclaimUnixSocketV4(endpoint, expectedOwnerIdentity),
+      listenBrokerSocket: async (server) => {
+        await listenForTest(server, endpoint);
+        return { kind: 'unix-broker-listener-binding', release: async () => {} } as UnixBrokerListenerBindingV4;
+      },
+      publishBrokerSocket: ({ expected_owner_identity, verifier }) => secureUnixEndpointV4(endpoint, expected_owner_identity, {
+        metadata: async (path) => {
+          const metadata = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          return metadata === null ? null : {
+            kind: metadata.isSocket() ? 'socket' : 'other',
+            owner_identity: `uid:${metadata.uid}`,
+            owner_only: (metadata.mode & 0o077) === 0,
+            object_identity: `${metadata.dev}:${metadata.ino}`,
+          };
+        },
+        secure: async (path) => chmod(path, 0o600),
+        verify: async (path, owner) => verifier.verifyOwnerOnlyPath({ path, kind: 'endpoint', expected_owner_identity: owner }),
+        close: async () => {},
+        remove: unlink,
+      }),
+      withConnectedBrokerSocket: async (connect, operation) => operation((connect ?? createConnection)(endpoint)),
+      removeOwnedBrokerSocket: async (ownedObjectIdentity, deps) => {
+        if (deps === undefined) {
+          const metadata = await lstat(endpoint).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+          });
+          if (metadata !== null && `${metadata.dev}:${metadata.ino}` === ownedObjectIdentity) await unlink(endpoint);
+          return;
+        }
+        const current = await deps.metadata(endpoint);
+        if (current === null || current.kind !== 'socket' || current.object_identity !== ownedObjectIdentity) return;
+        if (deps.rename === undefined || deps.restoreQuarantine === undefined) {
+          await deps.remove(endpoint);
+          return;
+        }
+        const quarantine = `${endpoint}.quarantine-${process.pid}-${Date.now()}`;
+        await deps.rename(endpoint, quarantine);
+        const quarantined = await deps.metadata(quarantine);
+        if (quarantined?.object_identity !== ownedObjectIdentity) {
+          await deps.restoreQuarantine(quarantine, endpoint);
+          throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
+        }
+        await deps.remove(quarantine);
+      },
+    };
+  };
   return {
     certification: { kind: 'in-process-test', identity },
     certifyStateDirectory: inspect,
-    withReprovedStateDirectory: async (input, operation) => operation(await inspect({
-      state_directory: input.operation_path,
-      expected_owner_identity: input.expected_owner_identity,
-    })),
+    withReprovedStateDirectory: async (input, operation) => operation(await capability(input)),
   };
 }
 
@@ -133,7 +280,7 @@ async function ipcFixture() {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
   const endpoint = process.platform === 'win32'
     ? `\\\\.\\pipe\\runner-v4-ipc-${stateDirectory.replace(/[^A-Za-z0-9]/g, '')}`
-    : join(stateDirectory, 'test.sock');
+    : join(stateDirectory, 'broker.sock');
   const submitted: BrokerCommandV4[] = [];
   const status = {
     ...validRuntimeResult(),
@@ -306,7 +453,7 @@ test('production startup fails closed when no native platform verifier is provid
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
   const endpoint = process.platform === 'win32'
     ? `\\\\.\\pipe\\runner-v4-closed-${stateDirectory.replace(/[^A-Za-z0-9]/g, '')}`
-    : join(stateDirectory, 'closed.sock');
+    : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   await assert.rejects(
     () => createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, endpointCoordinator, allowInProcessCoordinatorForTests: true, ...unixPhysicalServerTestDeps() }),
@@ -316,7 +463,7 @@ test('production startup fails closed when no native platform verifier is provid
 
 test('production startup rejects an in-process endpoint coordinator', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-coordinator-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-coordinator-${Date.now()}` : join(stateDirectory, 'coordinator.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-coordinator-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
 
@@ -344,7 +491,7 @@ test('Unix production startup fails closed without a certified physical-path bac
 
 test('running-server close uses the same endpoint coordinator as startup', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-close-coordinator-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-close-coordinator-${Date.now()}` : join(stateDirectory, 'close-coordinator.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-close-coordinator-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const delegate = createInProcessReclamationCoordinatorV4('close-coordinator-delegate');
@@ -373,10 +520,10 @@ test('canonicalizes state and endpoint configuration before every IPC lifecycle 
   const pipeName = `runner-v4-canonical-${Date.now()}`;
   const endpoint = process.platform === 'win32'
     ? `//./PIPE/${pipeName.toUpperCase()}`
-    : `${stateDirectory}canonical.sock`;
+    : `${stateDirectory}broker.sock`;
   const canonicalEndpoint = process.platform === 'win32'
     ? `\\\\.\\pipe\\${pipeName}`
-    : join(canonicalStateDirectory, 'canonical.sock');
+    : join(canonicalStateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifiedPaths: Array<{ path: string; kind: 'state-directory' | 'token-file' | 'endpoint' }> = [];
   const peerEndpoints: string[] = [];
@@ -544,6 +691,222 @@ test('rejects an intermediate Unix parent symlink before token, coordinator, or 
   assert.equal(coordinatorEffects, 0);
 });
 
+test('rejects a structurally forged production Unix physical backend before inspection or coordination', async () => {
+  const stateDirectory = '/forged-native/state';
+  let inspectionEffects = 0;
+  let coordinatorEffects = 0;
+  const forgedBackend = physicalPathBackend(async ({ state_directory, expected_owner_identity }) => {
+    inspectionEffects += 1;
+    return physicalInspection(state_directory, expected_owner_identity);
+  });
+  forgedBackend.certification = { kind: 'native-physical-path', identity: 'caller-attested-forgery' };
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'native-cross-process', identity: 'forged-backend-coordinator' },
+    runExclusive: async () => { coordinatorEffects += 1; throw new Error('must not coordinate'); },
+  };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint: `${stateDirectory}/broker.sock`,
+      platform: 'linux',
+      platformVerifier: { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) },
+      endpointCoordinator: coordinator,
+      unixPhysicalPathBackend: forgedBackend,
+      loadToken: async () => 'a'.repeat(64),
+    }),
+    /AUTHENTICATION_FAILED/,
+  );
+  assert.equal(inspectionEffects, 0);
+  assert.equal(coordinatorEffects, 0);
+});
+
+test('Linux native physical backend refuses a non-Linux Unix constructor before coordination', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-non-linux-unix-');
+  let coordinatorEffects = 0;
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'native-cross-process', identity: 'non-linux-unix-coordinator' },
+    runExclusive: async () => { coordinatorEffects += 1; throw new Error('must not coordinate'); },
+  };
+  try {
+    const backend = await linuxNativePhysicalPathBackendForTest();
+    await assert.rejects(
+      () => createBrokerIpcServer({
+        daemon: minimalDaemonForIpcTest(),
+        stateDirectory,
+        endpoint: join(stateDirectory, 'broker.sock'),
+        platform: 'darwin',
+        platformVerifier: { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) },
+        endpointCoordinator: coordinator,
+        unixPhysicalPathBackend: backend,
+      }),
+      /AUTHENTICATION_FAILED/,
+    );
+    assert.equal(coordinatorEffects, 0);
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('rejects a linked descendant endpoint parent before physical inspection or coordination', async () => {
+  const stateDirectory = '/linked-descendant/state';
+  let physicalEffects = 0;
+  let coordinatorEffects = 0;
+  const backend = physicalPathBackend(async ({ state_directory, expected_owner_identity }) => {
+    physicalEffects += 1;
+    return physicalInspection(state_directory, expected_owner_identity);
+  });
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'native-cross-process', identity: 'linked-descendant-coordinator' },
+    runExclusive: async () => { coordinatorEffects += 1; throw new Error('must not coordinate'); },
+  };
+
+  await assert.rejects(
+    () => createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint: `${stateDirectory}/linked-parent/broker.sock`,
+      platform: 'linux',
+      platformVerifier: { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) },
+      endpointCoordinator: coordinator,
+      unixPhysicalPathBackend: backend,
+      allowInProcessPhysicalPathBackendForTests: true,
+      loadToken: async () => 'a'.repeat(64),
+    }),
+    /AUTHENTICATION_FAILED/,
+  );
+  assert.equal(physicalEffects, 0);
+  assert.equal(coordinatorEffects, 0);
+});
+
+test('real Linux backend rejects a direct state-directory symlink', { skip: process.platform !== 'linux' }, async () => {
+  const fixtureRoot = await linuxSecureDirectoryForTest('.runner-v4-direct-link-');
+  try {
+    const actualState = join(fixtureRoot, 'actual-state');
+    const linkedState = join(fixtureRoot, 'linked-state');
+    await mkdir(actualState, { mode: 0o700 });
+    await symlink(actualState, linkedState, 'dir');
+    const backend = await linuxNativePhysicalPathBackendForTest();
+
+    await assert.rejects(
+      () => backend.certifyStateDirectory({ state_directory: linkedState, expected_owner_identity: currentUnixOwnerIdentityForTest() }),
+      /AUTHENTICATION_FAILED/,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('real Linux backend rejects an intermediate parent symlink', { skip: process.platform !== 'linux' }, async () => {
+  const fixtureRoot = await linuxSecureDirectoryForTest('.runner-v4-parent-link-');
+  try {
+    const actualParent = join(fixtureRoot, 'actual-parent');
+    const linkedParent = join(fixtureRoot, 'linked-parent');
+    await mkdir(join(actualParent, 'state'), { recursive: true, mode: 0o700 });
+    await chmod(actualParent, 0o700);
+    await symlink(actualParent, linkedParent, 'dir');
+    const backend = await linuxNativePhysicalPathBackendForTest();
+
+    await assert.rejects(
+      () => backend.certifyStateDirectory({ state_directory: join(linkedParent, 'state'), expected_owner_identity: currentUnixOwnerIdentityForTest() }),
+      /AUTHENTICATION_FAILED/,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('real Linux native capability round-trips through the direct broker.sock child', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-native-roundtrip-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const submitted: BrokerCommandV4[] = [];
+  const coordinator = createInProcessReclamationCoordinatorV4('native-linux-roundtrip');
+  const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
+  let server: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    server = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(submitted),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier,
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: physicalBackend,
+      requestDeadlineMs: 1_000,
+    });
+    const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
+    const client = createBrokerIpcClient({
+      stateDirectory,
+      endpoint,
+      token,
+      platform: 'linux',
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: physicalBackend,
+      serverIdentityVerifier: clientVerifier(endpoint),
+      requestDeadlineMs: 1_000,
+    });
+
+    const reply = await client.submit(request(token).command);
+
+    assert.equal(reply.run_id, 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1');
+    assert.equal(submitted.length, 1);
+    await client.close();
+  } finally {
+    await server?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('post-listen Unix reproof failure closes the server handle and leaves a replacement endpoint intact', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-post-listen-reproof-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const preexistingServers = new Set(activeServersForTest());
+  let inspections = 0;
+  const backend = physicalPathBackend(async ({ state_directory, expected_owner_identity }) => {
+    inspections += 1;
+    const valid = physicalInspection(state_directory, expected_owner_identity);
+    if (inspections < 7) return valid;
+    return { ...valid, components: valid.components.map((component, index) => index === valid.components.length - 1 ? { ...component, kind: 'symbolic-link' as const } : component) };
+  }, 'post-listen-reproof');
+  let replacement: Server | null = null;
+  try {
+    await assert.rejects(
+      () => createBrokerIpcServer({
+        daemon: minimalDaemonForIpcTest(),
+        stateDirectory,
+        endpoint,
+        platform: 'linux',
+        platformVerifier: { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) },
+        endpointCoordinator,
+        allowInProcessCoordinatorForTests: true,
+        unixPhysicalPathBackend: backend,
+        allowInProcessPhysicalPathBackendForTests: true,
+        loadToken: async () => 'a'.repeat(64),
+      }),
+      /AUTHENTICATION_FAILED|UNKNOWN_FAILURE/,
+    );
+
+    replacement = createServer();
+    await listenForTest(replacement, endpoint);
+    assert.equal((await lstat(endpoint)).isSocket(), true);
+    await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+    assert.equal((await lstat(endpoint)).isSocket(), true);
+  } finally {
+    if (replacement !== null) await closeForTest(replacement);
+    for (const active of activeServersForTest()) {
+      if (!preexistingServers.has(active)) await closeForTest(active);
+    }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
 test('rejects incomplete, ambiguous, untrusted, or insecure Unix physical metadata before coordination', async () => {
   const stateDirectory = '/invalid-physical/state';
   const endpoint = '/invalid-physical/state/broker.sock';
@@ -581,7 +944,7 @@ test('rejects incomplete, ambiguous, untrusted, or insecure Unix physical metada
 
 test('cleans a listener when the endpoint coordinator rejects after a successful startup callback', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-release-rejection-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-release-rejection-${Date.now()}` : join(stateDirectory, 'release-rejection.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-release-rejection-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   let coordinatorCalls = 0;
@@ -614,7 +977,7 @@ test('cleans a listener when the endpoint coordinator rejects after a successful
 
 test('startup fails closed when the platform verifier cannot prove token ACL ownership', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-acl-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-acl-${Date.now()}` : join(stateDirectory, 'acl.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-acl-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = {
     verifyOwnerOnlyPath: async () => null,
@@ -629,7 +992,7 @@ test('startup fails closed when the platform verifier cannot prove token ACL own
 
 test('normalizes native verifier exceptions during IPC startup', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-verifier-leak-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-verifier-leak-${Date.now()}` : join(stateDirectory, 'verifier-leak.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-verifier-leak-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = {
     verifyOwnerOnlyPath: async () => { throw new Error('ACL tool failed at C:\\Users\\secret-owner'); },
@@ -644,7 +1007,7 @@ test('normalizes native verifier exceptions during IPC startup', async () => {
 
 test('normalizes a synchronous owner-verifier throw during IPC startup', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-sync-verifier-leak-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-sync-verifier-leak-${Date.now()}` : join(stateDirectory, 'sync-verifier-leak.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-sync-verifier-leak-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = {
     verifyOwnerOnlyPath: () => { throw new Error('ACL sync failure at C:\\Users\\secret-owner'); },
@@ -662,7 +1025,7 @@ test('normalizes raw daemon errors before they cross IPC', async () => {
   const leakingDaemon = fixture.server;
   await leakingDaemon.close();
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-leak-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-leak-${Date.now()}` : join(stateDirectory, 'leak.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-leak-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const daemon = { ...({} as BrokerDaemonV4), submit: async () => { throw new Error('ENOENT C:\\Users\\secret-owner\\private'); } };
   const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true, ...unixPhysicalServerTestDeps() });
@@ -677,7 +1040,7 @@ test('normalizes raw daemon errors before they cross IPC', async () => {
 
 test('rejects a malformed daemon reply before it crosses IPC', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-malformed-reply-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-malformed-reply-${Date.now()}` : join(stateDirectory, 'malformed-reply.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-malformed-reply-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const daemon = { ...({} as BrokerDaemonV4), submit: async () => ({ request_id: 'req_invalid', secret: 'C:\\Users\\secret-owner' }) } as unknown as BrokerDaemonV4;
   const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true, ...unixPhysicalServerTestDeps() });
@@ -694,7 +1057,7 @@ test('rejects a malformed daemon reply before it crosses IPC', async () => {
 
 test('rejects daemon reply identities, state, and status token that disagree with the submitted command or authoritative status', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-reply-semantics-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-reply-semantics-${Date.now()}` : join(stateDirectory, 'reply-semantics.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-reply-semantics-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const authoritative = {
     ...validRuntimeResult(),
@@ -802,7 +1165,7 @@ test('normalizes a synchronous server-identity verifier throw without exposing i
 
 test('client rejects a valid-shaped reply belonging to a different request', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-cross-request-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-cross-request-${Date.now()}` : join(stateDirectory, 'cross-request.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-cross-request-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const crossRequestReply = {
     ok: true,
     reply: {
@@ -831,7 +1194,7 @@ test('client rejects a valid-shaped reply belonging to a different request', asy
 
 test('normalizes injected token-storage and server-close failures', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-lifecycle-'));
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-lifecycle-${Date.now()}` : join(stateDirectory, 'lifecycle.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-lifecycle-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const daemon = { submit: async () => { throw new Error('must not submit'); }, status: async () => validRuntimeResult() as RuntimeResultV4, recover: async () => {}, close: async () => {}, recordAttempt: async () => {}, reinspect: async () => {}, recordExternalProcessStarted: async () => {} } as BrokerDaemonV4;
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
 
@@ -868,7 +1231,7 @@ test('replayed mutation over IPC returns the original run without another journa
     reclamationCoordinator: endpointCoordinator,
     allowInProcessCoordinatorForTests: true,
   });
-  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-replay-${Date.now()}` : join(stateDirectory, 'replay.sock');
+  const endpoint = process.platform === 'win32' ? `\\\\.\\pipe\\runner-v4-replay-${Date.now()}` : join(stateDirectory, 'broker.sock');
   const verifier: BrokerIpcPlatformVerifierV4 = { verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }), verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }) };
   const server = await createBrokerIpcServer({ daemon, stateDirectory, endpoint, platform: process.platform, platformVerifier: verifier, endpointCoordinator, allowInProcessCoordinatorForTests: true, ...unixPhysicalServerTestDeps() });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
@@ -1059,6 +1422,127 @@ test('two textual routes to the same physical Unix state tree derive one coordin
   assert.equal(coordinatorKeys.length, 2);
   assert.equal(coordinatorKeys[0], coordinatorKeys[1]);
   assert.doesNotMatch(coordinatorKeys[0]!, /route-a|route-b|broker\.sock/);
+});
+
+test('real Linux textual routes to one physical state directory share the coordinator key', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-native-alias-');
+  const leafName = stateDirectory.slice(stateDirectory.lastIndexOf('/') + 1);
+  const routeA = `${stateDirectory}/.`;
+  const routeB = `${stateDirectory}/../${leafName}`;
+  const backend = await linuxNativePhysicalPathBackendForTest();
+  const delegate = createInProcessReclamationCoordinatorV4('native-alias-delegate');
+  const coordinatorKeys: string[] = [];
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'native-alias-recorder' },
+    runExclusive: async (key, operation) => {
+      coordinatorKeys.push(key);
+      return delegate.runExclusive(key, operation);
+    },
+  };
+  const forbiddenRawDependencies = {
+    metadata: async () => { throw new Error('raw endpoint metadata must not be used'); },
+    remove: async () => { throw new Error('raw endpoint unlink must not be used'); },
+  };
+  try {
+    for (const route of [routeA, routeB]) {
+      await removeOwnedUnixEndpointV4(`${route}/broker.sock`, 'not-present', forbiddenRawDependencies, coordinator, {
+        stateDirectory: route,
+        expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+        unixPhysicalPathBackend: backend,
+        allowInProcessCoordinatorForTests: true,
+      });
+    }
+
+    assert.equal(coordinatorKeys.length, 2);
+    assert.equal(coordinatorKeys[0], coordinatorKeys[1]);
+    assert.doesNotMatch(coordinatorKeys[0]!, new RegExp(leafName));
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('external Linux replacement between owned cleanup phases is never unlinked', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-external-replacement-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const heldOldEndpoint = join(stateDirectory, 'held-old.sock');
+  const replacementSource = join(stateDirectory, 'replacement-source.sock');
+  const displacedOldEndpoint = join(stateDirectory, 'displaced-old.sock');
+  const oldServer = createServer();
+  let replacementProcess: ChildProcess | null = null;
+  try {
+    await listenForTest(oldServer, endpoint);
+    await chmod(endpoint, 0o600);
+    const original = await lstat(endpoint);
+    const originalIdentity = `linux:dev:${original.dev}:ino:${original.ino}`;
+    await rename(endpoint, heldOldEndpoint);
+    await closeForTest(oldServer);
+    await rename(heldOldEndpoint, endpoint);
+
+    const replacementScript = [
+      "const { renameSync, linkSync } = require('node:fs');",
+      "const { createServer } = require('node:net');",
+      'const source = process.argv[1];',
+      'const target = process.argv[2];',
+      'const displaced = process.argv[3];',
+      'const server = createServer();',
+      "server.listen(source, () => process.send({ kind: 'ready' }));",
+      "process.on('message', (message) => {",
+      "  if (message?.kind !== 'replace') return;",
+      '  renameSync(target, displaced);',
+      '  linkSync(source, target);',
+      "  process.send({ kind: 'replaced' });",
+      '});',
+    ].join('\n');
+    replacementProcess = spawn(process.execPath, ['-e', replacementScript, replacementSource, endpoint, displacedOldEndpoint], {
+      stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    });
+    await waitForChildIpcMessageForTest(replacementProcess, 'ready');
+
+    let releaseMetadata!: () => void;
+    const metadataBarrier = new Promise<void>((resolvePromise) => { releaseMetadata = resolvePromise; });
+    let metadataObserved!: () => void;
+    const observedMetadata = new Promise<void>((resolvePromise) => { metadataObserved = resolvePromise; });
+    const backend = await linuxNativePhysicalPathBackendForTest();
+    const cleanup = removeOwnedUnixEndpointV4(endpoint, originalIdentity, {
+      metadata: async () => { throw new Error('native cleanup must not use raw endpoint metadata'); },
+      remove: async () => { throw new Error('native cleanup must not use raw endpoint unlink'); },
+      afterMetadataForTests: async () => {
+        metadataObserved();
+        await metadataBarrier;
+      },
+    }, endpointCoordinator, {
+      stateDirectory,
+      expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+      unixPhysicalPathBackend: backend,
+      allowInProcessPhysicalPathBackendForTests: true,
+      allowInProcessCoordinatorForTests: true,
+    }).then(() => null, (error: Error) => error);
+
+    await observedMetadata;
+    const replaced = waitForChildIpcMessageForTest(replacementProcess, 'replaced');
+    replacementProcess.send?.({ kind: 'replace' });
+    await replaced;
+    releaseMetadata();
+    const cleanupFailure = await cleanup;
+
+    assert.ok(cleanupFailure instanceof Error);
+    assert.match(cleanupFailure.message, /UNKNOWN_FAILURE|REPOSITORY_BUSY/);
+    const replacementMetadata = await lstat(endpoint);
+    assert.equal(replacementMetadata.isSocket(), true);
+    assert.notEqual(`linux:dev:${replacementMetadata.dev}:ino:${replacementMetadata.ino}`, originalIdentity);
+    await new Promise<void>((resolvePromise, reject) => {
+      const socket = createConnection(endpoint);
+      socket.once('connect', () => { socket.destroy(); resolvePromise(); });
+      socket.once('error', reject);
+    });
+  } finally {
+    await closeForTest(oldServer);
+    if (replacementProcess !== null && replacementProcess.exitCode === null && replacementProcess.signalCode === null) {
+      replacementProcess.kill('SIGKILL');
+      await once(replacementProcess, 'exit').catch(() => undefined);
+    }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
 });
 
 test('physical Unix cleanup rejects an uncertified in-process coordinator before endpoint metadata effects', async () => {

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { chmod, link, lstat, mkdir, open, readFile, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join, posix, resolve, win32 } from 'node:path';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
@@ -70,6 +71,41 @@ export interface UnixPhysicalPathInspectionV4 {
   components: readonly UnixPhysicalPathComponentV4[];
 }
 
+export interface UnixOwnedEndpointCleanupDependenciesV4 {
+  metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>;
+  rename?(from: string, to: string): Promise<void>;
+  remove(endpoint: string): Promise<void>;
+  restoreQuarantine?(from: string, endpoint: string): Promise<void>;
+  afterMetadataForTests?(): Promise<void>;
+}
+
+export interface UnixBrokerListenerBindingV4 {
+  readonly kind: 'unix-broker-listener-binding';
+  release(): Promise<void>;
+}
+
+export interface UnixPhysicalDirectoryCapabilityV4 {
+  readonly inspection: UnixPhysicalPathInspectionV4;
+  loadToken(input: { platform: NodeJS.Platform; loadToken?: (directory: string, platform: NodeJS.Platform) => Promise<string> }): Promise<string>;
+  verifyOwnerOnlyPath(input: {
+    kind: 'state-directory' | 'token-file';
+    expected_owner_identity: string;
+    verifier: BrokerIpcPlatformVerifierV4;
+  }): Promise<{ owner_identity: string } | null>;
+  reclaimBrokerSocket(expectedOwnerIdentity: string): Promise<void>;
+  listenBrokerSocket(server: Server): Promise<UnixBrokerListenerBindingV4>;
+  publishBrokerSocket(input: {
+    binding: UnixBrokerListenerBindingV4;
+    expected_owner_identity: string;
+    verifier: BrokerIpcPlatformVerifierV4;
+  }): Promise<string>;
+  withConnectedBrokerSocket<T>(
+    connect: ((endpoint: string) => Socket) | undefined,
+    operation: (socket: Socket) => Promise<T>,
+  ): Promise<T>;
+  removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4): Promise<void>;
+}
+
 /**
  * Trusted Unix boundary. A native implementation must walk every existing
  * component with no-follow metadata and keep the proven physical directory
@@ -81,7 +117,7 @@ export interface UnixPhysicalPathBackendV4 {
   certifyStateDirectory(input: { state_directory: string; expected_owner_identity: string }): Promise<UnixPhysicalPathInspectionV4>;
   withReprovedStateDirectory<T>(
     input: { operation_path: string; expected_owner_identity: string; component_identities: readonly string[] },
-    operation: (inspection: UnixPhysicalPathInspectionV4) => Promise<T>,
+    operation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<T>,
   ): Promise<T>;
 }
 
@@ -180,8 +216,8 @@ function loadBrokerIpcLocationV4(
   const requestedStateDirectory = posix.resolve(stateDirectory);
   const requestedEndpoint = posix.resolve(configuredEndpoint ?? posix.join(requestedStateDirectory, 'broker.sock'));
   const relativeEndpoint = posix.relative(requestedStateDirectory, requestedEndpoint);
-  if (relativeEndpoint.length === 0 || relativeEndpoint === '..' || relativeEndpoint.startsWith('../') || posix.isAbsolute(relativeEndpoint)) {
-    throw new Error('AUTHENTICATION_FAILED: Unix socket must be inside owner-only state directory');
+  if (relativeEndpoint !== 'broker.sock') {
+    throw new Error('AUTHENTICATION_FAILED: Unix socket must be the direct broker.sock state child');
   }
   const operationStateDirectory = certifiedUnixOperationPath ?? requestedStateDirectory;
   return { stateDirectory: operationStateDirectory, endpoint: posix.join(operationStateDirectory, relativeEndpoint) };
@@ -196,7 +232,7 @@ interface CertifiedUnixPhysicalPathV4 {
 }
 
 interface UnixPhysicalCriticalSectionV4 {
-  runSensitive<T>(operation: () => Promise<T>): Promise<T>;
+  runSensitive<T>(operation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<T>): Promise<T>;
 }
 
 function physicalPathRejected(): never {
@@ -226,11 +262,362 @@ function loadUnixPhysicalInspectionV4(inspection: UnixPhysicalPathInspectionV4, 
   });
 }
 
-function assertUnixPhysicalBackendV4(backend: UnixPhysicalPathBackendV4 | undefined, allowInProcessForTests: boolean | undefined): UnixPhysicalPathBackendV4 {
+const linuxNativePhysicalBackendBrandV4 = new WeakSet<object>();
+const linuxNativeListenerBindingBrandV4 = new WeakSet<object>();
+
+function linuxObjectIdentityV4(metadata: { dev: bigint; ino: bigint }): string {
+  return `linux:dev:${metadata.dev.toString()}:ino:${metadata.ino.toString()}`;
+}
+
+function linuxOwnerIdentityV4(uid: bigint): string {
+  return `uid:${uid.toString()}`;
+}
+
+async function closeServerHandleV4(server: Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolveClose, rejectClose) => {
+    server.close((error) => error === undefined ? resolveClose() : rejectClose(error));
+  });
+}
+
+async function openLinuxPhysicalStateDirectoryV4(input: {
+  state_directory: string;
+  expected_owner_identity: string;
+}): Promise<{ handle: FileHandle; inspection: UnixPhysicalPathInspectionV4 }> {
+  if (process.platform !== 'linux' || !/^uid:[0-9]+$/.test(input.expected_owner_identity)) physicalPathRejected();
+  const operationPath = posix.resolve(input.state_directory);
+  if (!posix.isAbsolute(operationPath) || operationPath.includes('\0')) physicalPathRejected();
+  const flags = fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW;
+  let current: FileHandle | null = null;
+  const components: UnixPhysicalPathComponentV4[] = [];
+  const inspectHandle = async (handle: FileHandle): Promise<void> => {
+    const metadata = await handle.stat({ bigint: true });
+    const ownerIdentity = linuxOwnerIdentityV4(metadata.uid);
+    components.push({
+      kind: metadata.isDirectory() ? 'directory' : 'other',
+      object_identity: linuxObjectIdentityV4(metadata),
+      owner_identity: ownerIdentity,
+      owner_trusted: ownerIdentity === 'uid:0' || ownerIdentity === input.expected_owner_identity,
+      writable_by_untrusted: (metadata.mode & 0o022n) !== 0n,
+      owner_only: (metadata.mode & 0o077n) === 0n,
+    });
+  };
+  try {
+    current = await open('/', flags);
+    await inspectHandle(current);
+    for (const segment of operationPath.split('/').filter((entry) => entry.length > 0)) {
+      if (segment === '.' || segment === '..' || segment.includes('\0')) physicalPathRejected();
+      const next = await open(`/proc/self/fd/${current.fd}/${segment}`, flags);
+      await current.close();
+      current = next;
+      await inspectHandle(current);
+    }
+    return {
+      handle: current,
+      inspection: {
+        operation_path: operationPath,
+        chain_complete: true,
+        components,
+      },
+    };
+  } catch (error) {
+    await current?.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+class LinuxNativeBrokerListenerBindingV4 implements UnixBrokerListenerBindingV4 {
+  readonly kind = 'unix-broker-listener-binding' as const;
+  readonly directoryIdentity: string;
+  readonly temporaryName: string;
+  readonly temporaryIdentity: string;
+  readonly handle: FileHandle;
+  #released = false;
+
+  constructor(handle: FileHandle, directoryIdentity: string, temporaryName: string, temporaryIdentity: string) {
+    this.handle = handle;
+    this.directoryIdentity = directoryIdentity;
+    this.temporaryName = temporaryName;
+    this.temporaryIdentity = temporaryIdentity;
+    linuxNativeListenerBindingBrandV4.add(this);
+  }
+
+  get released(): boolean { return this.#released; }
+
+  async release(): Promise<void> {
+    if (this.#released) return;
+    this.#released = true;
+    await this.handle.close();
+  }
+}
+
+class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryCapabilityV4 {
+  readonly inspection: UnixPhysicalPathInspectionV4;
+  readonly #handle: FileHandle;
+  readonly #expectedOwnerIdentity: string;
+  #transferred = false;
+  #closed = false;
+
+  constructor(handle: FileHandle, inspection: UnixPhysicalPathInspectionV4, expectedOwnerIdentity: string) {
+    this.#handle = handle;
+    this.inspection = inspection;
+    this.#expectedOwnerIdentity = expectedOwnerIdentity;
+  }
+
+  async closeUnlessTransferred(): Promise<void> {
+    if (this.#closed || this.#transferred) return;
+    this.#closed = true;
+    await this.#handle.close();
+  }
+
+  #statePath(): string {
+    if (this.#closed || this.#transferred) physicalPathRejected();
+    return `/proc/self/fd/${this.#handle.fd}`;
+  }
+
+  #childPath(name: string): string {
+    if (!/^[A-Za-z0-9._-]{1,180}$/.test(name) || name === '.' || name === '..') physicalPathRejected();
+    return `${this.#statePath()}/${name}`;
+  }
+
+  async #metadata(name: string): Promise<UnixSocketMetadataV4 | null> {
+    const metadata = await lstat(this.#childPath(name)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (metadata === null) return null;
+    return {
+      kind: metadata.isSocket() ? 'socket' : 'other',
+      owner_identity: `uid:${metadata.uid}`,
+      owner_only: (metadata.mode & 0o077) === 0,
+      object_identity: `linux:dev:${metadata.dev}:ino:${metadata.ino}`,
+    };
+  }
+
+  async #syncDirectory(): Promise<void> {
+    await this.#handle.sync();
+  }
+
+  async #restoreWithoutOverwrite(quarantineName: string): Promise<void> {
+    try {
+      await link(this.#childPath(quarantineName), this.#childPath('broker.sock'));
+      await unlink(this.#childPath(quarantineName));
+      await this.#syncDirectory();
+    } catch {
+      throw new Error('REPOSITORY_BUSY: quarantined broker endpoint was preserved');
+    }
+  }
+
+  async #quarantineOwnedEndpoint(expectedIdentity: string, afterMetadataForTests?: () => Promise<void>): Promise<'absent' | 'removed'> {
+    const current = await this.#metadata('broker.sock');
+    if (current === null || current.kind !== 'socket' || current.object_identity !== expectedIdentity) return 'absent';
+    if (afterMetadataForTests !== undefined) await afterMetadataForTests();
+    const quarantineName = `.broker.sock.quarantine-${process.pid}-${randomBytes(16).toString('hex')}`;
+    try {
+      await rename(this.#childPath('broker.sock'), this.#childPath(quarantineName));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent';
+      throw error;
+    }
+    await this.#syncDirectory();
+    const quarantined = await this.#metadata(quarantineName);
+    if (quarantined?.object_identity !== expectedIdentity) {
+      await this.#restoreWithoutOverwrite(quarantineName);
+      throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
+    }
+    await unlink(this.#childPath(quarantineName));
+    await this.#syncDirectory();
+    return 'removed';
+  }
+
+  async loadToken(input: { platform: NodeJS.Platform; loadToken?: (directory: string, platform: NodeJS.Platform) => Promise<string> }): Promise<string> {
+    if (input.loadToken !== undefined) return callAdapter(() => input.loadToken!(this.#statePath(), input.platform));
+    const tokenPath = this.#childPath(TOKEN_FILE_V4);
+    const freshToken = randomBytes(32).toString('hex');
+    const created = await open(
+      tokenPath,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW,
+      0o600,
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'EEXIST') return null;
+      throw error;
+    });
+    if (created !== null) {
+      try {
+        await created.writeFile(`${freshToken}\n`, 'utf8');
+        await created.sync();
+        const metadata = await created.stat({ bigint: true });
+        if (!metadata.isFile() || linuxOwnerIdentityV4(metadata.uid) !== this.#expectedOwnerIdentity || (metadata.mode & 0o077n) !== 0n) physicalPathRejected();
+      } finally {
+        await created.close();
+      }
+      return freshToken;
+    }
+    const existing = await open(tokenPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      const metadata = await existing.stat({ bigint: true });
+      if (!metadata.isFile() || linuxOwnerIdentityV4(metadata.uid) !== this.#expectedOwnerIdentity || (metadata.mode & 0o077n) !== 0n) physicalPathRejected();
+      const token = (await existing.readFile('utf8')).trim();
+      if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('AUTHENTICATION_FAILED: broker token bytes are invalid');
+      return token;
+    } finally {
+      await existing.close();
+    }
+  }
+
+  verifyOwnerOnlyPath(input: {
+    kind: 'state-directory' | 'token-file';
+    expected_owner_identity: string;
+    verifier: BrokerIpcPlatformVerifierV4;
+  }): Promise<{ owner_identity: string } | null> {
+    const path = input.kind === 'state-directory' ? this.#statePath() : this.#childPath(TOKEN_FILE_V4);
+    return callAdapter(() => input.verifier.verifyOwnerOnlyPath({ path, kind: input.kind, expected_owner_identity: input.expected_owner_identity }));
+  }
+
+  async reclaimBrokerSocket(expectedOwnerIdentity: string): Promise<void> {
+    const metadata = await this.#metadata('broker.sock');
+    if (metadata === null) return;
+    if (metadata.kind !== 'socket' || metadata.owner_identity !== expectedOwnerIdentity || !metadata.owner_only) {
+      throw new Error('AUTHENTICATION_FAILED: existing broker endpoint ownership or mode is invalid');
+    }
+    const status = await defaultUnixProbe(this.#childPath('broker.sock')).catch(() => 'unknown' as const);
+    if (status !== 'stale') throw new Error('REPOSITORY_BUSY: broker endpoint is live or unverifiable');
+    await this.#quarantineOwnedEndpoint(metadata.object_identity);
+  }
+
+  async listenBrokerSocket(server: Server): Promise<UnixBrokerListenerBindingV4> {
+    const temporaryName = `.broker.sock.bind-${process.pid}-${randomBytes(16).toString('hex')}`;
+    let listening = false;
+    try {
+      await listen(server, this.#childPath(temporaryName));
+      listening = true;
+      const before = await this.#metadata(temporaryName);
+      if (before === null || before.kind !== 'socket' || before.owner_identity !== this.#expectedOwnerIdentity) physicalPathRejected();
+      await chmod(this.#childPath(temporaryName), 0o600);
+      const after = await this.#metadata(temporaryName);
+      if (after === null || after.kind !== 'socket' || after.owner_identity !== this.#expectedOwnerIdentity || !after.owner_only || after.object_identity !== before.object_identity) physicalPathRejected();
+      const directoryIdentity = this.inspection.components.at(-1)?.object_identity;
+      if (typeof directoryIdentity !== 'string') physicalPathRejected();
+      this.#transferred = true;
+      return new LinuxNativeBrokerListenerBindingV4(this.#handle, directoryIdentity, temporaryName, after.object_identity);
+    } catch (error) {
+      if (listening) await closeServerHandleV4(server).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async publishBrokerSocket(input: {
+    binding: UnixBrokerListenerBindingV4;
+    expected_owner_identity: string;
+    verifier: BrokerIpcPlatformVerifierV4;
+  }): Promise<string> {
+    if (!linuxNativeListenerBindingBrandV4.has(input.binding) || !(input.binding instanceof LinuxNativeBrokerListenerBindingV4) || input.binding.released) physicalPathRejected();
+    const directoryIdentity = this.inspection.components.at(-1)?.object_identity;
+    if (directoryIdentity !== input.binding.directoryIdentity) physicalPathRejected();
+    const temporary = await this.#metadata(input.binding.temporaryName);
+    if (temporary === null || temporary.kind !== 'socket' || temporary.object_identity !== input.binding.temporaryIdentity) physicalPathRejected();
+    let published = false;
+    try {
+      await link(this.#childPath(input.binding.temporaryName), this.#childPath('broker.sock'));
+      published = true;
+      await this.#syncDirectory();
+      const endpoint = await this.#metadata('broker.sock');
+      if (endpoint === null || endpoint.kind !== 'socket' || endpoint.object_identity !== input.binding.temporaryIdentity || endpoint.owner_identity !== input.expected_owner_identity || !endpoint.owner_only) physicalPathRejected();
+      const proof = await callAdapter(() => input.verifier.verifyOwnerOnlyPath({
+        path: this.#childPath('broker.sock'),
+        kind: 'endpoint',
+        expected_owner_identity: input.expected_owner_identity,
+      })).catch(() => null);
+      if (proof?.owner_identity !== input.expected_owner_identity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
+      const verified = await this.#metadata('broker.sock');
+      if (verified?.object_identity !== input.binding.temporaryIdentity) physicalPathRejected();
+      await unlink(this.#childPath(input.binding.temporaryName));
+      await this.#syncDirectory();
+      return input.binding.temporaryIdentity;
+    } catch (error) {
+      if (published) await this.#quarantineOwnedEndpoint(input.binding.temporaryIdentity).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async withConnectedBrokerSocket<T>(
+    connect: ((endpoint: string) => Socket) | undefined,
+    operation: (socket: Socket) => Promise<T>,
+  ): Promise<T> {
+    const socket = (connect ?? createConnection)(this.#childPath('broker.sock'));
+    return operation(socket);
+  }
+
+  async removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4): Promise<void> {
+    await this.#quarantineOwnedEndpoint(ownedObjectIdentity, testDependencies?.afterMetadataForTests);
+  }
+}
+
+class LinuxNativeUnixPhysicalPathBackendV4 implements UnixPhysicalPathBackendV4 {
+  readonly certification = Object.freeze({ kind: 'native-physical-path' as const, identity: 'linux-procfd-v1' });
+
+  async certifyStateDirectory(input: { state_directory: string; expected_owner_identity: string }): Promise<UnixPhysicalPathInspectionV4> {
+    let opened: Awaited<ReturnType<typeof openLinuxPhysicalStateDirectoryV4>>;
+    try { opened = await openLinuxPhysicalStateDirectoryV4(input); }
+    catch { physicalPathRejected(); }
+    try {
+      return loadUnixPhysicalInspectionV4(opened.inspection, input.expected_owner_identity);
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  async withReprovedStateDirectory<T>(
+    input: { operation_path: string; expected_owner_identity: string; component_identities: readonly string[] },
+    operation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<T>,
+  ): Promise<T> {
+    let opened: Awaited<ReturnType<typeof openLinuxPhysicalStateDirectoryV4>>;
+    try {
+      opened = await openLinuxPhysicalStateDirectoryV4({
+        state_directory: input.operation_path,
+        expected_owner_identity: input.expected_owner_identity,
+      });
+    } catch {
+      physicalPathRejected();
+    }
+    const inspection = loadUnixPhysicalInspectionV4(opened.inspection, input.expected_owner_identity);
+    if (!samePhysicalComponentIdentitiesV4(input.component_identities, inspection.components)) {
+      await opened.handle.close().catch(() => undefined);
+      physicalPathRejected();
+    }
+    const capability = new LinuxNativePhysicalDirectoryCapabilityV4(opened.handle, inspection, input.expected_owner_identity);
+    try {
+      return await operation(capability);
+    } finally {
+      await capability.closeUnlessTransferred();
+    }
+  }
+}
+
+Object.freeze(LinuxNativeUnixPhysicalPathBackendV4.prototype);
+
+export function createLinuxNativeUnixPhysicalPathBackendV4(): UnixPhysicalPathBackendV4 {
+  if (process.platform !== 'linux') throw new Error('AUTHENTICATION_FAILED: Linux native physical-path backend is unavailable');
+  const backend = new LinuxNativeUnixPhysicalPathBackendV4();
+  linuxNativePhysicalBackendBrandV4.add(backend);
+  return Object.freeze(backend);
+}
+
+function assertUnixPhysicalBackendV4(
+  backend: UnixPhysicalPathBackendV4 | undefined,
+  allowInProcessForTests: boolean | undefined,
+  platform: NodeJS.Platform,
+): UnixPhysicalPathBackendV4 {
   if (backend === undefined || backend === null || typeof backend !== 'object') throw new Error('AUTHENTICATION_FAILED: certified Unix physical-path backend is required');
   const certification = backend.certification;
   if (certification === null || typeof certification !== 'object' || certification.kind !== 'native-physical-path' && certification.kind !== 'in-process-test') {
     throw new Error('AUTHENTICATION_FAILED: Unix physical-path backend certification is invalid');
+  }
+  if (certification.kind === 'native-physical-path' && !linuxNativePhysicalBackendBrandV4.has(backend)) {
+    throw new Error('AUTHENTICATION_FAILED: Unix physical-path backend brand is invalid');
+  }
+  if (certification.kind === 'native-physical-path' && (platform !== 'linux' || process.platform !== 'linux')) {
+    throw new Error('AUTHENTICATION_FAILED: Linux physical-path backend cannot serve this platform');
   }
   if (certification.kind !== 'native-physical-path' && !allowInProcessForTests) {
     throw new Error('AUTHENTICATION_FAILED: native Unix physical-path backend is required');
@@ -277,7 +664,7 @@ async function runUnixPhysicalCriticalSectionV4<T>(
   operation: (critical: UnixPhysicalCriticalSectionV4) => Promise<T>,
 ): Promise<T> {
   return callAdapter(() => coordinator.runExclusive(certified.coordinator_key, async () => operation({
-    runSensitive: async <U>(sensitiveOperation: () => Promise<U>): Promise<U> => {
+    runSensitive: async <U>(sensitiveOperation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<U>): Promise<U> => {
       let sensitiveOperationEntered = false;
       try {
         return await callAdapter(() => backend.withReprovedStateDirectory(
@@ -286,11 +673,11 @@ async function runUnixPhysicalCriticalSectionV4<T>(
             expected_owner_identity: certified.expected_owner_identity,
             component_identities: certified.component_identities,
           },
-          async (inspection) => {
-            const observed = loadUnixPhysicalInspectionV4(inspection, certified.expected_owner_identity);
+          async (capability) => {
+            const observed = loadUnixPhysicalInspectionV4(capability.inspection, certified.expected_owner_identity);
             if (!samePhysicalComponentIdentitiesV4(certified.component_identities, observed.components)) physicalPathRejected();
             sensitiveOperationEntered = true;
-            return sensitiveOperation();
+            return sensitiveOperation(capability);
           },
         ));
       } catch (error) {
@@ -498,7 +885,7 @@ async function removeOwnedUnixEndpointInsideCoordinatorV4(
 export async function removeOwnedUnixEndpointV4(
   endpoint: string,
   ownedObjectIdentity: string,
-  deps: { metadata(endpoint: string): Promise<UnixSocketMetadataV4 | null>; remove(endpoint: string): Promise<void> },
+  deps: UnixOwnedEndpointCleanupDependenciesV4,
   coordinator: ReclamationCoordinatorV4,
   security: UnixPhysicalPathSecurityV4,
 ): Promise<void> {
@@ -507,12 +894,15 @@ export async function removeOwnedUnixEndpointV4(
       throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
     }
     if (coordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
-    const backend = assertUnixPhysicalBackendV4(security.unixPhysicalPathBackend, security.allowInProcessPhysicalPathBackendForTests);
+    const backend = assertUnixPhysicalBackendV4(security.unixPhysicalPathBackend, security.allowInProcessPhysicalPathBackendForTests, 'linux');
     const requestedLocation = loadBrokerIpcLocationV4(security.stateDirectory, endpoint, 'linux');
     const certified = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, security.expectedOwnerIdentity, backend);
     const location = loadBrokerIpcLocationV4(security.stateDirectory, endpoint, 'linux', certified.operation_path);
     await runUnixPhysicalCriticalSectionV4(certified, backend, coordinator, (critical) => critical.runSensitive(
-      () => removeOwnedUnixEndpointInsideCoordinatorV4(location.endpoint, ownedObjectIdentity, deps),
+      (capability) => capability.removeOwnedBrokerSocket(
+        ownedObjectIdentity,
+        security.allowInProcessPhysicalPathBackendForTests ? deps : undefined,
+      ),
     ));
   } catch (error) {
     if (failureCode(error) === 'AUTHENTICATION_FAILED') throw new Error(normalizedBoundaryMessage(error));
@@ -626,7 +1016,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   let physicalBackend: UnixPhysicalPathBackendV4 | null = null;
   let certifiedUnixPath: CertifiedUnixPhysicalPathV4 | null = null;
   if (platform !== 'win32') {
-    physicalBackend = assertUnixPhysicalBackendV4(deps.unixPhysicalPathBackend, deps.allowInProcessPhysicalPathBackendForTests);
+    physicalBackend = assertUnixPhysicalBackendV4(deps.unixPhysicalPathBackend, deps.allowInProcessPhysicalPathBackendForTests, platform);
     certifiedUnixPath = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, expectedOwnerIdentity, physicalBackend);
   }
   const location = platform === 'win32'
@@ -710,25 +1100,31 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
       return runUnixPhysicalCriticalSectionV4(certifiedUnixPath!, physicalBackend!, deps.endpointCoordinator, operation);
     }
     return callAdapter(() => deps.endpointCoordinator.runExclusive(endpointCoordinatorKey, () => operation({
-      runSensitive: <U>(sensitiveOperation: () => Promise<U>) => callAdapter(sensitiveOperation),
+      runSensitive: <U>(sensitiveOperation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<U>) => callAdapter(() => sensitiveOperation(undefined as never)),
     })));
   };
   let ownedUnixEndpointIdentity: string | null = null;
-  const closeNativeServer = async (): Promise<void> => {
-    if (!server.listening) return;
-    await new Promise<void>((resolveClose, rejectClose) => server.close((error) => error === undefined ? resolveClose() : rejectClose(error)));
+  let unixListenerBinding: UnixBrokerListenerBindingV4 | null = null;
+  const closeNativeServer = () => closeServerHandleV4(server);
+  const releaseUnixListenerBinding = async (): Promise<void> => {
+    if (unixListenerBinding === null) return;
+    const binding = unixListenerBinding;
+    unixListenerBinding = null;
+    await binding.release();
   };
   const closeAndCleanOwnedEndpoint = async (closeOperation: () => Promise<void>, critical: UnixPhysicalCriticalSectionV4): Promise<Error | null> => {
     let failure: Error | null = null;
     try {
-      await critical.runSensitive(closeOperation);
+      await closeOperation();
+      if (server.listening) await closeNativeServer();
     } catch {
       failure = new Error('UNKNOWN_FAILURE: local IPC close failed');
-      await critical.runSensitive(closeNativeServer).catch(() => undefined);
+      await closeNativeServer().catch(() => undefined);
     }
+    if (!server.listening) await releaseUnixListenerBinding().catch(() => { failure = new Error('UNKNOWN_FAILURE: local IPC close failed'); });
     if (platform !== 'win32' && ownedUnixEndpointIdentity !== null && !server.listening) {
       try {
-        await critical.runSensitive(() => removeOwnedUnixEndpointInsideCoordinatorV4(endpoint, ownedUnixEndpointIdentity!));
+        await critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!));
         ownedUnixEndpointIdentity = null;
       } catch {
         failure = new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
@@ -739,42 +1135,40 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   try {
     await runEndpointCriticalSection(async (critical) => {
       if (platform !== 'win32') {
-        token = await critical.runSensitive(() => (deps.loadToken ?? loadOrCreateToken)(location.stateDirectory, platform)).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
-        for (const [path, kind] of [[location.stateDirectory, 'state-directory'], [posix.join(location.stateDirectory, TOKEN_FILE_V4), 'token-file']] as const) {
-          const proof = await critical.runSensitive(() => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind, expected_owner_identity: expectedOwnerIdentity }))).catch(() => null);
+        token = await critical.runSensitive((capability) => capability.loadToken({ platform, loadToken: deps.loadToken })).catch(() => { throw new Error('AUTHENTICATION_FAILED: broker token storage failed'); });
+        for (const kind of ['state-directory', 'token-file'] as const) {
+          const proof = await critical.runSensitive((capability) => capability.verifyOwnerOnlyPath({ kind, expected_owner_identity: expectedOwnerIdentity, verifier: deps.platformVerifier! })).catch(() => null);
           if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
         }
-        await critical.runSensitive(() => reclaimUnixSocketV4(endpoint, expectedOwnerIdentity));
-      }
-      await critical.runSensitive(() => listen(server, endpoint)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
-      if (platform !== 'win32') {
-        ownedUnixEndpointIdentity = await critical.runSensitive(() => secureUnixEndpointV4(endpoint, expectedOwnerIdentity, {
-          metadata: defaultUnixMetadata,
-          secure: async (path) => chmod(path, 0o600),
-          verify: async (path, owner) => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path, kind: 'endpoint', expected_owner_identity: owner })),
-          close: closeNativeServer,
-          remove: unlink,
+        await critical.runSensitive((capability) => capability.reclaimBrokerSocket(expectedOwnerIdentity));
+        unixListenerBinding = await critical.runSensitive((capability) => capability.listenBrokerSocket(server)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+        ownedUnixEndpointIdentity = await critical.runSensitive((capability) => capability.publishBrokerSocket({
+          binding: unixListenerBinding!,
+          expected_owner_identity: expectedOwnerIdentity,
+          verifier: deps.platformVerifier!,
         }));
       } else try {
+        await critical.runSensitive(() => listen(server, endpoint)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
         const endpointProof = await critical.runSensitive(() => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity }))).catch(() => null);
         if (endpointProof?.owner_identity !== expectedOwnerIdentity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
       } catch (error) {
-        await critical.runSensitive(closeNativeServer).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC close failed'); });
+        await closeNativeServer().catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC close failed'); });
         throw new Error(normalizedBoundaryMessage(error));
       }
     });
   } catch (error) {
-    if (server.listening || ownedUnixEndpointIdentity !== null) {
-      let cleanupEntered = false;
+    let cleanupFailed = false;
+    if (server.listening) await closeNativeServer().catch(() => { cleanupFailed = true; });
+    if (!server.listening) await releaseUnixListenerBinding().catch(() => { cleanupFailed = true; });
+    if (platform !== 'win32' && ownedUnixEndpointIdentity !== null && !server.listening) {
       try {
-        await runEndpointCriticalSection(async (critical) => {
-          cleanupEntered = true;
-          await closeAndCleanOwnedEndpoint(closeNativeServer, critical);
-        });
+        await runEndpointCriticalSection((critical) => critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!)));
+        ownedUnixEndpointIdentity = null;
       } catch {
-        if (platform === 'win32' && !cleanupEntered) await closeNativeServer().catch(() => undefined);
+        cleanupFailed = true;
       }
     }
+    if (cleanupFailed) throw new Error('UNKNOWN_FAILURE: local IPC close failed');
     if (isSafeOwnerProofFailureV4(error)) throw error;
     throw new Error(normalizedBoundaryMessage(error));
   }
@@ -793,6 +1187,8 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
               critical,
             ));
         } catch {
+          await closeNativeServer().catch(() => undefined);
+          await releaseUnixListenerBinding().catch(() => undefined);
           throw new Error('UNKNOWN_FAILURE: local IPC close failed');
         }
         if (closeFailure !== null) throw closeFailure;
@@ -810,7 +1206,7 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
   let physicalBackend: UnixPhysicalPathBackendV4 | null = null;
   let endpointCoordinator: ReclamationCoordinatorV4 | null = null;
   if (platform !== 'win32') {
-    physicalBackend = assertUnixPhysicalBackendV4(config.unixPhysicalPathBackend, config.allowInProcessPhysicalPathBackendForTests);
+    physicalBackend = assertUnixPhysicalBackendV4(config.unixPhysicalPathBackend, config.allowInProcessPhysicalPathBackendForTests, platform);
     endpointCoordinator = config.endpointCoordinator ?? null;
     if (endpointCoordinator === null || endpointCoordinator.certification.kind !== 'native-cross-process' && !config.allowInProcessCoordinatorForTests) {
       throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
@@ -828,25 +1224,7 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
       const request: BrokerIpcRequestV4 = { token: config.token, command: submittedCommand };
       const frame = encodeFrame(request);
       let endpoint = config.endpoint;
-      let socket: Socket;
-      if (platform !== 'win32') {
-        const configuredStateDirectory = config.stateDirectory ?? posix.dirname(config.endpoint);
-        const requestedLocation = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform);
-        const certified = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, expectedOwnerIdentity, physicalBackend!);
-        const location = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform, certified.operation_path);
-        endpoint = location.endpoint;
-        try {
-          socket = await runUnixPhysicalCriticalSectionV4(certified, physicalBackend!, endpointCoordinator!, (critical) => critical.runSensitive(async () => (
-            config.connect ?? createConnection
-          )(endpoint)));
-        } catch (error) {
-          throw new Error(normalizedBoundaryMessage(error));
-        }
-      } else {
-        try { socket = (config.connect ?? createConnection)(endpoint); }
-        catch { throw new Error('UNKNOWN_FAILURE: broker request failed'); }
-      }
-      return new Promise<BrokerReplyV4>((resolvePromise, reject) => {
+      const submitOverSocket = (socket: Socket): Promise<BrokerReplyV4> => new Promise<BrokerReplyV4>((resolvePromise, reject) => {
         let buffer = Buffer.alloc(0);
         let expectedLength: number | null = null;
         const fail = (error: Error) => { socket.destroy(); reject(new Error(normalizedBoundaryMessage(error))); };
@@ -886,6 +1264,22 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
         });
         socket.once('error', fail);
       });
+      if (platform !== 'win32') {
+        const configuredStateDirectory = config.stateDirectory ?? posix.dirname(config.endpoint);
+        const requestedLocation = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform);
+        const certified = await certifyUnixPhysicalPathV4(requestedLocation.stateDirectory, expectedOwnerIdentity, physicalBackend!);
+        const location = loadBrokerIpcLocationV4(configuredStateDirectory, config.endpoint, platform, certified.operation_path);
+        endpoint = location.endpoint;
+        try {
+          return await runUnixPhysicalCriticalSectionV4(certified, physicalBackend!, endpointCoordinator!, (critical) => critical.runSensitive(
+            (capability) => capability.withConnectedBrokerSocket(config.connect, submitOverSocket),
+          ));
+        } catch (error) {
+          throw new Error(normalizedBoundaryMessage(error));
+        }
+      }
+      try { return submitOverSocket((config.connect ?? createConnection)(endpoint)); }
+      catch { throw new Error('UNKNOWN_FAILURE: broker request failed'); }
     },
     close: async () => { closed = true; },
   };
