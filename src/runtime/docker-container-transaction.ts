@@ -96,8 +96,9 @@ async function inspectOwnedContainer(
   containerId: string,
   name: string,
   nonce: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const result = await docker(request.docker_executable, ['container', 'inspect', containerId], 10_000, request.signal);
+  const result = await docker(request.docker_executable, ['container', 'inspect', containerId], 10_000, signal);
   if (result.terminated || result.truncated || result.exit_code !== 0) return false;
   try {
     const values = JSON.parse(result.stdout) as Array<{
@@ -183,7 +184,7 @@ export async function createBrokerOwnedDockerContainerV4(
   if (containerId === null || removal === null) unavailable();
 
   try {
-    if (!await inspectOwnedContainer(request, containerId, name, nonce)) unavailable();
+    if (!await inspectOwnedContainer(request, containerId, name, nonce, directAuthoritative ? request.signal : undefined)) unavailable();
     if (!directAuthoritative) {
       await removal.remove();
       unavailable();

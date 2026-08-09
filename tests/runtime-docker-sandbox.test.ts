@@ -535,6 +535,7 @@ test('broker container transaction recovers partial and delayed create effects a
       "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
       "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
       `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),200)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
+      `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setInterval(()=>{},2147483647);}`,
       `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
     ].join(''));
     await writeFile(join(root, 'container'), [
@@ -558,7 +559,22 @@ test('broker container transaction recovers partial and delayed create effects a
         create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
       }), /PROCESS_SANDBOX_UNAVAILABLE/);
     }
-    assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'd'.repeat(64)]);
+    const abort = new AbortController();
+    const cancelled = assert.rejects(() => createBrokerOwnedDockerContainerV4({
+      docker_executable: executable,
+      image_id: imageId,
+      execution_id: 'exec_transaction_cancelled_0001',
+      kind: 'executor',
+      create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
+      signal: abort.signal,
+    }), /PROCESS_SANDBOX_UNAVAILABLE/);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (await readFile(statePath, 'utf8').then(() => true, () => false)) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    abort.abort();
+    await cancelled;
+    assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'd'.repeat(64), 'd'.repeat(64)]);
     assert.equal((await readFile(queryPath, 'utf8')).split('\n').filter((line) => line.startsWith('ls ')).length >= 3, true,
       'the delayed effect must require at least one bounded recovery retry');
   } finally {
