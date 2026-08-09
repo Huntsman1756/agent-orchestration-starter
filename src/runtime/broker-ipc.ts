@@ -26,8 +26,8 @@ const SERVER_CLOSE_DEADLINE_MS_V4 = 250;
 const LINUX_BINDER_EXIT_DEADLINE_MS_V4 = 250;
 const LINUX_NATIVE_HELPER_EXIT_DEADLINE_MS_V4 = 250;
 const LINUX_NATIVE_RENAME_HELPER_NAME_V4 = 'agent-orchestration-renameat2';
-const LINUX_NATIVE_RENAME_HELPER_PROTOCOL_V4 = 'linux-renameat2-noreplace-v1';
-const LINUX_NATIVE_RENAME_HELPER_SOURCE_SHA256_V4 = '652eddaffc7687cf5e7e0748c7db2ea0d1a3639fcbb09512114f521844e20378';
+const LINUX_NATIVE_RENAME_HELPER_PROTOCOL_V4 = 'linux-renameat2-noreplace-v2';
+const LINUX_NATIVE_RENAME_HELPER_SOURCE_SHA256_V4 = 'a1984d04956f023e136ff539dbb25ec6fd232c92e2452e91abc08b83293ca903';
 const LINUX_NATIVE_RENAME_HELPER_PATH_V4 = fileURLToPath(new URL(
   `../../dist/native/linux-${process.arch}/${LINUX_NATIVE_RENAME_HELPER_NAME_V4}`,
   import.meta.url,
@@ -528,6 +528,8 @@ class LinuxNativeRenameNoReplaceHelperV4 {
       if (exited.code === 0) return 'moved';
       if (exited.code === 2) return 'source-missing';
       if (exited.code === 17) return 'destination-exists';
+      if (exited.code === 73) physicalPathRejected();
+      if (exited.code === 74) physicalPathRejected();
       if (exited.code === 38) physicalPathRejected();
       physicalPathRejected();
     } catch {
@@ -628,6 +630,7 @@ server.listen(endpoint, () => {
     object_identity: 'linux:dev:' + metadata.dev.toString() + ':ino:' + metadata.ino.toString(),
     owner_identity: 'uid:' + metadata.uid.toString(),
     owner_only: (metadata.mode & 0o077n) === 0n,
+    link_count: metadata.nlink.toString(),
   }, server, { keepOpen: true }, (error) => {
     if (error) die();
   });
@@ -758,6 +761,7 @@ async function adoptPathlessLinuxListenerV4(
         || !/^linux:dev:[0-9]+:ino:[0-9]+$/.test(candidate.object_identity)
         || candidate.owner_identity !== linuxOwnerIdentityV4(BigInt(process.getuid!()))
         || candidate.owner_only !== true
+        || candidate.link_count !== '1'
         || !(handle instanceof Server)
         || !handle.listening
       ) throw new Error('native Linux listener binder response was invalid');
@@ -910,6 +914,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       throw error;
     });
     if (metadata === null) return null;
+    if (metadata.isSocket() && metadata.nlink !== 1n) physicalPathRejected();
     return {
       kind: metadata.isSocket() ? 'socket' : 'other',
       owner_identity: linuxOwnerIdentityV4(metadata.uid),
@@ -949,6 +954,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       const identity = linuxObjectIdentityV4(metadata);
       if (
         !metadata.isSocket()
+        || metadata.nlink !== 1n
         || linuxOwnerIdentityV4(metadata.uid) !== this.#expectedOwnerIdentity
         || (metadata.mode & 0o077n) !== 0n
         || identity === endpointIdentity
@@ -1227,6 +1233,13 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     connect: ((endpoint: string) => Socket) | undefined,
     operation: (socket: Socket) => Promise<T>,
   ): Promise<T> {
+    const endpoint = await this.#metadata('broker.sock');
+    if (
+      endpoint === null
+      || endpoint.kind !== 'socket'
+      || endpoint.owner_identity !== this.#expectedOwnerIdentity
+      || !endpoint.owner_only
+    ) physicalPathRejected();
     const socket = (connect ?? createConnection)(this.#childPath('broker.sock'));
     return operation(socket);
   }
@@ -1354,12 +1367,13 @@ async function certifyUnixPhysicalPathV4(
     physicalPathRejected();
   }
   const componentIdentities = Object.freeze(inspection.components.map((component) => component.object_identity!));
+  const stateDirectoryIdentity = componentIdentities.at(-1)!;
   return Object.freeze({
     display_path: stateDirectory,
     operation_path: inspection.operation_path,
     expected_owner_identity: expectedOwnerIdentity,
     component_identities: componentIdentities,
-    coordinator_key: `ipc-state-physical:${hashCanonicalV4({ component_identities: componentIdentities })}`,
+    coordinator_key: `ipc-state-physical:${hashCanonicalV4({ state_directory_identity: stateDirectoryIdentity })}`,
   });
 }
 

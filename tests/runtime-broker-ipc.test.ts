@@ -92,6 +92,26 @@ function waitForChildIpcMessageForTest(child: ChildProcess, expectedKind: string
   });
 }
 
+function runExecutableForTest(executable: string, args: readonly string[]): Promise<void> {
+  return new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(executable, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0 && signal === null) {
+        resolvePromise();
+        return;
+      }
+      reject(new Error(
+        `${executable} failed (${String(code)}, ${String(signal)}): ${Buffer.concat(stderr).toString('utf8')} ${Buffer.concat(stdout).toString('utf8')}`,
+      ));
+    });
+  });
+}
+
 function minimalDaemonForIpcTest(submitted: BrokerCommandV4[] = []): BrokerDaemonV4 {
   const status = {
     ...validRuntimeResult(),
@@ -2436,6 +2456,168 @@ test('real Linux textual routes to one physical state directory share the coordi
   }
 });
 
+test('real Linux bind-mount aliases to one final state directory share the coordinator key', {
+  skip: process.platform !== 'linux' || process.env.AO_PRIVILEGED_BIND_MOUNT_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await linuxSecureDirectoryForTest('.runner-v4-bind-mount-alias-');
+  const physicalParent = join(fixtureRoot, 'physical-parent');
+  const aliasParent = join(fixtureRoot, 'alias-parent');
+  const physicalState = join(physicalParent, 'state');
+  const aliasState = join(aliasParent, 'mounted-state');
+  await mkdir(physicalParent, { mode: 0o700 });
+  await mkdir(aliasParent, { mode: 0o700 });
+  await mkdir(physicalState, { mode: 0o700 });
+  await mkdir(aliasState, { mode: 0o700 });
+  let mounted = false;
+  try {
+    await runExecutableForTest('/usr/bin/mount', ['--bind', physicalState, aliasState]);
+    mounted = true;
+    const physicalMetadata = await lstat(physicalState);
+    const aliasMetadata = await lstat(aliasState);
+    assert.equal(aliasMetadata.dev, physicalMetadata.dev);
+    assert.equal(aliasMetadata.ino, physicalMetadata.ino);
+
+    const backend = await linuxNativePhysicalPathBackendForTest();
+    const delegate = createInProcessReclamationCoordinatorV4('native-bind-alias-delegate');
+    const coordinatorKeys: string[] = [];
+    const coordinator: ReclamationCoordinatorV4 = {
+      certification: { kind: 'in-process-test', identity: 'native-bind-alias-recorder' },
+      runExclusive: async (key, operation) => {
+        coordinatorKeys.push(key);
+        return delegate.runExclusive(key, operation);
+      },
+    };
+    const forbiddenRawDependencies = {
+      metadata: async () => { throw new Error('raw endpoint metadata must not be used'); },
+      remove: async () => { throw new Error('raw endpoint unlink must not be used'); },
+    };
+
+    for (const route of [physicalState, aliasState]) {
+      await removeOwnedUnixEndpointV4(join(route, 'broker.sock'), 'not-present', forbiddenRawDependencies, coordinator, {
+        stateDirectory: route,
+        expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+        unixPhysicalPathBackend: backend,
+        allowInProcessCoordinatorForTests: true,
+      });
+    }
+
+    assert.equal(coordinatorKeys.length, 2);
+    assert.equal(coordinatorKeys[0], coordinatorKeys[1]);
+    assert.doesNotMatch(coordinatorKeys[0]!, /physical-parent|alias-parent|mounted-state|broker\.sock/);
+  } finally {
+    if (mounted) await runExecutableForTest('/usr/bin/umount', [aliasState]).catch(() => undefined);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('production Linux cleanup rejects an external socket hard link without changing either name or inode', {
+  skip: process.platform !== 'linux',
+}, async () => {
+  const fixtureRoot = await linuxSecureDirectoryForTest('.runner-v4-external-hardlink-');
+  const stateDirectory = join(fixtureRoot, 'state');
+  const externalDirectory = join(fixtureRoot, 'external');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const heldEndpoint = join(stateDirectory, 'held-broker.sock');
+  const externalAlias = join(externalDirectory, 'broker-alias.sock');
+  await mkdir(stateDirectory, { mode: 0o700 });
+  await mkdir(externalDirectory, { mode: 0o700 });
+  const oldServer = createServer();
+  try {
+    await listenForTest(oldServer, endpoint);
+    await chmod(endpoint, 0o600);
+    await rename(endpoint, heldEndpoint);
+    await closeForTest(oldServer);
+    await rename(heldEndpoint, endpoint);
+    await link(endpoint, externalAlias);
+    const endpointBefore = await lstat(endpoint);
+    const aliasBefore = await lstat(externalAlias);
+    const stateNamesBefore = (await readdir(stateDirectory)).sort();
+    assert.equal(endpointBefore.nlink, 2);
+    assert.equal(aliasBefore.dev, endpointBefore.dev);
+    assert.equal(aliasBefore.ino, endpointBefore.ino);
+    const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+
+    await assert.rejects(
+      () => removeOwnedUnixEndpointV4(endpoint, `linux:dev:${endpointBefore.dev}:ino:${endpointBefore.ino}`, {
+        metadata: async () => { throw new Error('native cleanup must not use raw endpoint metadata'); },
+        remove: async () => { throw new Error('native cleanup must not use raw endpoint unlink'); },
+      }, endpointCoordinator, {
+        stateDirectory,
+        expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+        unixPhysicalPathBackend: physicalBackend,
+        allowInProcessCoordinatorForTests: true,
+      }),
+      /AUTHENTICATION_FAILED|UNKNOWN_FAILURE|REPOSITORY_BUSY/,
+    );
+
+    const endpointAfter = await lstat(endpoint);
+    const aliasAfter = await lstat(externalAlias);
+    assert.deepEqual((await readdir(stateDirectory)).sort(), stateNamesBefore);
+    assert.equal(endpointAfter.dev, endpointBefore.dev);
+    assert.equal(endpointAfter.ino, endpointBefore.ino);
+    assert.equal(endpointAfter.nlink, 2);
+    assert.equal(aliasAfter.dev, aliasBefore.dev);
+    assert.equal(aliasAfter.ino, aliasBefore.ino);
+    assert.equal(aliasAfter.nlink, 2);
+  } finally {
+    await closeForTest(oldServer);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('production Linux helper re-proves socket link count after the JavaScript quarantine checks', {
+  skip: process.platform !== 'linux',
+}, async () => {
+  const fixtureRoot = await linuxSecureDirectoryForTest('.runner-v4-final-hardlink-');
+  const stateDirectory = join(fixtureRoot, 'state');
+  const externalDirectory = join(fixtureRoot, 'external');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const externalAlias = join(externalDirectory, 'broker-alias.sock');
+  await mkdir(stateDirectory, { mode: 0o700 });
+  await mkdir(externalDirectory, { mode: 0o700 });
+  let endpointAtBarrier: Awaited<ReturnType<typeof lstat>> | null = null;
+  let namesAtBarrier: string[] = [];
+  let server: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    server = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier: {
+        verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+        verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+      },
+      endpointCoordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+      allowInProcessPhysicalPathBackendForTests: true,
+      requestDeadlineMs: 1_000,
+      afterLinuxQuarantineReadyForRenameForTests: async () => {
+        endpointAtBarrier = await lstat(endpoint);
+        namesAtBarrier = (await readdir(stateDirectory)).sort();
+        await link(endpoint, externalAlias);
+      },
+    });
+
+    await assert.rejects(() => server!.close(), /UNKNOWN_FAILURE|REPOSITORY_BUSY|AUTHENTICATION_FAILED/);
+    server = null;
+    assert.notEqual(endpointAtBarrier, null);
+    const endpointAfter = await lstat(endpoint);
+    const aliasAfter = await lstat(externalAlias);
+    assert.deepEqual((await readdir(stateDirectory)).sort(), namesAtBarrier);
+    assert.equal(endpointAfter.dev, endpointAtBarrier!.dev);
+    assert.equal(endpointAfter.ino, endpointAtBarrier!.ino);
+    assert.equal(endpointAfter.nlink, 2);
+    assert.equal(aliasAfter.dev, endpointAtBarrier!.dev);
+    assert.equal(aliasAfter.ino, endpointAtBarrier!.ino);
+    assert.equal(aliasAfter.nlink, 2);
+  } finally {
+    await server?.close().catch(() => undefined);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('external Linux replacement between owned cleanup phases is never unlinked', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-external-replacement-');
   const endpoint = join(stateDirectory, 'broker.sock');
@@ -2501,7 +2683,7 @@ test('external Linux replacement between owned cleanup phases is never unlinked'
     const cleanupFailure = await cleanup;
 
     assert.ok(cleanupFailure instanceof Error);
-    assert.match(cleanupFailure.message, /UNKNOWN_FAILURE|REPOSITORY_BUSY/);
+    assert.match(cleanupFailure.message, /AUTHENTICATION_FAILED|UNKNOWN_FAILURE|REPOSITORY_BUSY/);
     const replacementMetadata = await lstat(endpoint);
     assert.equal(replacementMetadata.isSocket(), true);
     assert.notEqual(`linux:dev:${replacementMetadata.dev}:ino:${replacementMetadata.ino}`, originalIdentity);
