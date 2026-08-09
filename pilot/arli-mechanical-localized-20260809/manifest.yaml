@@ -1,0 +1,746 @@
+pilot_id: arli-mechanical-localized-20260809
+pilot_schema_version: 3
+manifest_hash: b431cc45d2a7cb6f08f0e3001621d446bf32b6fb8a8a82c3ec9ff8c020d70c96
+created_at: 2026-08-09T17:13:42.856Z
+blocks:
+  - block_id: pilot-mechanical-001-block-a
+    task_id: pilot-mechanical-001
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-001-triplet
+    case_fingerprint: c6c0e38f9d817b76680ffd6e4b91feb28de369c8cb534ebae652df424cf58ad0
+    contract_hash: 1ba1f1bd9c2c12b47f4e2a03884f1ee7a609ea756403ff05c6942c01410e1d99
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: f4940c85b185901c71c5caaef528f6a4789efadb5c2e2ff22d1d17be80a8eb11
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-001-block-b
+    task_id: pilot-mechanical-001
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-001-triplet
+    case_fingerprint: c6c0e38f9d817b76680ffd6e4b91feb28de369c8cb534ebae652df424cf58ad0
+    contract_hash: 1ba1f1bd9c2c12b47f4e2a03884f1ee7a609ea756403ff05c6942c01410e1d99
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: f4940c85b185901c71c5caaef528f6a4789efadb5c2e2ff22d1d17be80a8eb11
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-001-block-c
+    task_id: pilot-mechanical-001
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-001-triplet
+    case_fingerprint: c6c0e38f9d817b76680ffd6e4b91feb28de369c8cb534ebae652df424cf58ad0
+    contract_hash: 1ba1f1bd9c2c12b47f4e2a03884f1ee7a609ea756403ff05c6942c01410e1d99
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: f4940c85b185901c71c5caaef528f6a4789efadb5c2e2ff22d1d17be80a8eb11
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-002-block-a
+    task_id: pilot-mechanical-002
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-002-triplet
+    case_fingerprint: 04fe9caa9f764e1c2907e7afccef5c033037d6290508b37a1cb5d57a3f27c8c8
+    contract_hash: 78654c0e3c43689658ad413ac20fee57cd2b4bc294f5be35f2741ff64b269a58
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 7acc5c936c6ff5135b8723f3142e29ee4df7ac821f944226d38e89503ef10835
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-002-block-b
+    task_id: pilot-mechanical-002
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-002-triplet
+    case_fingerprint: 04fe9caa9f764e1c2907e7afccef5c033037d6290508b37a1cb5d57a3f27c8c8
+    contract_hash: 78654c0e3c43689658ad413ac20fee57cd2b4bc294f5be35f2741ff64b269a58
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 7acc5c936c6ff5135b8723f3142e29ee4df7ac821f944226d38e89503ef10835
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-002-block-c
+    task_id: pilot-mechanical-002
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-002-triplet
+    case_fingerprint: 04fe9caa9f764e1c2907e7afccef5c033037d6290508b37a1cb5d57a3f27c8c8
+    contract_hash: 78654c0e3c43689658ad413ac20fee57cd2b4bc294f5be35f2741ff64b269a58
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 7acc5c936c6ff5135b8723f3142e29ee4df7ac821f944226d38e89503ef10835
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-003-block-a
+    task_id: pilot-mechanical-003
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-003-triplet
+    case_fingerprint: f058101a63c6fc23e46199dca3f3267743b15a3d5e21d7178544df9d7e2af41b
+    contract_hash: a2b3ee682a54cc8fdc7a3480c8bfacddf817354bae392348336645ccfac0ca8a
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: ad103be3a7578d5e99d2be5c0e10aeb593a1f1470739a6f2410eba70e81d64d9
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-003-block-b
+    task_id: pilot-mechanical-003
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-003-triplet
+    case_fingerprint: f058101a63c6fc23e46199dca3f3267743b15a3d5e21d7178544df9d7e2af41b
+    contract_hash: a2b3ee682a54cc8fdc7a3480c8bfacddf817354bae392348336645ccfac0ca8a
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: ad103be3a7578d5e99d2be5c0e10aeb593a1f1470739a6f2410eba70e81d64d9
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-003-block-c
+    task_id: pilot-mechanical-003
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-003-triplet
+    case_fingerprint: f058101a63c6fc23e46199dca3f3267743b15a3d5e21d7178544df9d7e2af41b
+    contract_hash: a2b3ee682a54cc8fdc7a3480c8bfacddf817354bae392348336645ccfac0ca8a
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: ad103be3a7578d5e99d2be5c0e10aeb593a1f1470739a6f2410eba70e81d64d9
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-004-block-a
+    task_id: pilot-mechanical-004
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-004-triplet
+    case_fingerprint: ebf707f86de0a33fcf0c5b272002fd3f070ad14f2f14c6359caad61670ee70c6
+    contract_hash: 9da9e608199551d3d86f3e46b3201b5316392775c3744fe4be88c458fc07a664
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 0714e8da9530f853b2800dc7688e4c0a6abedda5f3216e9c2489ddb5cfb068f5
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-004-block-b
+    task_id: pilot-mechanical-004
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-004-triplet
+    case_fingerprint: ebf707f86de0a33fcf0c5b272002fd3f070ad14f2f14c6359caad61670ee70c6
+    contract_hash: 9da9e608199551d3d86f3e46b3201b5316392775c3744fe4be88c458fc07a664
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 0714e8da9530f853b2800dc7688e4c0a6abedda5f3216e9c2489ddb5cfb068f5
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-004-block-c
+    task_id: pilot-mechanical-004
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-004-triplet
+    case_fingerprint: ebf707f86de0a33fcf0c5b272002fd3f070ad14f2f14c6359caad61670ee70c6
+    contract_hash: 9da9e608199551d3d86f3e46b3201b5316392775c3744fe4be88c458fc07a664
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 0714e8da9530f853b2800dc7688e4c0a6abedda5f3216e9c2489ddb5cfb068f5
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-005-block-a
+    task_id: pilot-mechanical-005
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-005-triplet
+    case_fingerprint: 7198ced3c2ec0682cdf82c61fbc65036c361a6a581a04cebcf51cb474da2c738
+    contract_hash: 05e039292d7e933f2207a6aa9fe5987af50956097fbf38df0e7b293ef92b65b1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 34412ed86a8179edf0ccab4878cea0ef798691d3c7716d0d17fb1e7fd0e5986f
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-005-block-b
+    task_id: pilot-mechanical-005
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-005-triplet
+    case_fingerprint: 7198ced3c2ec0682cdf82c61fbc65036c361a6a581a04cebcf51cb474da2c738
+    contract_hash: 05e039292d7e933f2207a6aa9fe5987af50956097fbf38df0e7b293ef92b65b1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 34412ed86a8179edf0ccab4878cea0ef798691d3c7716d0d17fb1e7fd0e5986f
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-005-block-c
+    task_id: pilot-mechanical-005
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-005-triplet
+    case_fingerprint: 7198ced3c2ec0682cdf82c61fbc65036c361a6a581a04cebcf51cb474da2c738
+    contract_hash: 05e039292d7e933f2207a6aa9fe5987af50956097fbf38df0e7b293ef92b65b1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 34412ed86a8179edf0ccab4878cea0ef798691d3c7716d0d17fb1e7fd0e5986f
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-006-block-a
+    task_id: pilot-mechanical-006
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-006-triplet
+    case_fingerprint: e495a24114f291c653acaa4dd7332d958a4ef1375a8dfcf847fee320d6eeea8b
+    contract_hash: 408326886bba1b933ea5702ebb36217dc6b677714251c7ec5427079cb0443da5
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 79766d4f04f736b07e0cf150f1e4bd43e95b38b209b01739ac3c469f8fe845d0
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-006-block-b
+    task_id: pilot-mechanical-006
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-006-triplet
+    case_fingerprint: e495a24114f291c653acaa4dd7332d958a4ef1375a8dfcf847fee320d6eeea8b
+    contract_hash: 408326886bba1b933ea5702ebb36217dc6b677714251c7ec5427079cb0443da5
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 79766d4f04f736b07e0cf150f1e4bd43e95b38b209b01739ac3c469f8fe845d0
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-mechanical-006-block-c
+    task_id: pilot-mechanical-006
+    matching_stratum: mechanical-low
+    pair_or_triplet_id: pilot-mechanical-006-triplet
+    case_fingerprint: e495a24114f291c653acaa4dd7332d958a4ef1375a8dfcf847fee320d6eeea8b
+    contract_hash: 408326886bba1b933ea5702ebb36217dc6b677714251c7ec5427079cb0443da5
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 79766d4f04f736b07e0cf150f1e4bd43e95b38b209b01739ac3c469f8fe845d0
+    complexity_class: mechanical
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - test
+      - typecheck
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-007-block-a
+    task_id: pilot-localized-007
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-007-triplet
+    case_fingerprint: 1c2a9578c66e924930637dc5ba07ccb7544235e455a5708a589736127fb7d5a1
+    contract_hash: 0fe53538f7fad935cdb70c3aa80ea5b1a771b02256b1ad65f1c21063368689d1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 8a9d477712bad772854a6c911d23d8bd457765032a301fb7c53a7c8ca83ad959
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-007-block-b
+    task_id: pilot-localized-007
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-007-triplet
+    case_fingerprint: 1c2a9578c66e924930637dc5ba07ccb7544235e455a5708a589736127fb7d5a1
+    contract_hash: 0fe53538f7fad935cdb70c3aa80ea5b1a771b02256b1ad65f1c21063368689d1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 8a9d477712bad772854a6c911d23d8bd457765032a301fb7c53a7c8ca83ad959
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-007-block-c
+    task_id: pilot-localized-007
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-007-triplet
+    case_fingerprint: 1c2a9578c66e924930637dc5ba07ccb7544235e455a5708a589736127fb7d5a1
+    contract_hash: 0fe53538f7fad935cdb70c3aa80ea5b1a771b02256b1ad65f1c21063368689d1
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 8a9d477712bad772854a6c911d23d8bd457765032a301fb7c53a7c8ca83ad959
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-008-block-a
+    task_id: pilot-localized-008
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-008-triplet
+    case_fingerprint: f1d1b3c867fd51cf1e237245e759c5cc5342575ff357f2954f85eed7427413d0
+    contract_hash: 3e8b5e385883db235aadbf103f5114c2575e955509462d5d2caaddb3452eb903
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 375c33756bb77e198ee5b9afe69e438817d0549f32f24e7b2ee5573fadbf4878
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-008-block-b
+    task_id: pilot-localized-008
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-008-triplet
+    case_fingerprint: f1d1b3c867fd51cf1e237245e759c5cc5342575ff357f2954f85eed7427413d0
+    contract_hash: 3e8b5e385883db235aadbf103f5114c2575e955509462d5d2caaddb3452eb903
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 375c33756bb77e198ee5b9afe69e438817d0549f32f24e7b2ee5573fadbf4878
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-008-block-c
+    task_id: pilot-localized-008
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-008-triplet
+    case_fingerprint: f1d1b3c867fd51cf1e237245e759c5cc5342575ff357f2954f85eed7427413d0
+    contract_hash: 3e8b5e385883db235aadbf103f5114c2575e955509462d5d2caaddb3452eb903
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 375c33756bb77e198ee5b9afe69e438817d0549f32f24e7b2ee5573fadbf4878
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-009-block-a
+    task_id: pilot-localized-009
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-009-triplet
+    case_fingerprint: 3683c3496afcd86d8f48cff844cb1bb04cedd82bbc34fad1356aeaccf878e6e5
+    contract_hash: a407d4b67096751b22f22c17f5fe6971a8396d3324cc0758f5b6a09a4544932b
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 55e25ff52a67fe11bf38d0507887f2f77f48bc83ff26e3d752610bb166ed2bd7
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-009-block-b
+    task_id: pilot-localized-009
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-009-triplet
+    case_fingerprint: 3683c3496afcd86d8f48cff844cb1bb04cedd82bbc34fad1356aeaccf878e6e5
+    contract_hash: a407d4b67096751b22f22c17f5fe6971a8396d3324cc0758f5b6a09a4544932b
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 55e25ff52a67fe11bf38d0507887f2f77f48bc83ff26e3d752610bb166ed2bd7
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-009-block-c
+    task_id: pilot-localized-009
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-009-triplet
+    case_fingerprint: 3683c3496afcd86d8f48cff844cb1bb04cedd82bbc34fad1356aeaccf878e6e5
+    contract_hash: a407d4b67096751b22f22c17f5fe6971a8396d3324cc0758f5b6a09a4544932b
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 55e25ff52a67fe11bf38d0507887f2f77f48bc83ff26e3d752610bb166ed2bd7
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-010-block-a
+    task_id: pilot-localized-010
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-010-triplet
+    case_fingerprint: 50464d088a7eb38d43d85ecfcf87cbf19fad7fff057658839efafe990af5b4aa
+    contract_hash: c9c75d0a67b68eab4a6f4f8a5c920fdc6b55d4bf1f0c8bd02faef0a46e329f80
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 4820491a66ca1c7812c795eb1e1041f6ad3c645451bff37d3226cc963fae0f02
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: cheap
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-010-block-b
+    task_id: pilot-localized-010
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-010-triplet
+    case_fingerprint: 50464d088a7eb38d43d85ecfcf87cbf19fad7fff057658839efafe990af5b4aa
+    contract_hash: c9c75d0a67b68eab4a6f4f8a5c920fdc6b55d4bf1f0c8bd02faef0a46e329f80
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 4820491a66ca1c7812c795eb1e1041f6ad3c645451bff37d3226cc963fae0f02
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: cheap
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+  - block_id: pilot-localized-010-block-c
+    task_id: pilot-localized-010
+    matching_stratum: localized-low
+    pair_or_triplet_id: pilot-localized-010-triplet
+    case_fingerprint: 50464d088a7eb38d43d85ecfcf87cbf19fad7fff057658839efafe990af5b4aa
+    contract_hash: c9c75d0a67b68eab4a6f4f8a5c920fdc6b55d4bf1f0c8bd02faef0a46e329f80
+    base_revision: 84afb8b44347b248de385f26254e46c2e0de9e3425928032a93d2e1781062c61
+    clean_tree_hash: 21c7b2702a20c777b1b78d9e487b0fa190d489b8f4d23101b6f001124b18ad29
+    fixtures_hash: 4820491a66ca1c7812c795eb1e1041f6ad3c645451bff37d3226cc963fae0f02
+    complexity_class: localized
+    risk_class: low
+    changed_line_band: 1-25
+    validation_surface:
+      - docs
+    cheap_eligible: true
+    routing_selection_reason: preclassified_cheap_eligible_low_risk
+    selected_executor_capability_initial: strong
+    selected_executor_capability_final_expected: strong
+    exclusion_reason: null
+    comparative_eligible: true
+assignment_seed: arli-stage1-seed-20260809
+assignment_algorithm_version: stratified-v1
+arm_assignments:
+  - block_id: pilot-localized-007-block-a
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-localized-007-block-b
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-localized-007-block-c
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-localized-008-block-a
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-localized-008-block-b
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-localized-008-block-c
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-localized-009-block-a
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-localized-009-block-b
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-localized-009-block-c
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-localized-010-block-a
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-localized-010-block-b
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-localized-010-block-c
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-001-block-a
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-001-block-b
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-001-block-c
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-002-block-a
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-002-block-b
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-002-block-c
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-003-block-a
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-003-block-b
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-003-block-c
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-004-block-a
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-004-block-b
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-004-block-c
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-005-block-a
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-005-block-b
+    pilot_arm: A_STRONG_BASELINE
+  - block_id: pilot-mechanical-005-block-c
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-006-block-a
+    pilot_arm: C_ADAPTIVE_EARLY_ESCALATION
+  - block_id: pilot-mechanical-006-block-b
+    pilot_arm: B_CHEAP_NO_EARLY_ESCALATION
+  - block_id: pilot-mechanical-006-block-c
+    pilot_arm: A_STRONG_BASELINE
+binding_policy_version: binding-policy-v1
+binding_registry:
+  - binding_ref: binding-cheap-arli-v1
+    capability_class: cheap
+    profile_hash: 65ef823f0a4d671ab3e7bdd42a205b58db337474ee2277be5aa0772193424cfd
+  - binding_ref: binding-strong-review-v1
+    capability_class: strong
+    profile_hash: fc6a7481b48dcff98aa6696576f5cc1a710ce80875392838dd7f761a31cd4948
+routing_reviewer_binding_ref: binding-strong-review-v1
+routing_reviewer_capability: strong
+review_mode: incremental_diff
+routing_policy_version: routing-policy-v1
+review_policy_version: review-policy-v1
+state_machine_version: state-machine-v1
+reducer_version: reducer-v1
+isolation_policy_version: isolation-policy-v1
+canonical_tree_algorithm_version: canonical-tree-v1
+volatile_paths_policy_hash: 4a664927a441db580ff65eeec172511261e283b1415becaa68e2f3a186e03378
+stage_thresholds:
+  stage_1_blocks_per_arm: 10
+  stage_2_blocks_per_arm: 20
+  stage_3_max_blocks_per_arm: 30
+  material_improvement_rate: 0.15
+  economic_rejection_rate: 0.1
+  max_parent_rework_block_rate: 0.1
+  max_parent_rework_production_line_share: 0.1
+  max_escaped_material_defects: 0
+  max_escaped_high_defects: 0
+  max_escaped_critical_defects: 0
+  min_observed_cost_completeness: 0.9
+  min_observed_strong_token_completeness: 0.9
+  min_stratum_triplets_for_promotion: 10
+  confidence_level: 0.95
+  interval_algorithm_version: paired-bootstrap-sha256-counter-v1
+  resampling_iterations: 1000
+post_acceptance_window:
+  duration_seconds: 604800
+  allowed_clock_skew_seconds: 60
+  closure_rule: elapsed_duration
+  late_evidence_policy: warn_next_evaluation
+  window_policy_version: window-policy-v1
+pricing_snapshot:
+  pricing_snapshot_id: arli-token-equivalent-v1
+  pricing_snapshot_hash: 0d452a76f16bc4f15b796bb97f78e477b379354b66c753de2ce3601298a830cb
+  currency: EUR
+  unit_scale: 1000000
+  effective_at: 2026-08-09T17:13:42.856Z
+  tariffs:
+    - binding_ref: binding-cheap-arli-v1
+      input_token_micro_units_per_token: 1
+      output_token_micro_units_per_token: 1
+      cached_input_token_micro_units_per_token: null
+      reasoning_token_micro_units_per_token: null
+      authoritative_charge_supported: false
+    - binding_ref: binding-strong-review-v1
+      input_token_micro_units_per_token: 1
+      output_token_micro_units_per_token: 1
+      cached_input_token_micro_units_per_token: null
+      reasoning_token_micro_units_per_token: null
+      authoritative_charge_supported: false
