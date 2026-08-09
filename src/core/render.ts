@@ -132,8 +132,7 @@ export async function checkProject(options: Omit<RenderOptions, 'dryRun' | 'forc
     const desiredHash = contentHash(generated.content);
     const recordedHash = inventory?.files[generated.path];
     if (recordedHash === undefined) {
-      if (existingHash === desiredHash) report.issues.push({ path: generated.path, reason: 'unmanaged' });
-      else report.issues.push({ path: generated.path, reason: 'unmanaged' });
+      report.issues.push({ path: generated.path, reason: 'unmanaged' });
     } else if (existingHash !== recordedHash) {
       report.issues.push({ path: generated.path, reason: 'locally-modified' });
     } else if (existingHash !== desiredHash) {
