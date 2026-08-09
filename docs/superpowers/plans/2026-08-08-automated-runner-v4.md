@@ -396,6 +396,8 @@ const endpoint = process.platform === 'win32'
 
 Use length-prefixed canonical JSON messages, a 256-bit token stored in the owner-only state directory, constant-time token comparison, maximum frame size 1 MiB, request deadlines, and strict command loading. Tests prove unauthenticated, oversized, malformed, replayed-mutating, and unknown commands fail without journal append.
 
+Unix precondition: before deriving the endpoint coordinator key or performing any socket operation, walk the broker state directory and every existing parent component without following links. Reject symlinks, junction-like/reparse aliases, ambiguous or unverifiable identity, ownership mismatch, and any link introduced before a destructive operation. Bind coordination to the proven physical identity rather than `resolve()` or path text, retain the certified cross-process coordinator through sensitive lifecycle operations, and recheck exact identities inside the critical section so validation cannot be replaced by a TOCTOU window. Add hostile tests for a direct state-dir symlink, an intermediate-parent symlink, two textual paths to the same physical tree, an alias inserted before cleanup/unlink, and proof that every rejection leaves the legitimate socket untouched. Unix is the mandatory gate; do not expand Windows beyond the existing abstraction unless required by shared code.
+
 - [ ] **Step 6: Test restart reconciliation**
 
 Simulate daemon exit after journal fsync but before reply, reconnect through a new STDIO-like client, resubmit the same `request_id`, and assert the original `run_id` is returned. Simulate an unknown child-process state and assert terminal typed failure rather than success.
