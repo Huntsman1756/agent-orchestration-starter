@@ -44,6 +44,14 @@ node dist/cli/main.js doctor --harnesses codex,opencode,hermes --policy orchestr
 
 La CLI no escribe credenciales ni configuración global. La autenticación se hace en cada herramienta. El perfil de suscripción incluido es una fotografía fechada: cuando cambien los modelos o identificadores, se sustituye el perfil, no la política ni los contratos.
 
+### Linux native broker helper
+
+The V4 Unix broker is supported in production on Linux only. `npm run build` invokes `npm run build:native`, which compiles `native/linux/renameat2-helper.c` with the fixed compiler `/usr/bin/cc` and writes the architecture-specific helper plus its manifest under `dist/native/linux-<arch>/`. Linux runtime packages must be built or prepacked on the matching Linux architecture. Windows skips this native step; a package produced on Windows has no helper, is not deployable as a Linux broker package, and fails closed if used there. Other Unix platforms fail closed.
+
+Build the release artifact on the target Linux architecture; never compile the helper at broker runtime. The installed JavaScript module, every helper-parent component, the helper, and its manifest must be root-owned or owned by the same trusted installation UID and must not be group/world writable; the helper must remain executable. The build writes modes `0555` and `0444`, while package tools may safely normalize the owner-write bits to `0755` and `0644`. A missing, symlinked, relocated, modified, incorrectly owned, untrusted-writable, or non-executable artifact makes backend construction fail before broker state or socket effects.
+
+The helper accepts no arguments or environment configuration. Runtime executes the already-open, identity- and digest-verified helper through an inherited descriptor; the only other inherited capabilities are the proven state-directory and selected fixed quarantine-slot directory descriptors. Deployment must provide Linux `renameat2(..., RENAME_NOREPLACE)` support and `/proc/self/fd`. There is no pathname fallback. See `docs/runtime-broker-quarantine-remediation.md` for the offline-only retained-socket procedure.
+
 ## Cambiar de proveedor
 
 Copia `profiles/open-compatible.yaml`, cambia los tres modelos y declara las capacidades reales. `provider` es la identidad lógica. Si una herramienta usa otro identificador, añade un alias sin alterar el contrato:

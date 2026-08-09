@@ -3,6 +3,19 @@
   "version": "0.1.0",
   "description": "Provider-agnostic agent role compiler for Codex, OpenCode, and Hermes",
   "type": "module",
+  "files": [
+    "contracts/**",
+    "dist/**",
+    "docs/runtime-broker-quarantine-remediation.md",
+    "examples/**",
+    "native/**",
+    "orchestration.yaml",
+    "policies/**",
+    "profiles/**",
+    "routing-gate.yaml",
+    "scripts/build-linux-native-helper.mjs",
+    "README.md"
+  ],
   "bin": {
     "agent-orchestration": "dist/cli/main.js"
   },
@@ -13,7 +26,10 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:native",
+    "build:native": "node scripts/build-linux-native-helper.mjs",
+    "prepack": "npm run build",
+    "pretest": "npm run build:native",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "validate": "npm run test && npm run typecheck && npm run build"

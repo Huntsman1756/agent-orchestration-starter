@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, Server, Socket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { join, posix, resolve, sep } from 'node:path';
+import { dirname, join, posix, resolve, sep } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -35,6 +35,16 @@ import { validRepositoryPolicy, validRuntimeProfile, validRuntimeResult, validTa
 const endpointCoordinator = createInProcessReclamationCoordinatorV4('ipc-test');
 
 type LinuxNativePhysicalPathFactoryV4 = () => UnixPhysicalPathBackendV4;
+
+const LINUX_NATIVE_RENAME_HELPER_NAME_FOR_TEST = 'agent-orchestration-renameat2';
+
+function linuxNativeRenameHelperPathForTest(): string {
+  return join(process.cwd(), 'dist', 'native', `linux-${process.arch}`, LINUX_NATIVE_RENAME_HELPER_NAME_FOR_TEST);
+}
+
+function linuxBrokerQuarantineSlotNameForTest(index: number): string {
+  return `.broker.sock.quarantine-slot-${String(index).padStart(2, '0')}`;
+}
 
 async function linuxNativePhysicalPathBackendForTest(): Promise<UnixPhysicalPathBackendV4> {
   const runtimeModule = await import('../src/runtime/broker-ipc.js') as unknown as {
@@ -764,7 +774,7 @@ test('Linux native physical backend refuses a non-Linux Unix constructor before 
   try {
     const backend = await linuxNativePhysicalPathBackendForTest();
     await assert.rejects(
-      () => createBrokerIpcServer({
+      async () => createBrokerIpcServer({
         daemon: minimalDaemonForIpcTest(),
         stateDirectory,
         endpoint: join(stateDirectory, 'broker.sock'),
@@ -1140,10 +1150,321 @@ test('production Linux handles a connection accepted before binder exit without 
   }
 });
 
+test('production Linux backend fails closed when the fixed native rename helper is missing', { skip: process.platform !== 'linux' }, async () => {
+  const helperPath = linuxNativeRenameHelperPathForTest();
+  const backupPath = `${helperPath}.missing-test-backup`;
+  const helperExists = await lstat(helperPath).then(() => true, () => false);
+  if (helperExists) await rename(helperPath, backupPath);
+  try {
+    await assert.rejects(
+      () => linuxNativePhysicalPathBackendForTest(),
+      /AUTHENTICATION_FAILED/,
+    );
+  } finally {
+    if (helperExists) await rename(backupPath, helperPath);
+  }
+});
+
+test('production Linux backend rejects a symlinked native-helper install parent', { skip: process.platform !== 'linux' }, async () => {
+  const helperPath = linuxNativeRenameHelperPathForTest();
+  const helperDirectory = dirname(helperPath);
+  const realDirectory = `${helperDirectory}.symlink-test-real`;
+  assert.equal(await lstat(helperPath).then((metadata) => metadata.isFile(), () => false), true, 'Linux native build artifact must exist');
+  await rename(helperDirectory, realDirectory);
+  await symlink(realDirectory, helperDirectory, 'dir');
+  try {
+    await assert.rejects(
+      () => linuxNativePhysicalPathBackendForTest(),
+      /AUTHENTICATION_FAILED/,
+    );
+  } finally {
+    await unlink(helperDirectory);
+    await rename(realDirectory, helperDirectory);
+  }
+});
+
+test('production Linux backend re-proves native-helper identity before endpoint effects', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-native-helper-tamper-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const helperPath = linuxNativeRenameHelperPathForTest();
+  const backupPath = `${helperPath}.identity-test-backup`;
+  assert.equal(await lstat(helperPath).then((metadata) => metadata.isFile(), () => false), true, 'Linux native build artifact must exist');
+  const backend = await linuxNativePhysicalPathBackendForTest();
+  await rename(helperPath, backupPath);
+  await writeFile(helperPath, '#!/bin/sh\nexit 0\n', { mode: 0o555 });
+  try {
+    await assert.rejects(
+      async () => createBrokerIpcServer({
+        daemon: minimalDaemonForIpcTest(),
+        stateDirectory,
+        endpoint,
+        platform: 'linux',
+        platformVerifier: {
+          verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+          verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+        },
+        endpointCoordinator: createInProcessReclamationCoordinatorV4('tampered-native-helper'),
+        allowInProcessCoordinatorForTests: true,
+        unixPhysicalPathBackend: backend,
+      }),
+      /AUTHENTICATION_FAILED/,
+    );
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    await unlink(helperPath);
+    await rename(backupPath, helperPath);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('Linux native rename helper reports an unsupported renameat2 syscall through its fixed exit protocol', { skip: process.platform !== 'linux' }, async () => {
+  const fixtureDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-native-helper-unsupported-'));
+  const sourcePath = join(process.cwd(), 'native', 'linux', 'renameat2-helper.c');
+  const helperPath = join(fixtureDirectory, 'renameat2-unsupported');
+  const stateDirectory = join(fixtureDirectory, 'state');
+  const slotDirectory = join(stateDirectory, linuxBrokerQuarantineSlotNameForTest(0));
+  await mkdir(slotDirectory, { recursive: true, mode: 0o700 });
+  const compiler = spawn('/usr/bin/cc', [
+    '-std=c17',
+    '-O2',
+    '-Wall',
+    '-Wextra',
+    '-Werror',
+    '-DAGENT_ORCHESTRATION_TEST_FORCE_RENAMEAT2_UNSUPPORTED=1',
+    sourcePath,
+    '-o',
+    helperPath,
+  ], { env: { LC_ALL: 'C', PATH: '/usr/bin:/bin' }, stdio: 'ignore' });
+  const [compilerCode, compilerSignal] = await once(compiler, 'exit') as [number | null, NodeJS.Signals | null];
+  assert.equal(compilerSignal, null);
+  assert.equal(compilerCode, 0);
+  const stateHandle = await open(stateDirectory, 'r');
+  const slotHandle = await open(slotDirectory, 'r');
+  try {
+    const helper = spawn(helperPath, [], {
+      cwd: '/',
+      env: {},
+      stdio: ['ignore', 'ignore', 'ignore', stateHandle.fd, slotHandle.fd],
+    });
+    const [code, signal] = await once(helper, 'exit') as [number | null, NodeJS.Signals | null];
+    assert.equal(signal, null);
+    assert.equal(code, 38);
+  } finally {
+    await stateHandle.close();
+    await slotHandle.close();
+    await rm(fixtureDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux native no-replace preserves a hostile exact reservation destination', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-native-no-replace-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const replacementState: { process: ChildProcess | null } = { process: null };
+  let replacementPath = '';
+  let replacementIdentity = '';
+  let broker: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    broker = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier: {
+        verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+        verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+      },
+      endpointCoordinator: createInProcessReclamationCoordinatorV4('native-no-replace'),
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+      allowInProcessPhysicalPathBackendForTests: true,
+      unixQuarantineLimitForTests: 2,
+      afterLinuxQuarantineReadyForRenameForTests: async () => {
+        const names = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-'));
+        assert.equal(names.length, 1);
+        replacementPath = join(stateDirectory, names[0]!, 'broker.sock');
+        const replacementScript = [
+          "const { chmodSync } = require('node:fs');",
+          "const { createServer } = require('node:net');",
+          "const endpoint = process.argv[1];",
+          "const server = createServer();",
+          "server.listen(endpoint, () => { chmodSync(endpoint, 0o600); process.send({ kind: 'ready' }); });",
+          "process.once('disconnect', () => process.kill(process.pid, 'SIGKILL'));",
+        ].join('\n');
+        replacementState.process = spawn(process.execPath, ['-e', replacementScript, replacementPath], {
+          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        });
+        await waitForChildIpcMessageForTest(replacementState.process, 'ready');
+        const metadata = await lstat(replacementPath);
+        replacementIdentity = `${metadata.dev}:${metadata.ino}`;
+      },
+    });
+    const ownedEndpoint = await lstat(endpoint);
+    const closeResult = await broker.close().then(
+      () => ({ kind: 'closed' as const }),
+      (error: Error) => ({ kind: 'rejected' as const, error }),
+    );
+    broker = null;
+
+    assert.equal(closeResult.kind, 'rejected');
+    if (closeResult.kind === 'rejected') assert.match(closeResult.error.message, /UNKNOWN_FAILURE|REPOSITORY_BUSY/);
+    const endpointAfter = await lstat(endpoint);
+    assert.equal(`${endpointAfter.dev}:${endpointAfter.ino}`, `${ownedEndpoint.dev}:${ownedEndpoint.ino}`);
+    const replacementAfter = await lstat(replacementPath);
+    assert.equal(`${replacementAfter.dev}:${replacementAfter.ino}`, replacementIdentity);
+    const socket = createConnection(replacementPath);
+    socket.on('error', () => undefined);
+    await once(socket, 'connect');
+    socket.destroy();
+  } finally {
+    await broker?.close().catch(() => undefined);
+    const replacementProcess = replacementState.process;
+    if (replacementProcess !== null && replacementProcess.exitCode === null && replacementProcess.signalCode === null) {
+      replacementProcess.kill('SIGKILL');
+      await once(replacementProcess, 'exit').catch(() => undefined);
+    }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux fixed quarantine namespace fails closed at exactly 64 occupied slots without creating a 65th', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-fixed-quarantine-capacity-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  let fixtureProcess: ChildProcess | null = null;
+  try {
+    const fixtureScript = [
+      "const { chmodSync, mkdirSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      "const { createServer } = require('node:net');",
+      "const root = process.argv[1];",
+      "const servers = [];",
+      "let remaining = 64;",
+      "for (let index = 0; index < 64; index += 1) {",
+      "  const name = '.broker.sock.quarantine-slot-' + String(index).padStart(2, '0');",
+      "  const directory = join(root, name);",
+      "  mkdirSync(directory, { mode: 0o700 });",
+      "  const endpoint = join(directory, 'broker.sock');",
+      "  const server = createServer();",
+      "  servers.push(server);",
+      "  server.listen(endpoint, () => { chmodSync(endpoint, 0o600); remaining -= 1; if (remaining === 0) process.send({ kind: 'ready' }); });",
+      "}",
+      "process.once('disconnect', () => process.kill(process.pid, 'SIGKILL'));",
+    ].join('\n');
+    fixtureProcess = spawn(process.execPath, ['-e', fixtureScript, stateDirectory], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    await waitForChildIpcMessageForTest(fixtureProcess, 'ready');
+
+    await assert.rejects(
+      async () => createBrokerIpcServer({
+        daemon: minimalDaemonForIpcTest(),
+        stateDirectory,
+        endpoint,
+        platform: 'linux',
+        platformVerifier: {
+          verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+          verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+        },
+        endpointCoordinator: createInProcessReclamationCoordinatorV4('fixed-quarantine-capacity'),
+        allowInProcessCoordinatorForTests: true,
+        unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+      }),
+      /REPOSITORY_BUSY/,
+    );
+    const names = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')).sort();
+    assert.deepEqual(names, Array.from({ length: 64 }, (_, index) => linuxBrokerQuarantineSlotNameForTest(index)));
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    if (fixtureProcess !== null && fixtureProcess.exitCode === null && fixtureProcess.signalCode === null) {
+      fixtureProcess.kill('SIGKILL');
+      await once(fixtureProcess, 'exit').catch(() => undefined);
+    }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux concurrent final-slot reservation cannot create a 65th broker slot', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-concurrent-fixed-slot-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const heldEndpoint = join(stateDirectory, 'held-broker.sock');
+  const oldServer = createServer();
+  let fixtureProcess: ChildProcess | null = null;
+  let arrivals = 0;
+  let bothArrived!: () => void;
+  const bothAtMetadataBarrier = new Promise<void>((resolveBarrier) => { bothArrived = resolveBarrier; });
+  let releaseBarrier!: () => void;
+  const metadataBarrierCanReturn = new Promise<void>((resolveBarrier) => { releaseBarrier = resolveBarrier; });
+  try {
+    const fixtureScript = [
+      "const { chmodSync, mkdirSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      "const { createServer } = require('node:net');",
+      "const root = process.argv[1];",
+      "let remaining = 63;",
+      "for (let index = 0; index < 63; index += 1) {",
+      "  const directory = join(root, '.broker.sock.quarantine-slot-' + String(index).padStart(2, '0'));",
+      "  mkdirSync(directory, { mode: 0o700 });",
+      "  const endpoint = join(directory, 'broker.sock');",
+      "  createServer().listen(endpoint, () => { chmodSync(endpoint, 0o600); remaining -= 1; if (remaining === 0) process.send({ kind: 'ready' }); });",
+      "}",
+      "process.once('disconnect', () => process.kill(process.pid, 'SIGKILL'));",
+    ].join('\n');
+    fixtureProcess = spawn(process.execPath, ['-e', fixtureScript, stateDirectory], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    await waitForChildIpcMessageForTest(fixtureProcess, 'ready');
+    await listenForTest(oldServer, endpoint);
+    await chmod(endpoint, 0o600);
+    const original = await lstat(endpoint);
+    const originalIdentity = `linux:dev:${original.dev}:ino:${original.ino}`;
+    await rename(endpoint, heldEndpoint);
+    await closeForTest(oldServer);
+    await rename(heldEndpoint, endpoint);
+
+    const backend = await linuxNativePhysicalPathBackendForTest();
+    const cleanup = (identity: string) => removeOwnedUnixEndpointV4(endpoint, originalIdentity, {
+      metadata: async () => { throw new Error('native cleanup must not use raw endpoint metadata'); },
+      remove: async () => { throw new Error('native cleanup must not use raw endpoint unlink'); },
+      afterMetadataForTests: async () => {
+        arrivals += 1;
+        if (arrivals === 2) bothArrived();
+        await metadataBarrierCanReturn;
+      },
+    }, createInProcessReclamationCoordinatorV4(identity), {
+      stateDirectory,
+      expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+      unixPhysicalPathBackend: backend,
+      allowInProcessCoordinatorForTests: true,
+      allowInProcessPhysicalPathBackendForTests: true,
+    });
+    const first = cleanup('concurrent-slot-a').then(() => 'fulfilled' as const, () => 'rejected' as const);
+    const second = cleanup('concurrent-slot-b').then(() => 'fulfilled' as const, () => 'rejected' as const);
+    await bothAtMetadataBarrier;
+    releaseBarrier();
+    const outcomes = await Promise.all([first, second]);
+    assert.equal(outcomes.filter((outcome) => outcome === 'fulfilled').length, 1);
+    assert.equal(outcomes.filter((outcome) => outcome === 'rejected').length, 1);
+    const names = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')).sort();
+    assert.deepEqual(names, Array.from({ length: 64 }, (_, index) => linuxBrokerQuarantineSlotNameForTest(index)));
+    const retained = await lstat(join(stateDirectory, linuxBrokerQuarantineSlotNameForTest(63), 'broker.sock'));
+    assert.equal(`${retained.dev}:${retained.ino}`, `${original.dev}:${original.ino}`);
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    releaseBarrier();
+    await closeForTest(oldServer);
+    if (fixtureProcess !== null && fixtureProcess.exitCode === null && fixtureProcess.signalCode === null) {
+      fixtureProcess.kill('SIGKILL');
+      await once(fixtureProcess, 'exit').catch(() => undefined);
+    }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
 test('production Linux cleanup rejects a quarantine hardlink to the current endpoint identity', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-endpoint-quarantine-hardlink-');
   const endpoint = join(stateDirectory, 'broker.sock');
-  const quarantine = join(stateDirectory, `.broker.sock.quarantine-${process.pid}-${'1'.repeat(32)}`);
+  const quarantineName = linuxBrokerQuarantineSlotNameForTest(0);
+  const quarantineDirectory = join(stateDirectory, quarantineName);
+  const quarantine = join(quarantineDirectory, 'broker.sock');
   const oldServer = createServer();
   try {
     const backend = await linuxNativePhysicalPathBackendForTest();
@@ -1151,6 +1472,7 @@ test('production Linux cleanup rejects a quarantine hardlink to the current endp
     await chmod(endpoint, 0o600);
     const endpointMetadata = await lstat(endpoint);
     const endpointIdentity = `linux:dev:${endpointMetadata.dev}:ino:${endpointMetadata.ino}`;
+    await mkdir(quarantineDirectory, { mode: 0o700 });
     await link(endpoint, quarantine);
     await closeForTest(oldServer);
     await link(quarantine, endpoint);
@@ -1174,7 +1496,7 @@ test('production Linux cleanup rejects a quarantine hardlink to the current endp
     assert.equal(quarantineAfter.ino, endpointMetadata.ino);
     assert.deepEqual(
       (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')),
-      [quarantine.split(sep).at(-1)!],
+      [quarantineName],
     );
   } finally {
     await closeForTest(oldServer);
@@ -1185,13 +1507,15 @@ test('production Linux cleanup rejects a quarantine hardlink to the current endp
 test('production Linux admission rejects duplicate quarantine socket identities without deleting either link', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-duplicate-quarantine-');
   const endpoint = join(stateDirectory, 'broker.sock');
-  const firstName = `.broker.sock.quarantine-${process.pid}-${'2'.repeat(32)}`;
-  const secondName = `.broker.sock.quarantine-${process.pid}-${'3'.repeat(32)}`;
-  const first = join(stateDirectory, firstName);
-  const second = join(stateDirectory, secondName);
+  const firstDirectory = join(stateDirectory, linuxBrokerQuarantineSlotNameForTest(0));
+  const secondDirectory = join(stateDirectory, linuxBrokerQuarantineSlotNameForTest(1));
+  const first = join(firstDirectory, 'broker.sock');
+  const second = join(secondDirectory, 'broker.sock');
   const retainedServer = createServer();
   try {
     const backend = await linuxNativePhysicalPathBackendForTest();
+    await mkdir(firstDirectory, { mode: 0o700 });
+    await mkdir(secondDirectory, { mode: 0o700 });
     await listenForTest(retainedServer, first);
     await chmod(first, 0o600);
     await link(first, second);
@@ -1228,11 +1552,13 @@ test('production Linux admission rejects duplicate quarantine socket identities 
 test('production Linux close reserves the exact final quarantine slot before moving its endpoint', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-exact-quarantine-limit-');
   const endpoint = join(stateDirectory, 'broker.sock');
-  const retainedName = `.broker.sock.quarantine-${process.pid}-${'4'.repeat(32)}`;
-  const retainedPath = join(stateDirectory, retainedName);
+  const retainedName = linuxBrokerQuarantineSlotNameForTest(0);
+  const retainedDirectory = join(stateDirectory, retainedName);
+  const retainedPath = join(retainedDirectory, 'broker.sock');
   const retainedServer = createServer();
   let broker: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
   try {
+    await mkdir(retainedDirectory, { mode: 0o700 });
     await listenForTest(retainedServer, retainedPath);
     await chmod(retainedPath, 0o600);
     broker = await createBrokerIpcServer({
@@ -1278,10 +1604,12 @@ test('production Linux close reserves the exact final quarantine slot before mov
 test('production Linux close fails before endpoint mutation when hostile capacity changes after reservation', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-capacity-race-');
   const endpoint = join(stateDirectory, 'broker.sock');
-  const retainedName = `.broker.sock.quarantine-${process.pid}-${'5'.repeat(32)}`;
-  const retainedPath = join(stateDirectory, retainedName);
-  const hostileName = `.broker.sock.quarantine-${process.pid}-${'6'.repeat(32)}`;
-  const hostilePath = join(stateDirectory, hostileName);
+  const retainedName = linuxBrokerQuarantineSlotNameForTest(0);
+  const retainedDirectory = join(stateDirectory, retainedName);
+  const retainedPath = join(retainedDirectory, 'broker.sock');
+  const hostileName = linuxBrokerQuarantineSlotNameForTest(2);
+  const hostileDirectory = join(stateDirectory, hostileName);
+  const hostilePath = join(hostileDirectory, 'broker.sock');
   const retainedServer = createServer();
   const hostileServer = createServer();
   let enterReservationBarrier!: () => void;
@@ -1290,6 +1618,7 @@ test('production Linux close fails before endpoint mutation when hostile capacit
   const reservationBarrierCanReturn = new Promise<void>((resolveBarrier) => { releaseReservationBarrier = resolveBarrier; });
   let broker: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
   try {
+    await mkdir(retainedDirectory, { mode: 0o700 });
     await listenForTest(retainedServer, retainedPath);
     await chmod(retainedPath, 0o600);
     broker = await createBrokerIpcServer({
@@ -1323,6 +1652,7 @@ test('production Linux close fails before endpoint mutation when hostile capacit
     }
     assert.deepEqual(entered, { kind: 'settled', value: 'entered' });
 
+    await mkdir(hostileDirectory, { mode: 0o700 });
     await listenForTest(hostileServer, hostilePath);
     await chmod(hostilePath, 0o600);
     const namesAtBarrier = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')).sort();

@@ -1,10 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { constants as fsConstants, type BigIntStats } from 'node:fs';
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync, type BigIntStats } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join, posix, resolve, win32 } from 'node:path';
 import { createConnection, createServer, Server, type Socket } from 'node:net';
+import { fileURLToPath } from 'node:url';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { BrokerDaemonV4, BrokerReplyV4 } from './broker-daemon.js';
@@ -16,8 +17,21 @@ import type { BrokerCommandV4 } from './run-state.js';
 const MAX_FRAME_BYTES_V4 = 1_048_576;
 const TOKEN_FILE_V4 = 'broker.token';
 const MAX_LINUX_BROKER_QUARANTINES_V4 = 64;
+const LINUX_BROKER_QUARANTINE_PREFIX_V4 = '.broker.sock.quarantine-';
+const LINUX_BROKER_QUARANTINE_SLOT_NAMES_V4 = Object.freeze(Array.from(
+  { length: MAX_LINUX_BROKER_QUARANTINES_V4 },
+  (_, index) => `${LINUX_BROKER_QUARANTINE_PREFIX_V4}slot-${String(index).padStart(2, '0')}`,
+));
 const SERVER_CLOSE_DEADLINE_MS_V4 = 250;
 const LINUX_BINDER_EXIT_DEADLINE_MS_V4 = 250;
+const LINUX_NATIVE_HELPER_EXIT_DEADLINE_MS_V4 = 250;
+const LINUX_NATIVE_RENAME_HELPER_NAME_V4 = 'agent-orchestration-renameat2';
+const LINUX_NATIVE_RENAME_HELPER_PROTOCOL_V4 = 'linux-renameat2-noreplace-v1';
+const LINUX_NATIVE_RENAME_HELPER_SOURCE_SHA256_V4 = '652eddaffc7687cf5e7e0748c7db2ea0d1a3639fcbb09512114f521844e20378';
+const LINUX_NATIVE_RENAME_HELPER_PATH_V4 = fileURLToPath(new URL(
+  `../../dist/native/linux-${process.arch}/${LINUX_NATIVE_RENAME_HELPER_NAME_V4}`,
+  import.meta.url,
+));
 const BROKER_REPLY_STATES_V4 = new Set([
   'READY_FOR_EXECUTOR',
   'EXECUTION_STARTED',
@@ -54,6 +68,7 @@ export interface BrokerIpcDependenciesV4 {
   unixQuarantineLimitForTests?: number;
   afterLinuxListenerReceivedForTests?(): Promise<void>;
   afterLinuxQuarantineReservationForTests?(): Promise<void>;
+  afterLinuxQuarantineReadyForRenameForTests?(): Promise<void>;
 }
 
 export interface BrokerIpcPlatformVerifierV4 {
@@ -111,7 +126,13 @@ export interface UnixPhysicalDirectoryCapabilityV4 {
     connect: ((endpoint: string) => Socket) | undefined,
     operation: (socket: Socket) => Promise<T>,
   ): Promise<T>;
-  removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4, quarantineLimit?: number, afterReservationForTests?: () => Promise<void>): Promise<void>;
+  removeOwnedBrokerSocket(
+    ownedObjectIdentity: string,
+    testDependencies?: UnixOwnedEndpointCleanupDependenciesV4,
+    quarantineLimit?: number,
+    afterReservationForTests?: () => Promise<void>,
+    afterReadyForRenameForTests?: () => Promise<void>,
+  ): Promise<void>;
 }
 
 /**
@@ -290,6 +311,238 @@ function linuxObjectIdentityV4(metadata: { dev: bigint; ino: bigint }): string {
 
 function linuxOwnerIdentityV4(uid: bigint): string {
   return `uid:${uid.toString()}`;
+}
+
+interface LinuxNativeRenameHelperSnapshotV4 {
+  readonly installComponentIdentities: readonly string[];
+  readonly installOwnerIdentity: string;
+  readonly helperIdentity: string;
+  readonly helperSha256: string;
+  readonly manifestIdentity: string;
+  readonly manifestSha256: string;
+}
+
+interface OpenedLinuxNativeRenameHelperV4 extends LinuxNativeRenameHelperSnapshotV4 {
+  readonly helperFd: number;
+}
+
+type LinuxNativeRenameOutcomeV4 = 'moved' | 'source-missing' | 'destination-exists';
+
+function linuxTrustedInstallMetadataV4(
+  metadata: BigIntStats,
+  expectedOwnerIdentity: string,
+  kind: 'directory' | 'file' | 'helper',
+): void {
+  const ownerIdentity = linuxOwnerIdentityV4(metadata.uid);
+  if (
+    (ownerIdentity !== 'uid:0' && ownerIdentity !== expectedOwnerIdentity)
+    || (metadata.mode & 0o022n) !== 0n
+    || kind === 'directory' && !metadata.isDirectory()
+    || kind !== 'directory' && !metadata.isFile()
+    || kind !== 'directory' && metadata.nlink !== 1n
+    || kind === 'helper' && (metadata.mode & 0o111n) === 0n
+    || kind === 'file' && (metadata.mode & 0o111n) !== 0n
+  ) physicalPathRejected();
+}
+
+function assertLinuxNativeHelperElfV4(bytes: Buffer): void {
+  const expectedMachine = new Map<string, number>([
+    ['arm', 40],
+    ['arm64', 183],
+    ['ia32', 3],
+    ['ppc64', 21],
+    ['riscv64', 243],
+    ['s390x', 22],
+    ['x64', 62],
+  ]).get(process.arch);
+  if (
+    expectedMachine === undefined
+    || bytes.byteLength < 64
+    || bytes[0] !== 0x7f
+    || bytes[1] !== 0x45
+    || bytes[2] !== 0x4c
+    || bytes[3] !== 0x46
+    || bytes[4] !== (process.arch === 'arm' || process.arch === 'ia32' ? 1 : 2)
+    || bytes[5] !== 1 && bytes[5] !== 2
+  ) physicalPathRejected();
+  const readWord = bytes[5] === 1 ? Buffer.prototype.readUInt16LE : Buffer.prototype.readUInt16BE;
+  if (readWord.call(bytes, 16) !== 3 || readWord.call(bytes, 18) !== expectedMachine) physicalPathRejected();
+}
+
+function loadLinuxNativeRenameHelperManifestV4(bytes: Buffer): { binary_sha256: string } {
+  if (bytes.byteLength < 1 || bytes.byteLength > 4_096) physicalPathRejected();
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString('utf8')); }
+  catch { physicalPathRejected(); }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) physicalPathRejected();
+  const manifest = value as Record<string, unknown>;
+  if (
+    Object.keys(manifest).sort().join('\0') !== [
+      'architecture',
+      'binary_sha256',
+      'helper_name',
+      'platform',
+      'protocol',
+      'schema_version',
+      'source_sha256',
+    ].join('\0')
+    || manifest.schema_version !== 1
+    || manifest.platform !== 'linux'
+    || manifest.architecture !== process.arch
+    || manifest.helper_name !== LINUX_NATIVE_RENAME_HELPER_NAME_V4
+    || manifest.protocol !== LINUX_NATIVE_RENAME_HELPER_PROTOCOL_V4
+    || manifest.source_sha256 !== LINUX_NATIVE_RENAME_HELPER_SOURCE_SHA256_V4
+    || typeof manifest.binary_sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(manifest.binary_sha256)
+  ) physicalPathRejected();
+  return { binary_sha256: manifest.binary_sha256 };
+}
+
+function openCertifiedLinuxNativeRenameHelperV4(): OpenedLinuxNativeRenameHelperV4 {
+  if (process.platform !== 'linux' || typeof process.getuid !== 'function') physicalPathRejected();
+  const modulePath = fileURLToPath(import.meta.url);
+  let moduleMetadata: BigIntStats;
+  try { moduleMetadata = lstatSync(modulePath, { bigint: true }); }
+  catch { physicalPathRejected(); }
+  if (!moduleMetadata.isFile() || moduleMetadata.nlink !== 1n || (moduleMetadata.mode & 0o022n) !== 0n) physicalPathRejected();
+  const installOwnerIdentity = linuxOwnerIdentityV4(moduleMetadata.uid);
+  const helperDirectory = posix.dirname(LINUX_NATIVE_RENAME_HELPER_PATH_V4);
+  if (!posix.isAbsolute(helperDirectory) || helperDirectory.includes('\0')) physicalPathRejected();
+  const directoryFlags = fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW;
+  const fileFlags = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW;
+  let directoryFd = -1;
+  let helperFd = -1;
+  let manifestFd = -1;
+  try {
+    directoryFd = openSync('/', directoryFlags);
+    const installComponentIdentities: string[] = [];
+    let metadata = fstatSync(directoryFd, { bigint: true });
+    linuxTrustedInstallMetadataV4(metadata, installOwnerIdentity, 'directory');
+    installComponentIdentities.push(linuxObjectIdentityV4(metadata));
+    for (const segment of helperDirectory.split('/').filter((entry) => entry.length > 0)) {
+      if (segment === '.' || segment === '..' || segment.includes('\0')) physicalPathRejected();
+      const nextFd = openSync(`/proc/self/fd/${directoryFd}/${segment}`, directoryFlags);
+      closeSync(directoryFd);
+      directoryFd = nextFd;
+      metadata = fstatSync(directoryFd, { bigint: true });
+      linuxTrustedInstallMetadataV4(metadata, installOwnerIdentity, 'directory');
+      installComponentIdentities.push(linuxObjectIdentityV4(metadata));
+    }
+    if (linuxOwnerIdentityV4(metadata.uid) !== installOwnerIdentity) physicalPathRejected();
+
+    helperFd = openSync(`/proc/self/fd/${directoryFd}/${LINUX_NATIVE_RENAME_HELPER_NAME_V4}`, fileFlags);
+    const helperMetadata = fstatSync(helperFd, { bigint: true });
+    linuxTrustedInstallMetadataV4(helperMetadata, installOwnerIdentity, 'helper');
+    if (linuxOwnerIdentityV4(helperMetadata.uid) !== installOwnerIdentity || helperMetadata.size < 1n || helperMetadata.size > 1_048_576n) physicalPathRejected();
+    const helperBytes = readFileSync(helperFd);
+    assertLinuxNativeHelperElfV4(helperBytes);
+    const helperSha256 = createHash('sha256').update(helperBytes).digest('hex');
+
+    manifestFd = openSync(`/proc/self/fd/${directoryFd}/${LINUX_NATIVE_RENAME_HELPER_NAME_V4}.manifest.json`, fileFlags);
+    const manifestMetadata = fstatSync(manifestFd, { bigint: true });
+    linuxTrustedInstallMetadataV4(manifestMetadata, installOwnerIdentity, 'file');
+    if (linuxOwnerIdentityV4(manifestMetadata.uid) !== installOwnerIdentity || manifestMetadata.size < 1n || manifestMetadata.size > 4_096n) physicalPathRejected();
+    const manifestBytes = readFileSync(manifestFd);
+    const manifest = loadLinuxNativeRenameHelperManifestV4(manifestBytes);
+    if (manifest.binary_sha256 !== helperSha256) physicalPathRejected();
+    const manifestSha256 = createHash('sha256').update(manifestBytes).digest('hex');
+    closeSync(manifestFd);
+    manifestFd = -1;
+    closeSync(directoryFd);
+    directoryFd = -1;
+    return Object.freeze({
+      helperFd,
+      installComponentIdentities: Object.freeze(installComponentIdentities),
+      installOwnerIdentity,
+      helperIdentity: linuxObjectIdentityV4(helperMetadata),
+      helperSha256,
+      manifestIdentity: linuxObjectIdentityV4(manifestMetadata),
+      manifestSha256,
+    });
+  } catch {
+    if (helperFd >= 0) closeSync(helperFd);
+    if (manifestFd >= 0) closeSync(manifestFd);
+    if (directoryFd >= 0) closeSync(directoryFd);
+    physicalPathRejected();
+  }
+}
+
+function sameLinuxNativeRenameHelperSnapshotV4(
+  expected: LinuxNativeRenameHelperSnapshotV4,
+  actual: LinuxNativeRenameHelperSnapshotV4,
+): boolean {
+  return expected.installOwnerIdentity === actual.installOwnerIdentity
+    && expected.helperIdentity === actual.helperIdentity
+    && expected.helperSha256 === actual.helperSha256
+    && expected.manifestIdentity === actual.manifestIdentity
+    && expected.manifestSha256 === actual.manifestSha256
+    && expected.installComponentIdentities.length === actual.installComponentIdentities.length
+    && expected.installComponentIdentities.every((identity, index) => identity === actual.installComponentIdentities[index]);
+}
+
+class LinuxNativeRenameNoReplaceHelperV4 {
+  readonly #snapshot: LinuxNativeRenameHelperSnapshotV4;
+
+  constructor() {
+    const opened = openCertifiedLinuxNativeRenameHelperV4();
+    this.#snapshot = opened;
+    closeSync(opened.helperFd);
+  }
+
+  assertReproved(): void {
+    const opened = openCertifiedLinuxNativeRenameHelperV4();
+    try {
+      if (!sameLinuxNativeRenameHelperSnapshotV4(this.#snapshot, opened)) physicalPathRejected();
+    } finally {
+      closeSync(opened.helperFd);
+    }
+  }
+
+  async moveBrokerSocket(stateDirectoryFd: number, quarantineDirectoryFd: number): Promise<LinuxNativeRenameOutcomeV4> {
+    const opened = openCertifiedLinuxNativeRenameHelperV4();
+    if (!sameLinuxNativeRenameHelperSnapshotV4(this.#snapshot, opened)) {
+      closeSync(opened.helperFd);
+      physicalPathRejected();
+    }
+    let child: ChildProcess | null = null;
+    let childClosed: Promise<void> | null = null;
+    let onChildLifecycleError: ((error: Error) => void) | null = null;
+    try {
+      child = spawn('/proc/self/fd/5', [], {
+        cwd: '/',
+        env: {},
+        stdio: ['ignore', 'ignore', 'ignore', stateDirectoryFd, quarantineDirectoryFd, opened.helperFd],
+      });
+      let childLifecycleError: Error | null = null;
+      onChildLifecycleError = (error: Error) => { childLifecycleError = error; };
+      child.on('error', onChildLifecycleError);
+      childClosed = new Promise<void>((resolveClosed) => child!.once('close', () => resolveClosed()));
+      let exited = await waitForLinuxBinderExitV4(child, LINUX_NATIVE_HELPER_EXIT_DEADLINE_MS_V4);
+      if (exited === null) {
+        killLinuxBinderV4(child);
+        exited = await waitForLinuxBinderExitV4(child, LINUX_NATIVE_HELPER_EXIT_DEADLINE_MS_V4);
+      }
+      if (exited === null) throw new Error('native Linux rename helper did not exit');
+      await waitForLinuxBinderCloseV4(childClosed);
+      if (childLifecycleError !== null || exited.signal !== null) physicalPathRejected();
+      if (exited.code === 0) return 'moved';
+      if (exited.code === 2) return 'source-missing';
+      if (exited.code === 17) return 'destination-exists';
+      if (exited.code === 38) physicalPathRejected();
+      physicalPathRejected();
+    } catch {
+      physicalPathRejected();
+    } finally {
+      if (child !== null) {
+        killLinuxBinderV4(child);
+        await waitForLinuxBinderExitV4(child, LINUX_NATIVE_HELPER_EXIT_DEADLINE_MS_V4).catch(() => null);
+        if (childClosed !== null) await waitForLinuxBinderCloseV4(childClosed).catch(() => undefined);
+        if (onChildLifecycleError !== null) child.off('error', onChildLifecycleError);
+      }
+      closeSync(opened.helperFd);
+    }
+    physicalPathRejected();
+  }
 }
 
 interface TrackedServerConnectionsV4 {
@@ -609,17 +862,30 @@ interface LinuxQuarantineReservationV4 {
   readonly directoryIdentity: string;
 }
 
+interface LinuxValidatedQuarantineSlotsV4 {
+  readonly emptyNames: ReadonlySet<string>;
+  readonly existingNames: ReadonlySet<string>;
+  readonly occupiedCount: number;
+}
+
 class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryCapabilityV4 {
   readonly inspection: UnixPhysicalPathInspectionV4;
   readonly #handle: FileHandle;
   readonly #expectedOwnerIdentity: string;
+  readonly #renameHelper: LinuxNativeRenameNoReplaceHelperV4;
   #transferred = false;
   #closed = false;
 
-  constructor(handle: FileHandle, inspection: UnixPhysicalPathInspectionV4, expectedOwnerIdentity: string) {
+  constructor(
+    handle: FileHandle,
+    inspection: UnixPhysicalPathInspectionV4,
+    expectedOwnerIdentity: string,
+    renameHelper: LinuxNativeRenameNoReplaceHelperV4,
+  ) {
     this.#handle = handle;
     this.inspection = inspection;
     this.#expectedOwnerIdentity = expectedOwnerIdentity;
+    this.#renameHelper = renameHelper;
   }
 
   async closeUnlessTransferred(): Promise<void> {
@@ -664,16 +930,21 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     return `/proc/self/fd/${reservation.handle.fd}`;
   }
 
-  async #validatedQuarantineCount(
+  async #validatedQuarantineSlots(
+    quarantineLimit: number,
     endpointIdentity: string | null,
     expectedReservation?: LinuxQuarantineReservationV4,
-  ): Promise<number> {
+  ): Promise<LinuxValidatedQuarantineSlotsV4> {
     const readNames = async () => (await readdir(this.#statePath()))
-      .filter((name) => name.startsWith('.broker.sock.quarantine-'))
+      .filter((name) => name.startsWith(LINUX_BROKER_QUARANTINE_PREFIX_V4))
       .sort();
     const names = await readNames();
+    const allowedNames = new Set(LINUX_BROKER_QUARANTINE_SLOT_NAMES_V4);
+    const existingNames = new Set<string>();
+    const emptyNames = new Set<string>();
     const socketIdentities = new Set<string>();
     let expectedReservationFound = false;
+    let occupiedCount = 0;
     const validateSocket = (metadata: BigIntStats): string => {
       const identity = linuxObjectIdentityV4(metadata);
       if (
@@ -687,14 +958,10 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       return identity;
     };
     for (const name of names) {
-      if (!/^\.broker\.sock\.quarantine-[1-9][0-9]*-[a-f0-9]{32}$/.test(name)) physicalPathRejected();
+      if (!allowedNames.has(name)) physicalPathRejected();
+      existingNames.add(name);
       const path = this.#childPath(name);
       const metadata = await lstat(path, { bigint: true });
-      if (metadata.isSocket()) {
-        validateSocket(metadata);
-        if (expectedReservation?.name === name) physicalPathRejected();
-        continue;
-      }
       if (!metadata.isDirectory()) physicalPathRejected();
       const handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
       try {
@@ -708,7 +975,12 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
         ) physicalPathRejected();
         const contents = (await readdir(`/proc/self/fd/${handle.fd}`)).sort();
         if (contents.length > 1 || contents.length === 1 && contents[0] !== 'broker.sock') physicalPathRejected();
-        if (contents.length === 1) validateSocket(await lstat(`/proc/self/fd/${handle.fd}/broker.sock`, { bigint: true }));
+        if (contents.length === 1) {
+          validateSocket(await lstat(`/proc/self/fd/${handle.fd}/broker.sock`, { bigint: true }));
+          occupiedCount += 1;
+        } else {
+          emptyNames.add(name);
+        }
         const rebound = await lstat(path, { bigint: true });
         if (!rebound.isDirectory() || linuxObjectIdentityV4(rebound) !== boundIdentity) physicalPathRejected();
         if (expectedReservation?.name === name) {
@@ -721,12 +993,16 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     }
     if (!expectedReservationFound && expectedReservation !== undefined) physicalPathRejected();
     if ((await readNames()).join('\0') !== names.join('\0')) physicalPathRejected();
-    return names.length;
+    const outsideEffectiveLimit = names.some((name) => LINUX_BROKER_QUARANTINE_SLOT_NAMES_V4.indexOf(name) >= quarantineLimit);
+    if (outsideEffectiveLimit || occupiedCount > quarantineLimit) {
+      throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
+    }
+    return { emptyNames, existingNames, occupiedCount };
   }
 
   async #assertQuarantineCapacity(quarantineLimit: number, requiredSlots: number, endpointIdentity: string | null): Promise<void> {
-    const count = await this.#validatedQuarantineCount(endpointIdentity);
-    if (count + requiredSlots > quarantineLimit) {
+    const slots = await this.#validatedQuarantineSlots(quarantineLimit, endpointIdentity);
+    if (slots.occupiedCount + requiredSlots > quarantineLimit) {
       throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
     }
   }
@@ -736,21 +1012,18 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     quarantineLimit: number,
     reserveSlotsAfter: number,
   ): Promise<LinuxQuarantineReservationV4> {
-    await this.#assertQuarantineCapacity(quarantineLimit, 1 + reserveSlotsAfter, endpointIdentity);
-    let name = '';
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      name = `.broker.sock.quarantine-${process.pid}-${randomBytes(16).toString('hex')}`;
-      const created = await mkdir(this.#childPath(name), { mode: 0o700 }).then(
-        () => true,
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === 'EEXIST') return false;
-          throw error;
-        },
-      );
-      if (created) break;
-      name = '';
+    const slots = await this.#validatedQuarantineSlots(quarantineLimit, endpointIdentity);
+    if (slots.occupiedCount + 1 + reserveSlotsAfter > quarantineLimit) {
+      throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
     }
-    if (name.length === 0) throw new Error('REPOSITORY_BUSY: broker quarantine reservation failed');
+    const allowedNames = LINUX_BROKER_QUARANTINE_SLOT_NAMES_V4.slice(0, quarantineLimit);
+    const name = allowedNames.find((candidate) => slots.emptyNames.has(candidate) || !slots.existingNames.has(candidate));
+    if (name === undefined) throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
+    if (!slots.existingNames.has(name)) {
+      await mkdir(this.#childPath(name), { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EEXIST') throw error;
+      });
+    }
     await this.#syncDirectory();
     const handle = await open(this.#childPath(name), fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
     try {
@@ -790,6 +1063,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4,
     reserveSlotsAfter = 0,
     afterReservationForTests?: () => Promise<void>,
+    afterReadyForRenameForTests?: () => Promise<void>,
   ): Promise<'absent' | 'removed'> {
     const current = await this.#metadata('broker.sock');
     if (current === null || current.kind !== 'socket' || current.object_identity !== expectedIdentity) return 'absent';
@@ -801,20 +1075,28 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       if (rechecked?.kind !== 'socket' || rechecked.object_identity !== expectedIdentity) {
         throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
       }
-      const count = await this.#validatedQuarantineCount(expectedIdentity, reservation);
-      if (count + reserveSlotsAfter > quarantineLimit) {
+      const slots = await this.#validatedQuarantineSlots(quarantineLimit, expectedIdentity, reservation);
+      if (slots.occupiedCount + 1 + reserveSlotsAfter > quarantineLimit) {
         throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
       }
-      try {
-        await rename(this.#childPath('broker.sock'), `${this.#reservationPath(reservation)}/broker.sock`);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent';
-        throw error;
+      if (afterReadyForRenameForTests !== undefined) await afterReadyForRenameForTests();
+      const outcome = await this.#renameHelper.moveBrokerSocket(this.#handle.fd, reservation.handle.fd);
+      if (outcome === 'destination-exists') {
+        throw new Error('REPOSITORY_BUSY: broker quarantine destination is occupied');
+      }
+      if (outcome === 'source-missing') {
+        throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
       }
       await reservation.handle.sync();
       await this.#syncDirectory();
       const quarantined = await this.#metadataAtPath(`${this.#reservationPath(reservation)}/broker.sock`);
-      if (quarantined?.object_identity !== expectedIdentity) {
+      const linkedReservation = await lstat(this.#childPath(reservation.name), { bigint: true }).catch(() => null);
+      if (
+        quarantined?.object_identity !== expectedIdentity
+        || linkedReservation === null
+        || !linkedReservation.isDirectory()
+        || linuxObjectIdentityV4(linkedReservation) !== reservation.directoryIdentity
+      ) {
         await this.#restoreWithoutOverwrite(reservation);
         throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
       }
@@ -880,7 +1162,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     if (metadata.kind !== 'socket' || metadata.owner_identity !== expectedOwnerIdentity || !metadata.owner_only) {
       throw new Error('AUTHENTICATION_FAILED: existing broker endpoint ownership or mode is invalid');
     }
-    await this.#validatedQuarantineCount(metadata.object_identity);
+    await this.#validatedQuarantineSlots(quarantineLimit, metadata.object_identity);
     const status = await defaultUnixProbe(this.#childPath('broker.sock')).catch(() => 'unknown' as const);
     if (status !== 'stale') throw new Error('REPOSITORY_BUSY: broker endpoint is live or unverifiable');
     await this.#quarantineOwnedEndpoint(metadata.object_identity, undefined, quarantineLimit, 1);
@@ -954,13 +1236,26 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     testDependencies?: UnixOwnedEndpointCleanupDependenciesV4,
     quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4,
     afterReservationForTests?: () => Promise<void>,
+    afterReadyForRenameForTests?: () => Promise<void>,
   ): Promise<void> {
-    await this.#quarantineOwnedEndpoint(ownedObjectIdentity, testDependencies?.afterMetadataForTests, quarantineLimit, 0, afterReservationForTests);
+    await this.#quarantineOwnedEndpoint(
+      ownedObjectIdentity,
+      testDependencies?.afterMetadataForTests,
+      quarantineLimit,
+      0,
+      afterReservationForTests,
+      afterReadyForRenameForTests,
+    );
   }
 }
 
 class LinuxNativeUnixPhysicalPathBackendV4 implements UnixPhysicalPathBackendV4 {
   readonly certification = Object.freeze({ kind: 'native-physical-path' as const, identity: 'linux-procfd-v1' });
+  readonly #renameHelper: LinuxNativeRenameNoReplaceHelperV4;
+
+  constructor(renameHelper: LinuxNativeRenameNoReplaceHelperV4) {
+    this.#renameHelper = renameHelper;
+  }
 
   async certifyStateDirectory(input: { state_directory: string; expected_owner_identity: string }): Promise<UnixPhysicalPathInspectionV4> {
     let opened: Awaited<ReturnType<typeof openLinuxPhysicalStateDirectoryV4>>;
@@ -977,6 +1272,7 @@ class LinuxNativeUnixPhysicalPathBackendV4 implements UnixPhysicalPathBackendV4 
     input: { operation_path: string; expected_owner_identity: string; component_identities: readonly string[] },
     operation: (capability: UnixPhysicalDirectoryCapabilityV4) => Promise<T>,
   ): Promise<T> {
+    this.#renameHelper.assertReproved();
     let opened: Awaited<ReturnType<typeof openLinuxPhysicalStateDirectoryV4>>;
     try {
       opened = await openLinuxPhysicalStateDirectoryV4({
@@ -991,7 +1287,12 @@ class LinuxNativeUnixPhysicalPathBackendV4 implements UnixPhysicalPathBackendV4 
       await opened.handle.close().catch(() => undefined);
       physicalPathRejected();
     }
-    const capability = new LinuxNativePhysicalDirectoryCapabilityV4(opened.handle, inspection, input.expected_owner_identity);
+    const capability = new LinuxNativePhysicalDirectoryCapabilityV4(
+      opened.handle,
+      inspection,
+      input.expected_owner_identity,
+      this.#renameHelper,
+    );
     try {
       return await operation(capability);
     } finally {
@@ -1004,7 +1305,10 @@ Object.freeze(LinuxNativeUnixPhysicalPathBackendV4.prototype);
 
 export function createLinuxNativeUnixPhysicalPathBackendV4(): UnixPhysicalPathBackendV4 {
   if (process.platform !== 'linux') throw new Error('AUTHENTICATION_FAILED: Linux native physical-path backend is unavailable');
-  const backend = new LinuxNativeUnixPhysicalPathBackendV4();
+  let renameHelper: LinuxNativeRenameNoReplaceHelperV4;
+  try { renameHelper = new LinuxNativeRenameNoReplaceHelperV4(); }
+  catch { throw new Error('AUTHENTICATION_FAILED: Linux native physical-path backend is unavailable'); }
+  const backend = new LinuxNativeUnixPhysicalPathBackendV4(renameHelper);
   linuxNativePhysicalBackendBrandV4.add(backend);
   return Object.freeze(backend);
 }
@@ -1418,12 +1722,17 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
   }
   if (deps.endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
   if (
-    (deps.afterLinuxListenerReceivedForTests !== undefined || deps.afterLinuxQuarantineReservationForTests !== undefined)
+    (
+      deps.afterLinuxListenerReceivedForTests !== undefined
+      || deps.afterLinuxQuarantineReservationForTests !== undefined
+      || deps.afterLinuxQuarantineReadyForRenameForTests !== undefined
+    )
     && (
       platform !== 'linux'
       || deps.allowInProcessPhysicalPathBackendForTests !== true
       || deps.afterLinuxListenerReceivedForTests !== undefined && typeof deps.afterLinuxListenerReceivedForTests !== 'function'
       || deps.afterLinuxQuarantineReservationForTests !== undefined && typeof deps.afterLinuxQuarantineReservationForTests !== 'function'
+      || deps.afterLinuxQuarantineReadyForRenameForTests !== undefined && typeof deps.afterLinuxQuarantineReadyForRenameForTests !== 'function'
     )
   ) throw new Error('AUTHENTICATION_FAILED: Linux physical-path test hook is invalid');
   const linuxQuarantineLimit = platform === 'win32'
@@ -1549,6 +1858,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
           undefined,
           linuxQuarantineLimit,
           deps.afterLinuxQuarantineReservationForTests,
+          deps.afterLinuxQuarantineReadyForRenameForTests,
         ));
         ownedUnixEndpointIdentity = null;
       } catch {
@@ -1597,6 +1907,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
           undefined,
           linuxQuarantineLimit,
           deps.afterLinuxQuarantineReservationForTests,
+          deps.afterLinuxQuarantineReadyForRenameForTests,
         )));
         ownedUnixEndpointIdentity = null;
       } catch {
