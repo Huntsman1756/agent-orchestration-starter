@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
-import { chmod, link, lstat, mkdir, open, readFile, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join, posix, resolve, win32 } from 'node:path';
 import { createConnection, createServer, Server, type Socket } from 'node:net';
@@ -15,6 +15,9 @@ import type { BrokerCommandV4 } from './run-state.js';
 
 const MAX_FRAME_BYTES_V4 = 1_048_576;
 const TOKEN_FILE_V4 = 'broker.token';
+const MAX_LINUX_BROKER_QUARANTINES_V4 = 64;
+const SERVER_CLOSE_DEADLINE_MS_V4 = 250;
+const LINUX_BINDER_EXIT_DEADLINE_MS_V4 = 250;
 const BROKER_REPLY_STATES_V4 = new Set([
   'READY_FOR_EXECUTOR',
   'EXECUTION_STARTED',
@@ -48,6 +51,7 @@ export interface BrokerIpcDependenciesV4 {
   allowInProcessCoordinatorForTests?: boolean;
   unixPhysicalPathBackend?: UnixPhysicalPathBackendV4;
   allowInProcessPhysicalPathBackendForTests?: boolean;
+  unixQuarantineLimitForTests?: number;
 }
 
 export interface BrokerIpcPlatformVerifierV4 {
@@ -94,18 +98,18 @@ export interface UnixPhysicalDirectoryCapabilityV4 {
     expected_owner_identity: string;
     verifier: BrokerIpcPlatformVerifierV4;
   }): Promise<{ owner_identity: string } | null>;
-  reclaimBrokerSocket(expectedOwnerIdentity: string): Promise<void>;
-  listenBrokerSocket(server: Server): Promise<UnixBrokerListenerBindingV4>;
+  reclaimBrokerSocket(expectedOwnerIdentity: string, quarantineLimit?: number): Promise<void>;
+  listenBrokerSocket(server: Server, quarantineLimit?: number): Promise<UnixBrokerListenerBindingV4>;
   publishBrokerSocket(input: {
     binding: UnixBrokerListenerBindingV4;
     expected_owner_identity: string;
     verifier: BrokerIpcPlatformVerifierV4;
-  }): Promise<string>;
+  }, quarantineLimit?: number): Promise<string>;
   withConnectedBrokerSocket<T>(
     connect: ((endpoint: string) => Socket) | undefined,
     operation: (socket: Socket) => Promise<T>,
   ): Promise<T>;
-  removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4): Promise<void>;
+  removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4, quarantineLimit?: number): Promise<void>;
 }
 
 /**
@@ -241,6 +245,17 @@ function physicalPathRejected(): never {
   throw new Error('AUTHENTICATION_FAILED: Unix physical state path verification failed');
 }
 
+function loadLinuxQuarantineLimitV4(value: number | undefined, allowTestOverride: boolean | undefined): number {
+  if (value === undefined) return MAX_LINUX_BROKER_QUARANTINES_V4;
+  if (
+    allowTestOverride !== true
+    || !Number.isSafeInteger(value)
+    || value < 1
+    || value > MAX_LINUX_BROKER_QUARANTINES_V4
+  ) throw new Error('AUTHENTICATION_FAILED: Linux quarantine limit override is invalid');
+  return value;
+}
+
 function loadUnixPhysicalInspectionV4(inspection: UnixPhysicalPathInspectionV4, expectedOwnerIdentity: string): UnixPhysicalPathInspectionV4 {
   if (inspection === null || typeof inspection !== 'object' || inspection.chain_complete !== true || !posix.isAbsolute(inspection.operation_path) || inspection.operation_path.includes('\0')) {
     physicalPathRejected();
@@ -275,10 +290,64 @@ function linuxOwnerIdentityV4(uid: bigint): string {
   return `uid:${uid.toString()}`;
 }
 
+interface TrackedServerConnectionsV4 {
+  closing: boolean;
+  readonly sockets: Set<Socket>;
+  readonly listener: (socket: Socket) => void;
+}
+
+const trackedServerConnectionsV4 = new WeakMap<Server, TrackedServerConnectionsV4>();
+
+function trackServerConnectionsV4(server: Server): TrackedServerConnectionsV4 {
+  const existing = trackedServerConnectionsV4.get(server);
+  if (existing !== undefined) return existing;
+  const sockets = new Set<Socket>();
+  const state: TrackedServerConnectionsV4 = {
+    closing: false,
+    sockets,
+    listener: (socket) => {
+      sockets.add(socket);
+      socket.once('close', () => sockets.delete(socket));
+      if (state.closing) socket.destroy();
+    },
+  };
+  trackedServerConnectionsV4.set(server, state);
+  server.prependListener('connection', state.listener);
+  return state;
+}
+
+function destroyTrackedServerConnectionsV4(server: Server, state: TrackedServerConnectionsV4): void {
+  for (const socket of state.sockets) socket.destroy();
+  (server as Server & { closeAllConnections?: () => void }).closeAllConnections?.();
+}
+
 async function closeServerHandleV4(server: Server): Promise<void> {
-  if (!server.listening) return;
+  const state = trackServerConnectionsV4(server);
+  state.closing = true;
+  if (!server.listening) {
+    destroyTrackedServerConnectionsV4(server, state);
+    return;
+  }
   await new Promise<void>((resolveClose, rejectClose) => {
-    server.close((error) => error === undefined ? resolveClose() : rejectClose(error));
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error === undefined) resolveClose();
+      else rejectClose(error);
+    };
+    const timeout = setTimeout(() => {
+      destroyTrackedServerConnectionsV4(server, state);
+      finish(new Error('UNKNOWN_FAILURE: local IPC close deadline exceeded'));
+    }, SERVER_CLOSE_DEADLINE_MS_V4);
+    try {
+      server.close((error) => finish(error));
+      destroyTrackedServerConnectionsV4(server, state);
+    } catch (error) {
+      destroyTrackedServerConnectionsV4(server, state);
+      finish(error as Error);
+    }
   });
 }
 
@@ -320,8 +389,90 @@ interface LinuxAdoptedListenerV4 {
   objectIdentity: string;
 }
 
+interface LinuxBinderExitV4 {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function waitForLinuxBinderExitV4(child: ChildProcess, deadlineMs: number): Promise<LinuxBinderExitV4 | null> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+  if (child.pid === undefined) return Promise.resolve({ code: null, signal: null });
+  return new Promise((resolveExit) => {
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      clearTimeout(timeout);
+      resolveExit({ code, signal });
+    };
+    const timeout = setTimeout(() => {
+      child.off('exit', onExit);
+      resolveExit(null);
+    }, deadlineMs);
+    child.once('exit', onExit);
+  });
+}
+
 function killLinuxBinderV4(child: ChildProcess): void {
-  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+  try { child.kill('SIGKILL'); } catch { /* the bounded exit wait below remains authoritative */ }
+}
+
+async function terminateLinuxBinderV4(child: ChildProcess, requestPathlessShutdown: boolean): Promise<LinuxBinderExitV4> {
+  if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+    if (requestPathlessShutdown) {
+      await new Promise<void>((resolveSend, rejectSend) => {
+        try {
+          child.send({ kind: 'terminate-without-cleanup' }, (error) => error === null ? resolveSend() : rejectSend(error));
+        } catch (error) {
+          rejectSend(error);
+        }
+      }).catch(() => killLinuxBinderV4(child));
+    } else {
+      killLinuxBinderV4(child);
+    }
+  }
+  let exited = await waitForLinuxBinderExitV4(child, LINUX_BINDER_EXIT_DEADLINE_MS_V4);
+  if (exited === null) {
+    killLinuxBinderV4(child);
+    exited = await waitForLinuxBinderExitV4(child, LINUX_BINDER_EXIT_DEADLINE_MS_V4);
+  }
+  if (exited === null) throw new Error('AUTHENTICATION_FAILED: native Linux listener binder did not exit');
+  return exited;
+}
+
+async function waitForLinuxBinderCloseV4(closed: Promise<void>): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const completed = await Promise.race([
+    closed.then(() => true),
+    new Promise<false>((resolveTimeout) => {
+      timeout = setTimeout(() => resolveTimeout(false), LINUX_BINDER_EXIT_DEADLINE_MS_V4);
+    }),
+  ]);
+  if (timeout !== null) clearTimeout(timeout);
+  if (!completed) throw new Error('AUTHENTICATION_FAILED: native Linux listener binder handle did not close');
+}
+
+function receiveLinuxBinderListenerV4(child: ChildProcess): Promise<{ message: unknown; handle: unknown }> {
+  return new Promise((resolveMessage, rejectMessage) => {
+    const timeout = setTimeout(() => finish(new Error('native Linux listener binder timed out')), 5_000);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off('message', onMessage);
+      child.off('error', onError);
+      child.off('exit', onExit);
+    };
+    const finish = (error: Error | null, message?: unknown, handle?: unknown) => {
+      cleanup();
+      if (error !== null) rejectMessage(error);
+      else resolveMessage({ message, handle });
+    };
+    const onMessage = (message: unknown, handle: unknown) => finish(null, message, handle);
+    const onError = () => finish(new Error('native Linux listener binder failed'));
+    const onExit = () => finish(new Error('native Linux listener binder exited early'));
+    child.on('message', onMessage);
+    child.once('error', onError);
+    child.once('exit', onExit);
+  });
 }
 
 async function adoptPathlessLinuxListenerV4(directoryFd: number, sourceServer: Server): Promise<LinuxAdoptedListenerV4> {
@@ -329,63 +480,44 @@ async function adoptPathlessLinuxListenerV4(directoryFd: number, sourceServer: S
     env: {},
     stdio: ['ignore', 'ignore', 'ignore', 'ipc', directoryFd],
   });
-  return new Promise<LinuxAdoptedListenerV4>((resolveAdopted, rejectAdopted) => {
-    let adoptedServer: Server | null = null;
-    let settled = false;
-    const timeout = setTimeout(() => fail(), 5_000);
-    const cleanup = () => {
-      clearTimeout(timeout);
-      child.off('message', onMessage);
-      child.off('error', onError);
-      child.off('exit', onPrematureExit);
-    };
-    const rejectClosed = () => {
-      const server = adoptedServer;
-      adoptedServer = null;
-      void (server === null ? Promise.resolve() : closeServerHandleV4(server).catch(() => undefined))
-        .finally(() => rejectAdopted(new Error('AUTHENTICATION_FAILED: native Linux listener adoption failed')));
-    };
-    const fail = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      killLinuxBinderV4(child);
-      rejectClosed();
-    };
-    const onError = () => fail();
-    const onPrematureExit = () => fail();
-    const onMessage = (message: unknown, handle: unknown) => {
-      if (settled || message === null || typeof message !== 'object') return fail();
-      const candidate = message as Record<string, unknown>;
-      if (
-        candidate.kind !== 'bound'
-        || typeof candidate.object_identity !== 'string'
-        || !/^linux:dev:[0-9]+:ino:[0-9]+$/.test(candidate.object_identity)
-        || candidate.owner_identity !== linuxOwnerIdentityV4(BigInt(process.getuid!()))
-        || candidate.owner_only !== true
-        || !(handle instanceof Server)
-        || !handle.listening
-      ) return fail();
-      adoptedServer = handle;
-      child.off('exit', onPrematureExit);
-      child.once('exit', (_code, signal) => {
-        if (settled) return;
-        if (signal !== 'SIGKILL' || adoptedServer === null) return fail();
-        for (const listener of sourceServer.listeners('connection') as Array<(socket: Socket) => void>) {
-          adoptedServer.on('connection', listener);
-        }
-        settled = true;
-        cleanup();
-        resolveAdopted({ server: adoptedServer, objectIdentity: candidate.object_identity as string });
-      });
-      child.send({ kind: 'terminate-without-cleanup' }, (error) => {
-        if (error) fail();
-      });
-    };
-    child.on('message', onMessage);
-    child.once('error', onError);
-    child.once('exit', onPrematureExit);
-  });
+  let childLifecycleError: Error | null = null;
+  const onChildLifecycleError = (error: Error) => { childLifecycleError = error; };
+  child.on('error', onChildLifecycleError);
+  const childClosed = new Promise<void>((resolveClosed) => child.once('close', () => resolveClosed()));
+  let adoptedServer: Server | null = null;
+  try {
+    const received = await receiveLinuxBinderListenerV4(child);
+    const candidate = received.message as Record<string, unknown> | null;
+    if (
+      candidate === null
+      || typeof candidate !== 'object'
+      || candidate.kind !== 'bound'
+      || typeof candidate.object_identity !== 'string'
+      || !/^linux:dev:[0-9]+:ino:[0-9]+$/.test(candidate.object_identity)
+      || candidate.owner_identity !== linuxOwnerIdentityV4(BigInt(process.getuid!()))
+      || candidate.owner_only !== true
+      || !(received.handle instanceof Server)
+      || !received.handle.listening
+    ) throw new Error('native Linux listener binder response was invalid');
+    adoptedServer = received.handle;
+    trackServerConnectionsV4(adoptedServer);
+    const binderExit = await terminateLinuxBinderV4(child, true);
+    if (binderExit.signal !== 'SIGKILL') throw new Error('native Linux listener binder exit was invalid');
+    await waitForLinuxBinderCloseV4(childClosed);
+    if (childLifecycleError !== null) throw childLifecycleError;
+    const sourceTracking = trackedServerConnectionsV4.get(sourceServer);
+    for (const listener of sourceServer.listeners('connection') as Array<(socket: Socket) => void>) {
+      if (listener !== sourceTracking?.listener) adoptedServer.on('connection', listener);
+    }
+    child.off('error', onChildLifecycleError);
+    return { server: adoptedServer, objectIdentity: candidate.object_identity };
+  } catch {
+    await terminateLinuxBinderV4(child, false).catch(() => undefined);
+    await waitForLinuxBinderCloseV4(childClosed).catch(() => undefined);
+    child.off('error', onChildLifecycleError);
+    await (adoptedServer === null ? Promise.resolve() : closeServerHandleV4(adoptedServer).catch(() => undefined));
+    throw new Error('AUTHENTICATION_FAILED: native Linux listener adoption failed');
+  }
 }
 
 async function openLinuxPhysicalStateDirectoryV4(input: {
@@ -506,6 +638,32 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     await this.#handle.sync();
   }
 
+  async #validatedQuarantineCount(): Promise<number> {
+    const names = (await readdir(this.#statePath()))
+      .filter((name) => name.startsWith('.broker.sock.quarantine-'));
+    const identities = new Set<string>();
+    for (const name of names) {
+      if (!/^\.broker\.sock\.quarantine-[1-9][0-9]*-[a-f0-9]{32}$/.test(name)) physicalPathRejected();
+      const metadata = await this.#metadata(name);
+      if (
+        metadata === null
+        || metadata.kind !== 'socket'
+        || metadata.owner_identity !== this.#expectedOwnerIdentity
+        || !metadata.owner_only
+        || identities.has(metadata.object_identity)
+      ) physicalPathRejected();
+      identities.add(metadata.object_identity);
+    }
+    return names.length;
+  }
+
+  async #assertQuarantineCapacity(quarantineLimit: number, requiredSlots: number): Promise<void> {
+    const count = await this.#validatedQuarantineCount();
+    if (count + requiredSlots > quarantineLimit) {
+      throw new Error('REPOSITORY_BUSY: broker quarantine capacity exhausted');
+    }
+  }
+
   async #restoreWithoutOverwrite(quarantineName: string): Promise<void> {
     try {
       // Keep the quarantine link: Node has no identity-conditional unlink, so
@@ -518,10 +676,16 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     }
   }
 
-  async #quarantineOwnedEndpoint(expectedIdentity: string, afterMetadataForTests?: () => Promise<void>): Promise<'absent' | 'removed'> {
+  async #quarantineOwnedEndpoint(
+    expectedIdentity: string,
+    afterMetadataForTests?: () => Promise<void>,
+    quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4,
+    reserveSlotsAfter = 0,
+  ): Promise<'absent' | 'removed'> {
     const current = await this.#metadata('broker.sock');
     if (current === null || current.kind !== 'socket' || current.object_identity !== expectedIdentity) return 'absent';
     if (afterMetadataForTests !== undefined) await afterMetadataForTests();
+    await this.#assertQuarantineCapacity(quarantineLimit, 1 + reserveSlotsAfter);
     const quarantineName = `.broker.sock.quarantine-${process.pid}-${randomBytes(16).toString('hex')}`;
     try {
       await rename(this.#childPath('broker.sock'), this.#childPath(quarantineName));
@@ -582,18 +746,21 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     return callAdapter(() => input.verifier.verifyOwnerOnlyPath({ path, kind: input.kind, expected_owner_identity: input.expected_owner_identity }));
   }
 
-  async reclaimBrokerSocket(expectedOwnerIdentity: string): Promise<void> {
+  async reclaimBrokerSocket(expectedOwnerIdentity: string, quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4): Promise<void> {
     const metadata = await this.#metadata('broker.sock');
-    if (metadata === null) return;
+    if (metadata === null) {
+      await this.#assertQuarantineCapacity(quarantineLimit, 1);
+      return;
+    }
     if (metadata.kind !== 'socket' || metadata.owner_identity !== expectedOwnerIdentity || !metadata.owner_only) {
       throw new Error('AUTHENTICATION_FAILED: existing broker endpoint ownership or mode is invalid');
     }
     const status = await defaultUnixProbe(this.#childPath('broker.sock')).catch(() => 'unknown' as const);
     if (status !== 'stale') throw new Error('REPOSITORY_BUSY: broker endpoint is live or unverifiable');
-    await this.#quarantineOwnedEndpoint(metadata.object_identity);
+    await this.#quarantineOwnedEndpoint(metadata.object_identity, undefined, quarantineLimit, 1);
   }
 
-  async listenBrokerSocket(server: Server): Promise<UnixBrokerListenerBindingV4> {
+  async listenBrokerSocket(server: Server, quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4): Promise<UnixBrokerListenerBindingV4> {
     let adopted: LinuxAdoptedListenerV4 | null = null;
     try {
       adopted = await adoptPathlessLinuxListenerV4(this.#handle.fd, server);
@@ -612,7 +779,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     } catch (error) {
       if (adopted !== null) {
         await closeServerHandleV4(adopted.server).catch(() => undefined);
-        await this.#quarantineOwnedEndpoint(adopted.objectIdentity).catch(() => undefined);
+        await this.#quarantineOwnedEndpoint(adopted.objectIdentity, undefined, quarantineLimit).catch(() => undefined);
       }
       throw error;
     }
@@ -622,7 +789,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     binding: UnixBrokerListenerBindingV4;
     expected_owner_identity: string;
     verifier: BrokerIpcPlatformVerifierV4;
-  }): Promise<string> {
+  }, quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4): Promise<string> {
     if (!linuxNativeListenerBindingBrandV4.has(input.binding) || !(input.binding instanceof LinuxNativeBrokerListenerBindingV4) || input.binding.released) physicalPathRejected();
     const directoryIdentity = this.inspection.components.at(-1)?.object_identity;
     if (directoryIdentity !== input.binding.directoryIdentity) physicalPathRejected();
@@ -639,7 +806,7 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       if (verified?.object_identity !== input.binding.endpointIdentity) physicalPathRejected();
       return input.binding.endpointIdentity;
     } catch (error) {
-      await this.#quarantineOwnedEndpoint(input.binding.endpointIdentity).catch(() => undefined);
+      await this.#quarantineOwnedEndpoint(input.binding.endpointIdentity, undefined, quarantineLimit).catch(() => undefined);
       throw error;
     }
   }
@@ -652,8 +819,12 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     return operation(socket);
   }
 
-  async removeOwnedBrokerSocket(ownedObjectIdentity: string, testDependencies?: UnixOwnedEndpointCleanupDependenciesV4): Promise<void> {
-    await this.#quarantineOwnedEndpoint(ownedObjectIdentity, testDependencies?.afterMetadataForTests);
+  async removeOwnedBrokerSocket(
+    ownedObjectIdentity: string,
+    testDependencies?: UnixOwnedEndpointCleanupDependenciesV4,
+    quarantineLimit = MAX_LINUX_BROKER_QUARANTINES_V4,
+  ): Promise<void> {
+    await this.#quarantineOwnedEndpoint(ownedObjectIdentity, testDependencies?.afterMetadataForTests, quarantineLimit);
   }
 }
 
@@ -1115,6 +1286,9 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     throw new Error('AUTHENTICATION_FAILED: native endpoint coordinator is required');
   }
   if (deps.endpointCoordinator.certification.identity.length === 0) throw new Error('AUTHENTICATION_FAILED: endpoint coordinator identity is invalid');
+  const linuxQuarantineLimit = platform === 'win32'
+    ? MAX_LINUX_BROKER_QUARANTINES_V4
+    : loadLinuxQuarantineLimitV4(deps.unixQuarantineLimitForTests, deps.allowInProcessPhysicalPathBackendForTests);
   const expectedOwnerIdentity = platformOwnerIdentity(platform);
   const requestedLocation = loadBrokerIpcLocationV4(deps.stateDirectory, deps.endpoint, platform);
   let physicalBackend: UnixPhysicalPathBackendV4 | null = null;
@@ -1167,7 +1341,9 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
 
   let server: Server;
   try {
-    server = createServer((socket) => {
+    server = createServer();
+    trackServerConnectionsV4(server);
+    server.on('connection', (socket) => {
       let buffer = Buffer.alloc(0);
       let expectedLength: number | null = null;
       let handled = false;
@@ -1228,7 +1404,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     if (!server.listening) await releaseUnixListenerBinding().catch(() => { failure = new Error('UNKNOWN_FAILURE: local IPC close failed'); });
     if (platform !== 'win32' && ownedUnixEndpointIdentity !== null && !server.listening) {
       try {
-        await critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!));
+        await critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!, undefined, linuxQuarantineLimit));
         ownedUnixEndpointIdentity = null;
       } catch {
         failure = new Error('UNKNOWN_FAILURE: local IPC endpoint cleanup failed');
@@ -1244,14 +1420,14 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
           const proof = await critical.runSensitive((capability) => capability.verifyOwnerOnlyPath({ kind, expected_owner_identity: expectedOwnerIdentity, verifier: deps.platformVerifier! })).catch(() => null);
           if (proof?.owner_identity !== expectedOwnerIdentity) throw new Error(`AUTHENTICATION_FAILED: native ${kind} ownership/ACL proof failed`);
         }
-        await critical.runSensitive((capability) => capability.reclaimBrokerSocket(expectedOwnerIdentity));
-        unixListenerBinding = await critical.runSensitive((capability) => capability.listenBrokerSocket(server)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+        await critical.runSensitive((capability) => capability.reclaimBrokerSocket(expectedOwnerIdentity, linuxQuarantineLimit));
+        unixListenerBinding = await critical.runSensitive((capability) => capability.listenBrokerSocket(server, linuxQuarantineLimit)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
         server = unixListenerBinding.server;
         ownedUnixEndpointIdentity = await critical.runSensitive((capability) => capability.publishBrokerSocket({
           binding: unixListenerBinding!,
           expected_owner_identity: expectedOwnerIdentity,
           verifier: deps.platformVerifier!,
-        }));
+        }, linuxQuarantineLimit));
       } else try {
         await critical.runSensitive(() => listen(server, endpoint)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
         const endpointProof = await critical.runSensitive(() => callAdapter(() => deps.platformVerifier!.verifyOwnerOnlyPath({ path: endpoint, kind: 'endpoint', expected_owner_identity: expectedOwnerIdentity }))).catch(() => null);
@@ -1267,7 +1443,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
     if (!server.listening) await releaseUnixListenerBinding().catch(() => { cleanupFailed = true; });
     if (platform !== 'win32' && ownedUnixEndpointIdentity !== null && !server.listening) {
       try {
-        await runEndpointCriticalSection((critical) => critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!)));
+        await runEndpointCriticalSection((critical) => critical.runSensitive((capability) => capability.removeOwnedBrokerSocket(ownedUnixEndpointIdentity!, undefined, linuxQuarantineLimit)));
         ownedUnixEndpointIdentity = null;
       } catch {
         cleanupFailed = true;

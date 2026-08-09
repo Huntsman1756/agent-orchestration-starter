@@ -258,6 +258,38 @@ function activeServersForTest(): Server[] {
   return handles.filter((handle): handle is Server => handle instanceof Server);
 }
 
+async function linuxChildPidsForTest(): Promise<string[]> {
+  const children = (await readFile(`/proc/self/task/${process.pid}/children`, 'utf8')).trim();
+  return children.length === 0 ? [] : children.split(/\s+/).sort();
+}
+
+function activeChildProcessHandleCountForTest(): number {
+  const handles = (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles?.() ?? [];
+  return handles.filter((handle) => (
+    typeof handle === 'object'
+    && handle !== null
+    && (handle as { constructor?: { name?: unknown } }).constructor?.name === 'ChildProcess'
+  )).length;
+}
+
+async function connectionOutcomeForTest(endpoint: string): Promise<'connected' | 'rejected'> {
+  return new Promise<'connected' | 'rejected'>((resolveOutcome) => {
+    const socket = createConnection(endpoint);
+    socket.once('connect', () => { socket.destroy(); resolveOutcome('connected'); });
+    socket.once('error', () => { socket.destroy(); resolveOutcome('rejected'); });
+  });
+}
+
+function deadlineOutcomeForTest<T>(promise: Promise<T>, milliseconds: number): Promise<{ kind: 'settled'; value: T } | { kind: 'timeout' }> {
+  return new Promise((resolveOutcome, rejectOutcome) => {
+    const timeout = setTimeout(() => resolveOutcome({ kind: 'timeout' }), milliseconds);
+    promise.then(
+      (value) => { clearTimeout(timeout); resolveOutcome({ kind: 'settled', value }); },
+      (error) => { clearTimeout(timeout); rejectOutcome(error); },
+    );
+  });
+}
+
 function synchronouslyConnectingSocketForTest(): Socket {
   const socket = new Socket();
   const once = socket.once.bind(socket);
@@ -910,6 +942,299 @@ test('production Linux close preserves replacements at every observable listener
     }
   } finally {
     await server?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux normal close destroys held connections and releases coordination within its deadline', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-held-normal-close-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+  const delegate = createInProcessReclamationCoordinatorV4('held-normal-close-delegate');
+  let activeCoordinatorOperations = 0;
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'held-normal-close-coordinator' },
+    runExclusive: (key, operation) => delegate.runExclusive(key, async () => {
+      activeCoordinatorOperations += 1;
+      try { return await operation(); }
+      finally { activeCoordinatorOperations -= 1; }
+    }),
+  };
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
+  const childPidsBefore = await linuxChildPidsForTest();
+  const childHandlesBefore = activeChildProcessHandleCountForTest();
+  let server: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  let heldSocket: Socket | null = null;
+  try {
+    server = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier,
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: physicalBackend,
+    });
+    heldSocket = createConnection(endpoint);
+    await once(heldSocket, 'connect');
+    const socketClosed = once(heldSocket, 'close');
+    const closePromise = server.close();
+    const outcome = await deadlineOutcomeForTest(closePromise.then(() => 'closed' as const), 400);
+    if (outcome.kind === 'timeout') {
+      heldSocket.destroy();
+      await closePromise.catch(() => undefined);
+    }
+
+    assert.deepEqual(outcome, { kind: 'settled', value: 'closed' });
+    server = null;
+    await socketClosed;
+    assert.equal(heldSocket.destroyed, true);
+    assert.equal(activeCoordinatorOperations, 0);
+    assert.equal(await connectionOutcomeForTest(endpoint), 'rejected');
+    assert.deepEqual(await linuxChildPidsForTest(), childPidsBefore);
+    assert.equal(activeChildProcessHandleCountForTest(), childHandlesBefore);
+  } finally {
+    heldSocket?.destroy();
+    await server?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux proof abort destroys a preauthentication connection and leaves no binder child', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-held-proof-abort-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+  const delegate = createInProcessReclamationCoordinatorV4('held-proof-abort-delegate');
+  let activeCoordinatorOperations = 0;
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'held-proof-abort-coordinator' },
+    runExclusive: (key, operation) => delegate.runExclusive(key, async () => {
+      activeCoordinatorOperations += 1;
+      try { return await operation(); }
+      finally { activeCoordinatorOperations -= 1; }
+    }),
+  };
+  let enterEndpointProof!: () => void;
+  const endpointProofEntered = new Promise<void>((resolveEntered) => { enterEndpointProof = resolveEntered; });
+  let releaseEndpointProof!: () => void;
+  const endpointProofCanReturn = new Promise<void>((resolveProof) => { releaseEndpointProof = resolveProof; });
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ kind, expected_owner_identity }) => {
+      if (kind !== 'endpoint') return { owner_identity: expected_owner_identity };
+      enterEndpointProof();
+      await endpointProofCanReturn;
+      return null;
+    },
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
+  const childPidsBefore = await linuxChildPidsForTest();
+  const childHandlesBefore = activeChildProcessHandleCountForTest();
+  let heldSocket: Socket | null = null;
+  let unexpectedServer: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    const creation = createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier,
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: physicalBackend,
+    }).then(
+      (server) => ({ kind: 'created' as const, server }),
+      (error: Error) => ({ kind: 'rejected' as const, error }),
+    );
+    await endpointProofEntered;
+    heldSocket = createConnection(endpoint);
+    await once(heldSocket, 'connect');
+    const socketClosed = once(heldSocket, 'close');
+    releaseEndpointProof();
+    const outcome = await deadlineOutcomeForTest(creation, 400);
+    if (outcome.kind === 'timeout') {
+      heldSocket.destroy();
+      await creation;
+    } else if (outcome.value.kind === 'created') {
+      unexpectedServer = outcome.value.server;
+    }
+
+    assert.equal(outcome.kind, 'settled');
+    assert.equal(outcome.kind === 'settled' ? outcome.value.kind : 'timeout', 'rejected');
+    if (outcome.kind === 'settled' && outcome.value.kind === 'rejected') assert.match(outcome.value.error.message, /AUTHENTICATION_FAILED/);
+    await socketClosed;
+    assert.equal(heldSocket.destroyed, true);
+    assert.equal(activeCoordinatorOperations, 0);
+    assert.equal(await connectionOutcomeForTest(endpoint), 'rejected');
+    assert.deepEqual(await linuxChildPidsForTest(), childPidsBefore);
+    assert.equal(activeChildProcessHandleCountForTest(), childHandlesBefore);
+  } finally {
+    releaseEndpointProof();
+    heldSocket?.destroy();
+    await unexpectedServer?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux quarantine budget rejects cycle three before listener effects without deleting debris', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-quarantine-budget-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+  const coordinator = createInProcessReclamationCoordinatorV4('quarantine-budget');
+  let endpointProofs = 0;
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ kind, expected_owner_identity }) => {
+      if (kind === 'endpoint') endpointProofs += 1;
+      return { owner_identity: expected_owner_identity };
+    },
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
+  const dependencies = {
+    daemon: minimalDaemonForIpcTest(),
+    stateDirectory,
+    endpoint,
+    platform: 'linux' as const,
+    platformVerifier,
+    endpointCoordinator: coordinator,
+    allowInProcessCoordinatorForTests: true,
+    unixPhysicalPathBackend: physicalBackend,
+    allowInProcessPhysicalPathBackendForTests: true,
+    unixQuarantineLimitForTests: 2,
+  };
+  const childPidsBefore = await linuxChildPidsForTest();
+  let unexpectedServer: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    for (let cycle = 0; cycle < 2; cycle += 1) {
+      const server = await createBrokerIpcServer(dependencies);
+      await server.close();
+    }
+    const beforeNames = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')).sort();
+    assert.equal(beforeNames.length, 2);
+    const beforeIdentities = await Promise.all(beforeNames.map(async (name) => {
+      const metadata = await lstat(join(stateDirectory, name));
+      return `${metadata.dev}:${metadata.ino}`;
+    }));
+    endpointProofs = 0;
+
+    const third = await createBrokerIpcServer(dependencies).then(
+      (server) => ({ kind: 'created' as const, server }),
+      (error: Error) => ({ kind: 'rejected' as const, error }),
+    );
+    if (third.kind === 'created') {
+      unexpectedServer = third.server;
+      await unexpectedServer.close();
+      unexpectedServer = null;
+    }
+
+    assert.equal(third.kind, 'rejected');
+    if (third.kind === 'rejected') assert.match(third.error.message, /REPOSITORY_BUSY/);
+    assert.equal(endpointProofs, 0);
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+    const afterNames = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')).sort();
+    assert.deepEqual(afterNames, beforeNames);
+    const afterIdentities = await Promise.all(afterNames.map(async (name) => {
+      const metadata = await lstat(join(stateDirectory, name));
+      return `${metadata.dev}:${metadata.ino}`;
+    }));
+    assert.deepEqual(afterIdentities, beforeIdentities);
+    assert.deepEqual(await linuxChildPidsForTest(), childPidsBefore);
+  } finally {
+    await unexpectedServer?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux quarantine override is test-only and cannot exceed the production ceiling', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-quarantine-override-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  let coordinatorEntries = 0;
+  const delegate = createInProcessReclamationCoordinatorV4('quarantine-override-delegate');
+  const coordinator: ReclamationCoordinatorV4 = {
+    certification: { kind: 'in-process-test', identity: 'quarantine-override-coordinator' },
+    runExclusive: (key, operation) => delegate.runExclusive(key, async () => {
+      coordinatorEntries += 1;
+      return operation();
+    }),
+  };
+  const common = {
+    daemon: minimalDaemonForIpcTest(),
+    stateDirectory,
+    endpoint,
+    platform: 'linux' as const,
+    platformVerifier: {
+      verifyOwnerOnlyPath: async ({ expected_owner_identity }: { expected_owner_identity: string }) => ({ owner_identity: expected_owner_identity }),
+      verifyPeer: async ({ expected_owner_identity }: { expected_owner_identity: string }) => ({ owner_identity: expected_owner_identity }),
+    },
+    endpointCoordinator: coordinator,
+    allowInProcessCoordinatorForTests: true,
+    unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+  };
+  try {
+    await assert.rejects(
+      () => createBrokerIpcServer({ ...common, unixQuarantineLimitForTests: 2 }),
+      /AUTHENTICATION_FAILED/,
+    );
+    await assert.rejects(
+      () => createBrokerIpcServer({
+        ...common,
+        allowInProcessPhysicalPathBackendForTests: true,
+        unixQuarantineLimitForTests: 65,
+      }),
+      /AUTHENTICATION_FAILED/,
+    );
+    assert.equal(coordinatorEntries, 0);
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('production Linux quarantine admission rejects a hostile matching file without deleting it', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-hostile-quarantine-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const hostileName = `.broker.sock.quarantine-999-${'a'.repeat(32)}`;
+  const hostilePath = join(stateDirectory, hostileName);
+  await writeFile(hostilePath, 'hostile quarantine bytes', { mode: 0o600 });
+  let endpointProofs = 0;
+  let unexpectedServer: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    const result = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier: {
+        verifyOwnerOnlyPath: async ({ kind, expected_owner_identity }) => {
+          if (kind === 'endpoint') endpointProofs += 1;
+          return { owner_identity: expected_owner_identity };
+        },
+        verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+      },
+      endpointCoordinator: createInProcessReclamationCoordinatorV4('hostile-quarantine'),
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+      allowInProcessPhysicalPathBackendForTests: true,
+      unixQuarantineLimitForTests: 2,
+    }).then(
+      (server) => ({ kind: 'created' as const, server }),
+      (error: Error) => ({ kind: 'rejected' as const, error }),
+    );
+    if (result.kind === 'created') {
+      unexpectedServer = result.server;
+      await unexpectedServer.close();
+      unexpectedServer = null;
+    }
+
+    assert.equal(result.kind, 'rejected');
+    if (result.kind === 'rejected') assert.match(result.error.message, /AUTHENTICATION_FAILED/);
+    assert.equal(endpointProofs, 0);
+    assert.equal(await readFile(hostilePath, 'utf8'), 'hostile quarantine bytes');
+    assert.deepEqual((await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-')), [hostileName]);
+  } finally {
+    await unexpectedServer?.close().catch(() => undefined);
     await rm(stateDirectory, { recursive: true, force: true });
   }
 });
