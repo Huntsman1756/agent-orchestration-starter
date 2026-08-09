@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 
 interface ProcessResultForTest {
   readonly code: number | null;
@@ -16,11 +17,12 @@ function runForPackageTest(
   executable: string,
   args: readonly string[],
   cwd = process.cwd(),
+  environment: NodeJS.ProcessEnv = process.env,
 ): Promise<ProcessResultForTest> {
   return new Promise<ProcessResultForTest>((resolvePromise, reject) => {
     const child = spawn(executable, [...args], {
       cwd,
-      env: { ...process.env },
+      env: { ...environment },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];
@@ -35,6 +37,15 @@ function runForPackageTest(
       stderr: Buffer.concat(stderr).toString('utf8'),
     }));
   });
+}
+
+async function waitForPathForTest(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await lstat(path).catch(() => null) !== null) return;
+    await delay(10);
+  }
+  throw new Error(`timed out waiting for test path: ${path}`);
 }
 
 function npmPackCommandForTest(args: readonly string[]): { executable: string; args: readonly string[] } {
@@ -156,6 +167,67 @@ test('Linux prepack recovers interrupted native cleanup holders before creating 
     assert.equal(listed.stdout.includes('foreign-helper'), false);
     await assert.rejects(() => lstat(legacyHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
     await assert.rejects(() => lstat(currentHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('Linux prepack retains a same-device holder substitution and emits no tarball', {
+  skip: process.platform !== 'linux' || process.env.AO_NATIVE_PACKAGE_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-native-substitution-'));
+  const packageDirectory = join(fixtureRoot, 'packed');
+  const barrier = join(fixtureRoot, 'cleanup-barrier');
+  try {
+    const project = await createDisposablePackageProjectForTest(fixtureRoot);
+    const legacyHolder = join(project, 'dist', '.native-clean-ABC123');
+    const preservedOriginal = join(project, 'dist', 'preserved-original-holder');
+    const unrelated = join(project, 'dist', 'unrelated.txt');
+    const originalMarker = join(legacyHolder, 'native', 'linux-arm64', 'original-helper');
+    await mkdir(join(legacyHolder, 'native', 'linux-arm64'), { recursive: true });
+    await writeFile(originalMarker, 'original holder must survive\n');
+    await writeFile(unrelated, 'unrelated name must survive\n');
+    await writeFile(join(project, 'src', 'index.ts'), 'export const substitutionFixture = true;\n');
+    await mkdir(packageDirectory);
+    const originalMetadata = await lstat(legacyHolder);
+
+    const command = npmPackCommandForTest(['--pack-destination', packageDirectory]);
+    const packedPromise = runForPackageTest(command.executable, command.args, project, {
+      ...process.env,
+      AO_NATIVE_CLEANUP_BARRIER_FOR_TESTS: barrier,
+    });
+    await waitForPathForTest(`${barrier}.ready`);
+    await rename(legacyHolder, preservedOriginal);
+    await mkdir(join(legacyHolder, 'native', 'linux-arm64'), { recursive: true });
+    const substituteMarker = join(legacyHolder, 'native', 'linux-arm64', 'substitute-helper');
+    await writeFile(substituteMarker, 'substitute holder must survive\n');
+    const substituteMetadata = await lstat(legacyHolder);
+    assert.equal(substituteMetadata.dev, originalMetadata.dev);
+    assert.notEqual(substituteMetadata.ino, originalMetadata.ino);
+    await writeFile(`${barrier}.release`, 'release\n');
+
+    const packed = await packedPromise;
+    assert.notEqual(packed.code, 0, `${packed.stdout}\n${packed.stderr}`);
+    assert.deepEqual((await readdir(packageDirectory)).filter((name) => name.endsWith('.tgz')), []);
+    const preservedMetadata = await lstat(preservedOriginal);
+    assert.equal(preservedMetadata.dev, originalMetadata.dev);
+    assert.equal(preservedMetadata.ino, originalMetadata.ino);
+    assert.equal(await readFile(join(preservedOriginal, 'native', 'linux-arm64', 'original-helper'), 'utf8'), 'original holder must survive\n');
+    assert.equal(await readFile(unrelated, 'utf8'), 'unrelated name must survive\n');
+    await assert.rejects(() => lstat(legacyHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+
+    const cleanupNamespace = join(project, '.agent-orchestration-native-clean');
+    const retained = await Promise.all((await readdir(cleanupNamespace)).map(async (name) => {
+      const moved = join(cleanupNamespace, name, 'detached');
+      const metadata = await lstat(moved).catch(() => null);
+      return metadata?.dev === substituteMetadata.dev && metadata.ino === substituteMetadata.ino ? moved : null;
+    }));
+    const retainedSubstitute = retained.filter((path): path is string => path !== null);
+    assert.equal(retainedSubstitute.length, 1);
+    assert.equal(
+      await readFile(join(retainedSubstitute[0]!, 'native', 'linux-arm64', 'substitute-helper'), 'utf8'),
+      'substitute holder must survive\n',
+    );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }

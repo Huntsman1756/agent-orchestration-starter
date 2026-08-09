@@ -23,6 +23,7 @@ if (
 }
 const forPackage = argumentsAfterScript.includes('--for-package');
 const cleanOnly = argumentsAfterScript.includes('--clean-only');
+let cleanupBarrierUsedForTests = false;
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
@@ -46,6 +47,12 @@ function requireSameFilesystem(sourceMetadata, cleanupMetadata) {
   }
 }
 
+function requireSameObjectIdentity(actualMetadata, expectedMetadata) {
+  if (actualMetadata.dev !== expectedMetadata.dev || actualMetadata.ino !== expectedMetadata.ino) {
+    throw new Error('Native cleanup object identity changed');
+  }
+}
+
 async function createCleanupNamespace() {
   const projectMetadata = requirePhysicalDirectory(await loadMetadataOrNull(projectRoot));
   await mkdir(cleanupNamespace, { mode: 0o700 }).catch((error) => {
@@ -54,6 +61,29 @@ async function createCleanupNamespace() {
   const cleanupMetadata = requirePhysicalDirectory(await loadMetadataOrNull(cleanupNamespace));
   requireSameFilesystem(projectMetadata, cleanupMetadata);
   return cleanupMetadata;
+}
+
+async function reproveCleanupNamespace(cleanupMetadata) {
+  const reproved = requirePhysicalDirectory(await loadMetadataOrNull(cleanupNamespace));
+  requireSameObjectIdentity(reproved, cleanupMetadata);
+  return reproved;
+}
+
+async function waitAtCleanupBarrierForTests() {
+  const barrier = process.env.AO_NATIVE_CLEANUP_BARRIER_FOR_TESTS;
+  if (
+    process.env.AO_NATIVE_PACKAGE_TEST !== '1'
+    || typeof barrier !== 'string'
+    || barrier.length === 0
+    || cleanupBarrierUsedForTests
+  ) return;
+  cleanupBarrierUsedForTests = true;
+  await writeFile(`${barrier}.ready`, 'ready\n', { flag: 'wx' });
+  const deadline = Date.now() + 10_000;
+  while (await loadMetadataOrNull(`${barrier}.release`) === null) {
+    if (Date.now() >= deadline) throw new Error('Native cleanup test barrier timed out');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function validateCleanupHolder(path, allowedChild, cleanupMetadata) {
@@ -70,19 +100,35 @@ async function validateCleanupHolder(path, allowedChild, cleanupMetadata) {
   return metadata;
 }
 
-async function detachAndRemove(source, sourceMetadata, cleanupMetadata) {
+async function validateMovedSource(path, sourceMetadata, cleanupMetadata, allowedChild) {
+  const movedMetadata = allowedChild === null
+    ? requirePhysicalDirectory(await loadMetadataOrNull(path))
+    : await validateCleanupHolder(path, allowedChild, cleanupMetadata);
+  requireSameObjectIdentity(movedMetadata, sourceMetadata);
+  return movedMetadata;
+}
+
+async function detachAndRemove(source, sourceMetadata, cleanupMetadata, allowedChild) {
   requireSameFilesystem(sourceMetadata, cleanupMetadata);
+  await reproveCleanupNamespace(cleanupMetadata);
   const reaper = await mkdtemp(join(cleanupNamespace, 'holder-'));
-  try {
-    await rename(source, join(reaper, 'detached'));
-  } catch (error) {
-    await rmdir(reaper).catch(() => undefined);
-    throw error;
-  }
+  const reaperMetadata = requirePhysicalDirectory(await loadMetadataOrNull(reaper));
+  requireSameFilesystem(reaperMetadata, cleanupMetadata);
+  await reproveCleanupNamespace(cleanupMetadata);
+  await waitAtCleanupBarrierForTests();
+  await reproveCleanupNamespace(cleanupMetadata);
+  const moved = join(reaper, 'detached');
+  await rename(source, moved);
+  await validateMovedSource(moved, sourceMetadata, cleanupMetadata, allowedChild);
+  await reproveCleanupNamespace(cleanupMetadata);
+  const reprovedReaper = requirePhysicalDirectory(await loadMetadataOrNull(reaper));
+  requireSameObjectIdentity(reprovedReaper, reaperMetadata);
+  await validateMovedSource(moved, sourceMetadata, cleanupMetadata, allowedChild);
   await rm(reaper, { recursive: true, force: true });
 }
 
 async function auditCurrentCleanupHolders(cleanupMetadata) {
+  await reproveCleanupNamespace(cleanupMetadata);
   const names = (await readdir(cleanupNamespace)).sort();
   for (const name of names) {
     if (!cleanupHolderNamePattern.test(name)) {
@@ -90,8 +136,9 @@ async function auditCurrentCleanupHolders(cleanupMetadata) {
     }
     const path = join(cleanupNamespace, name);
     const metadata = await validateCleanupHolder(path, 'detached', cleanupMetadata);
-    await detachAndRemove(path, metadata, cleanupMetadata);
+    await detachAndRemove(path, metadata, cleanupMetadata, 'detached');
   }
+  await reproveCleanupNamespace(cleanupMetadata);
   if ((await readdir(cleanupNamespace)).length !== 0) {
     throw new Error('Native cleanup namespace changed during audit');
   }
@@ -109,7 +156,7 @@ async function auditLegacyCleanupHolders(cleanupMetadata) {
     }
     const path = join(distRoot, name);
     const metadata = await validateCleanupHolder(path, 'native', cleanupMetadata);
-    await detachAndRemove(path, metadata, cleanupMetadata);
+    await detachAndRemove(path, metadata, cleanupMetadata, 'native');
   }
 }
 
@@ -121,12 +168,14 @@ async function cleanNativeRoot() {
   const nativeMetadata = await loadMetadataOrNull(nativeRoot);
   if (nativeMetadata !== null) {
     requirePhysicalDirectory(nativeMetadata);
-    await detachAndRemove(nativeRoot, nativeMetadata, cleanupMetadata);
+    await detachAndRemove(nativeRoot, nativeMetadata, cleanupMetadata, null);
   }
 
+  await reproveCleanupNamespace(cleanupMetadata);
   if ((await readdir(cleanupNamespace)).length !== 0) {
     throw new Error('Native cleanup namespace changed during cleanup');
   }
+  await reproveCleanupNamespace(cleanupMetadata);
   await rmdir(cleanupNamespace);
 }
 
