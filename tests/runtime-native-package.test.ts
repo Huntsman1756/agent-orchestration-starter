@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -12,10 +12,14 @@ interface ProcessResultForTest {
   readonly stderr: string;
 }
 
-function runForPackageTest(executable: string, args: readonly string[]): Promise<ProcessResultForTest> {
+function runForPackageTest(
+  executable: string,
+  args: readonly string[],
+  cwd = process.cwd(),
+): Promise<ProcessResultForTest> {
   return new Promise<ProcessResultForTest>((resolvePromise, reject) => {
     const child = spawn(executable, [...args], {
-      cwd: process.cwd(),
+      cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -38,6 +42,85 @@ function npmPackCommandForTest(args: readonly string[]): { executable: string; a
   if (typeof npmCli !== 'string') throw new Error('npm_execpath must identify the npm CLI under the test runner');
   return { executable: process.execPath, args: [npmCli, 'pack', ...args] };
 }
+
+async function createDisposablePackageProjectForTest(container: string): Promise<string> {
+  const project = join(container, 'project');
+  await mkdir(join(project, 'scripts'), { recursive: true });
+  await mkdir(join(project, 'src'), { recursive: true });
+  await copyFile(join(process.cwd(), 'package.json'), join(project, 'package.json'));
+  await copyFile(join(process.cwd(), 'tsconfig.json'), join(project, 'tsconfig.json'));
+  await copyFile(
+    join(process.cwd(), 'scripts', 'build-linux-native-helper.mjs'),
+    join(project, 'scripts', 'build-linux-native-helper.mjs'),
+  );
+  return project;
+}
+
+test('prepack cleans stale native output before a real TypeScript compilation failure', {
+  skip: process.env.AO_NATIVE_PACKAGE_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-prepack-order-'));
+  const packageDirectory = join(fixtureRoot, 'packed');
+  try {
+    const project = await createDisposablePackageProjectForTest(fixtureRoot);
+    const staleNativeRoot = join(project, 'dist', 'native');
+    const staleHelper = join(staleNativeRoot, 'linux-foreign', 'stale-helper');
+    await mkdir(join(staleNativeRoot, 'linux-foreign'), { recursive: true });
+    await writeFile(staleHelper, 'stale native output\n');
+    await writeFile(
+      join(project, 'src', 'forced-compilation-error.ts'),
+      'const mustBeNumber: number = "not a number";\nexport { mustBeNumber };\n',
+    );
+    await mkdir(packageDirectory);
+
+    const command = npmPackCommandForTest(['--pack-destination', packageDirectory]);
+    const packed = await runForPackageTest(command.executable, command.args, project);
+    assert.notEqual(packed.code, 0, `${packed.stdout}\n${packed.stderr}`);
+    assert.match(`${packed.stdout}\n${packed.stderr}`, /TS2322/);
+    await assert.rejects(() => lstat(staleNativeRoot), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+    assert.deepEqual((await readdir(packageDirectory)).filter((name) => name.endsWith('.tgz')), []);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('clean-only refuses a bind-mounted native root without traversing external contents', {
+  skip: process.platform !== 'linux' || process.env.AO_PRIVILEGED_BIND_MOUNT_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-native-bind-clean-'));
+  const externalNative = join(fixtureRoot, 'external-native');
+  const marker = join(externalNative, 'external-marker.txt');
+  let mounted = false;
+  try {
+    const project = await createDisposablePackageProjectForTest(fixtureRoot);
+    const nativeRoot = join(project, 'dist', 'native');
+    await mkdir(nativeRoot, { recursive: true });
+    await mkdir(externalNative);
+    await writeFile(marker, 'external marker must survive\n');
+    const markerBefore = await lstat(marker);
+    const mountedResult = await runForPackageTest('/usr/bin/mount', ['--bind', externalNative, nativeRoot], project);
+    assert.equal(mountedResult.code, 0, mountedResult.stderr);
+    mounted = true;
+
+    const cleaned = await runForPackageTest(
+      process.execPath,
+      [join(project, 'scripts', 'build-linux-native-helper.mjs'), '--clean-only'],
+      project,
+    );
+    assert.notEqual(cleaned.code, 0, `${cleaned.stdout}\n${cleaned.stderr}`);
+    assert.match(`${cleaned.stdout}\n${cleaned.stderr}`, /EBUSY|resource busy/i);
+    const markerAfter = await lstat(marker);
+    assert.equal(markerAfter.dev, markerBefore.dev);
+    assert.equal(markerAfter.ino, markerBefore.ino);
+    assert.equal(await readFile(marker, 'utf8'), 'external marker must survive\n');
+  } finally {
+    if (mounted) {
+      const unmounted = await runForPackageTest('/usr/bin/umount', [join(fixtureRoot, 'project', 'dist', 'native')]);
+      if (unmounted.code !== 0) throw new Error(`privileged test unmount failed: ${unmounted.stderr}`);
+    }
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
 
 test('prepack fails closed on an unsupported build platform', {
   skip: process.env.AO_NATIVE_PACKAGE_TEST !== '1' || process.platform === 'linux',

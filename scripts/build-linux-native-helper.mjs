@@ -1,22 +1,49 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourcePath = join(projectRoot, 'native', 'linux', 'renameat2-helper.c');
-const nativeRoot = join(projectRoot, 'dist', 'native');
+const distRoot = join(projectRoot, 'dist');
+const nativeRoot = join(distRoot, 'native');
 const compilerPath = '/usr/bin/cc';
 const helperName = 'agent-orchestration-renameat2';
 const supportedTargets = new Set(['linux-x64']);
 const argumentsAfterScript = process.argv.slice(2);
-if (argumentsAfterScript.some((argument) => argument !== '--for-package')) {
+if (
+  argumentsAfterScript.length > 1
+  || argumentsAfterScript.some((argument) => argument !== '--for-package' && argument !== '--clean-only')
+) {
   throw new Error('Unknown native helper build argument');
 }
 const forPackage = argumentsAfterScript.includes('--for-package');
+const cleanOnly = argumentsAfterScript.includes('--clean-only');
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+async function cleanNativeRoot() {
+  const nativeMetadata = await lstat(nativeRoot).catch((error) => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (nativeMetadata === null) return;
+
+  const distMetadata = await lstat(distRoot);
+  if (!distMetadata.isDirectory() || distMetadata.isSymbolicLink()) {
+    throw new Error('Native build output parent is not a physical directory');
+  }
+
+  const detachedRoot = await mkdtemp(join(distRoot, '.native-clean-'));
+  try {
+    await rename(nativeRoot, join(detachedRoot, 'native'));
+  } catch (error) {
+    await rm(detachedRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+  await rm(detachedRoot, { recursive: true, force: true });
+}
 
 async function verifyExactInventory(outputDirectory, helperPath, manifestPath) {
   const rootEntries = (await readdir(nativeRoot)).sort();
@@ -41,7 +68,8 @@ async function verifyExactInventory(outputDirectory, helperPath, manifestPath) {
 }
 
 async function buildLinuxNativeHelper() {
-  await rm(nativeRoot, { recursive: true, force: true });
+  await cleanNativeRoot();
+  if (cleanOnly) return;
   const target = `${process.platform}-${process.arch}`;
   if (!supportedTargets.has(target)) {
     if (forPackage || process.platform === 'linux') {

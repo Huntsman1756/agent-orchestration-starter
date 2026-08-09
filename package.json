@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run build:native",
     "build:native": "node scripts/build-linux-native-helper.mjs",
-    "prepack": "tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package",
+    "prepack": "node scripts/build-linux-native-helper.mjs --clean-only && tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package",
     "pretest": "npm run build:native",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
