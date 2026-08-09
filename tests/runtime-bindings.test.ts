@@ -7,12 +7,12 @@ import { validRuntimeProfile } from './runtime-contracts.test.js';
 
 test('resolves the economy executor binding from the profile', () => {
   const profile = validRuntimeProfile();
-  profile.bindings.executor.model = 'MiMo-V2.5';
+  profile.bindings.executor.model = 'economy-coder';
 
   const binding = resolveBinding({ profile: profile as RuntimeProfileV4, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' });
 
   assert.equal(binding.role, 'executor');
-  assert.equal(binding.binding.model, 'MiMo-V2.5');
+  assert.equal(binding.binding.model, 'economy-coder');
 });
 
 test('rejects a route whose selected binding cannot process private source', () => {

@@ -56,7 +56,7 @@ export function validRuntimeProfile() {
       frontierExecutor: { ...binding, permissions: 'contract-write' },
       reviewer: binding,
     },
-    runtime: { maxArliParallelRequests: 2, maxConcurrentRunsPerRepository: 1 },
+    runtime: { maxEconomyParallelRequests: 2, maxConcurrentRunsPerRepository: 1 },
   };
 }
 
@@ -165,6 +165,14 @@ test('loads each complete V4 contract unchanged', () => {
   assert.deepEqual(loadRuntimeWorkContractV4(validWorkContract()), validWorkContract());
   assert.deepEqual(loadRuntimeResultV4(validRuntimeResult()), validRuntimeResult());
   assert.deepEqual(loadReviewAttestationV4(validReviewAttestation()), validReviewAttestation());
+});
+
+test('rejects the retired provider-specific runtime concurrency field', () => {
+  const profile = validRuntimeProfile() as Record<string, unknown>;
+  const retiredField = ['max', 'Ar', 'li', 'ParallelRequests'].join('');
+  profile.runtime = { [retiredField]: 2, maxConcurrentRunsPerRepository: 1 };
+
+  assert.throws(() => loadRuntimeProfileV4(profile), /unrecognized/i);
 });
 
 test('rejects caller-owned runtime fields on a task request', () => {

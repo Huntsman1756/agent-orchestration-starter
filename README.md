@@ -64,6 +64,8 @@ harnessProviders:
 
 El ejecutor económico debe ser explícito; nunca hereda accidentalmente el modelo del orquestador. El compilador crea además un `frontier-executor` writable a partir de la asignación *frontier*. El revisor no puede reutilizar la combinación proveedor/modelo del ejecutor económico. Hermes requiere que orquestador y revisor sean el mismo padre *frontier*, porque su delegación no representa un tercer agente independiente.
 
+`profiles/nan-opencode.example.yaml` muestra la separación prevista para NAN: Sol permanece como orquestador, ejecutor *frontier* y revisor mediante Codex; `qwen3.6` y `gemma4` quedan como ejecutores OpenCode reemplazables. El ejemplo no contiene endpoint ni credenciales y no afirma que la API viva haya sido certificada. El runtime usa `maxEconomyParallelRequests`, por lo que cambiar otra vez de proveedor no exige modificar contratos estables.
+
 ## Actualizaciones seguras
 
 `init` y `render` son idempotentes. Un archivo existente no gestionado produce conflicto. Un archivo gestionado pero modificado localmente también queda intacto. Para aceptar la sustitución de un único archivo, usa `--force ruta/relativa/exacta`; no existe un borrado o sobrescritura global silenciosa.

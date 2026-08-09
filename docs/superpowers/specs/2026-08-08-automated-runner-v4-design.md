@@ -6,7 +6,7 @@
 
 ## 1. Objective
 
-V4 turns the existing compiler and offline evidence system into an automatic, fail-closed coding workflow. A user asks for a normal coding task in Codex. A Sol orchestrator classifies and contracts the work, a local typed broker executes it in an isolated Git worktree, OpenCode with ArliAI performs eligible implementation work, deterministic gates run, and an independent Sol reviewer accepts or rejects the resulting evidence. The broker creates a local commit on a task branch only after every required gate passes.
+V4 turns the existing compiler and offline evidence system into an automatic, fail-closed coding workflow. A user asks for a normal coding task in Codex. A Sol orchestrator classifies and contracts the work, a local typed broker executes it in an isolated Git worktree, OpenCode with the profile-selected economy provider performs eligible implementation work, deterministic gates run, and an independent Sol reviewer accepts or rejects the resulting evidence. The broker creates a local commit on a task branch only after every required gate passes.
 
 The intended default path is:
 
@@ -14,7 +14,7 @@ The intended default path is:
 Codex/Sol orchestrator
   -> typed broker
   -> isolated worktree
-  -> OpenCode/MiMo
+  -> OpenCode/qwen3.6
   -> deterministic validation
   -> fresh Codex/Sol reviewer
   -> broker commit on codex/auto/<run-id>
@@ -47,12 +47,12 @@ V4 includes:
 - frozen base SHA, contract hash, diff hash, and final tree hash;
 - mandatory OS-enforced process sandboxes for executors, validation, and review;
 - broker-built executor capsules that prevent harness configuration discovery from repositories;
-- headless OpenCode execution using explicit ArliAI models;
+- headless OpenCode execution using explicit profile bindings;
 - capability probes for executable model bindings;
 - fail-closed OpenCode permissions generated from project policy;
 - deterministic validation with exact command allowlists;
 - a fresh read-only Sol review session with a bounded evidence envelope;
-- a bounded MiMo repair and GLM-4.7 escalation state machine;
+- a bounded qwen3.6 repair and gemma4 escalation state machine;
 - broker-owned final commit;
 - append-only runtime artifacts and V3 telemetry export.
 
@@ -62,7 +62,7 @@ V4 excludes:
 - production databases, production MCPs, real customer or fiscal data, and project secrets;
 - arbitrary shell, Git, or filesystem tools exposed over MCP;
 - Hermes production integration;
-- DeepSeek, Qwen, Gemma, or GLM-4.6 in the default critical path;
+- additional economy models in the default critical path;
 - automatic modification of an unmanaged existing `AGENTS.md`;
 - general-purpose workflow scheduling, queues, or multi-repository fan-out;
 - automatic routing promotion based on one run.
@@ -135,7 +135,7 @@ Harness is part of each runtime role binding. Stable policy continues to name ca
 
 ```yaml
 schemaVersion: 4
-id: arliai-opencode-pro
+id: nan-opencode-pro
 bindings:
   orchestrator:
     harness: codex
@@ -148,8 +148,8 @@ bindings:
 
   executor:
     harness: opencode
-    provider: arliai
-    model: MiMo-V2.5
+    provider: nan
+    model: qwen3.6
     capability: economy-coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
@@ -157,8 +157,8 @@ bindings:
 
   escalationExecutor:
     harness: opencode
-    provider: arliai
-    model: GLM-4.7
+    provider: nan
+    model: gemma4
     capability: strong-economy-coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
@@ -183,11 +183,11 @@ bindings:
     permissions: read-only
 
 runtime:
-  maxArliParallelRequests: 2
+  maxEconomyParallelRequests: 2
   maxConcurrentRunsPerRepository: 1
 ```
 
-Compilation must fail when a binding is unsupported by its harness. A profile cannot silently turn an ArliAI model into a Codex custom agent or place a Sol subscription model in OpenCode. Provider credentials and global provider definitions remain outside the repository.
+Compilation must fail when a binding is unsupported by its harness. A profile cannot silently turn a NAN model into a Codex custom agent or place a Sol subscription model in OpenCode. Provider credentials and global provider definitions remain outside the repository.
 
 ## 6. Capability registry and probes
 
@@ -226,8 +226,8 @@ Model descriptions do not satisfy a capability requirement. `doctor --probe-runt
 
 Initial required probes are:
 
-- MiMo: structured result, bounded edit, multi-step file-tool use, and one repair from broker-supplied failed-validation evidence without invoking a shell;
-- GLM-4.7: the same executor capabilities;
+- qwen3.6: structured result, bounded edit, multi-step file-tool use, and one repair from broker-supplied failed-validation evidence without invoking a shell;
+- gemma4: the same executor capabilities;
 - Sol reviewer: strict review-attestation output and read-only behavior;
 - Sol frontier executor: bounded capsule edit, command containment, and credential separation.
 
@@ -302,7 +302,7 @@ contract_hash
 
 The repository policy supplies data scope and source sensitivity; neither is caller- or model-selectable. V4 accepts only `SOURCE_CODE_ONLY`. `PUBLIC` means the repository policy permits the selected source to leave the host under the configured provider terms. `PRIVATE` means the source is non-public even when it contains no real-world records or secrets. A binding may execute only when both effective dimensions appear in its allowlists.
 
-The initial ArliAI economy bindings accept `SOURCE_CODE_ONLY + PUBLIC` only. Sending private source to ArliAI requires a future explicit profile opt-in plus policy authorization and new probe evidence. A private repository therefore routes to a compatible frontier binding when policy allows it, or fails with `SOURCE_SENSITIVITY_UNSUPPORTED`; it is never silently reclassified as public.
+The initial economy bindings accept `SOURCE_CODE_ONLY + PUBLIC` only. Sending private source to an economy provider requires a future explicit profile opt-in plus policy authorization and new probe evidence. A private repository therefore routes to a compatible frontier binding when policy allows it, or fails with `SOURCE_SENSITIVITY_UNSUPPORTED`; it is never silently reclassified as public.
 
 The repository policy may mark paths, task classes, validations, risk levels, or source sensitivities as `frontier_only`. Policy resolution is monotonic: the daemon may elevate `AUTO` or `ECONOMY` to `FRONTIER`, but can never downgrade a caller-requested or policy-required frontier route. The model cannot select its effective route, data scope, or source sensitivity.
 
@@ -468,7 +468,7 @@ edit: allow only exact paths and operations in allowed_changes
 
 All current and future tools not explicitly opened remain denied, including `bash`, `task`, `skill`, `lsp`, `question`, `webfetch`, `websearch`, MCP tools, and external directories. The worker receives no Git command capability; diffs, status, and prior findings are supplied by the broker. `--auto` may be used only with this deny-all policy and never changes an explicit deny.
 
-The broker-owned OpenCode configuration sets `share: "disabled"`, `autoupdate: false`, and `enabled_providers: ["arliai"]`. The launch environment also disables auto-update, default plugins, LSP downloads, model-list fetching, and Claude compatibility using flags supported by the pinned harness. It points `OPENCODE_CONFIG_DIR` at immutable capsule configuration and uses `--pure`. Capability probes must prove the effective configuration, exact provider allowlist, and absence of project/global/managed config, plugins, custom tools, agents, rules, and skills; unrecognized or ineffective isolation controls invalidate the binding.
+The broker-owned OpenCode configuration sets `share: "disabled"`, `autoupdate: false`, and `enabled_providers: ["nan"]`. The launch environment also disables auto-update, default plugins, LSP downloads, model-list fetching, and Claude compatibility using flags supported by the pinned harness. It points `OPENCODE_CONFIG_DIR` at immutable capsule configuration and uses `--pure`. Capability probes must prove the effective configuration, exact provider allowlist, and absence of project/global/managed config, plugins, custom tools, agents, rules, and skills; unrecognized or ineffective isolation controls invalidate the binding.
 
 Always prohibited to the worker:
 
@@ -479,7 +479,7 @@ Always prohibited to the worker:
 - project `.env` files, credential stores, production fixtures, and real data;
 - modifying broker state, attestations, inventory, or runtime policy.
 
-OpenCode runs inside an `EXECUTOR_NETWORKED` process sandbox whose filesystem view is the `ExecutorCapsule`. It cannot see the active repository, original worktree path, host credential stores, broker state, global/managed OpenCode directories, or arbitrary host files. It reaches only a per-run broker-owned ArliAI gateway on an internal sandbox network. The gateway receives the real ArliAI credential through the platform credential adapter, injects authentication when it creates the outbound TLS request, and never mounts repository or capsule content. OpenCode receives no ArliAI credential in configuration, environment, files, argv, or inherited process state; a fixed non-secret local gateway token may be used only if the pinned harness requires an API-key-shaped value. The gateway strips any inbound authorization, permits only the configured ArliAI origin plus approved methods and API paths, rejects redirects and alternate destinations, and records metadata without bodies. If this separation cannot be demonstrated on the host, the binding is unavailable.
+OpenCode runs inside an `EXECUTOR_NETWORKED` process sandbox whose filesystem view is the `ExecutorCapsule`. It cannot see the active repository, original worktree path, host credential stores, broker state, global/managed OpenCode directories, or arbitrary host files. It reaches only a per-run broker-owned provider gateway on an internal sandbox network. The gateway receives the real provider credential through the platform credential adapter, injects authentication when it creates the outbound TLS request, and never mounts repository or capsule content. OpenCode receives no provider credential in configuration, environment, files, argv, or inherited process state; a fixed non-secret local gateway token may be used only if the pinned harness requires an API-key-shaped value. The gateway strips any inbound authorization, permits only the profile-approved origin, methods, and API paths, rejects redirects and alternate destinations, and records metadata without bodies. If this separation cannot be demonstrated on the host, the binding is unavailable.
 
 Repository-controlled lifecycle hooks, plugins, language servers, package installers, shells, and binaries never run in the executor sandbox. All code execution happens later through registered validation in the credential-free sandbox.
 
@@ -489,36 +489,36 @@ The initial route is deliberately small:
 
 ```text
 eligible normal task
-  -> MiMo implementation
+  -> qwen3.6 implementation
   -> deterministic gates
   -> Sol review 1
      -> ACCEPT: finalize
-     -> REJECT: MiMo repair 1
+     -> REJECT: qwen3.6 repair 1
         -> deterministic gates
         -> Sol review 2
            -> ACCEPT: finalize
-           -> REJECT: GLM-4.7 final execution
+           -> REJECT: gemma4 final execution
               -> deterministic gates
               -> Sol final review
                  -> ACCEPT: finalize
                  -> REJECT: fail
 ```
 
-High-risk, restricted, security, architecture, ambiguous debugging, and cross-cutting work routes directly to the Sol frontier executor in an isolated worktree. The complete initial frontier state machine is exactly `frontier execution -> deterministic validation -> fresh Sol review -> ACCEPT and finalize | terminal REJECT`. V4 performs no automatic frontier repair after rejection. It never uses MiMo merely to satisfy an "economy first" rule.
+High-risk, restricted, security, architecture, ambiguous debugging, and cross-cutting work routes directly to the Sol frontier executor in an isolated worktree. The complete initial frontier state machine is exactly `frontier execution -> deterministic validation -> fresh Sol review -> ACCEPT and finalize | terminal REJECT`. V4 performs no automatic frontier repair after rejection. It never uses qwen3.6 merely to satisfy an "economy first" rule.
 
 The frontier executor uses the same `ExecutorCapsule` layout under a separate `FRONTIER_NETWORKED` sandbox profile. Codex starts at the capsule root with user/project config and automatic rules disabled; `repo/` is its only editable source mount, and approved project instructions arrive only through the broker-owned bundle. The trusted Codex harness may use saved CLI authentication and reach only the configured OpenAI endpoint; model-invoked commands receive no credential and have no network. Any command capability is further restricted by repository policy and the same exact allowed-change contract. Lack of capsule isolation, credential separation, or OS containment makes the frontier binding unavailable.
 
 Normative ceilings:
 
-- at most three executor attempts for the MiMo/GLM route;
-- exactly one MiMo repair after the first rejected review;
-- GLM-4.7 is legal only after the second rejected review and an explicit typed escalation event;
+- at most three executor attempts for the qwen3.6/gemma4 route;
+- exactly one qwen3.6 repair after the first rejected review;
+- gemma4 is legal only after the second rejected review and an explicit typed escalation event;
 - no provider fallback on authentication, policy, invalid output, grounding, validation, or unknown failures;
 - availability failure may retry the same binding within a bounded transport retry budget, but cannot change model silently;
 - failed deterministic validation prevents review acceptance and commit;
 - a final rejection terminates the run.
 
-DeepSeek, Qwen, Gemma, and GLM-4.6 remain opt-in experimental bindings and cannot enter this state machine without a future versioned policy and evidence gate.
+Additional economy models remain opt-in experimental bindings and cannot enter this state machine without a future versioned policy and evidence gate.
 
 ## 11. Independent Sol review
 
@@ -559,7 +559,7 @@ Validation commands are registered as exact argv arrays, working directories, ti
 
 Every validation runs in a `VALIDATION_UNTRUSTED` process sandbox with:
 
-- no OpenAI, ArliAI, Git, cloud, package-registry, SSH, or user credentials;
+- no OpenAI, economy-provider, Git, cloud, package-registry, SSH, or user credentials;
 - synthetic empty `HOME`, `USERPROFILE`, config, cache, and temp roots;
 - only the task worktree and dedicated scratch/output paths mounted;
 - outbound and inbound network denied at the OS boundary;
@@ -708,7 +708,7 @@ contracts/
   review-attestation-v4.schema.json
 
 profiles/
-  arliai-opencode.example.yaml
+  nan-opencode.example.yaml
 
 policies/
   repository-policy.example.yaml
@@ -789,11 +789,11 @@ V4 is complete only when tests prove:
 - validation has no network or host credentials and its whole descendant process tree is contained;
 - OpenCode runs pinned with `--pure`, broker-owned config, wildcard-deny permissions, no shell/Git, no sharing/auto-update, and cannot escape its worktree;
 - economy and frontier harnesses start from an `ExecutorCapsule`; repository/global config, tools, plugins, agents, skills, rules, and instructions are not auto-discovered;
-- the OpenCode capsule enables only the profile provider and the ArliAI example enables only `arliai`;
+- the OpenCode capsule enables only the profile provider and the NAN example enables only `nan`;
 - `SOURCE_CODE_ONLY` is separate from `PUBLIC | PRIVATE`; incompatible sensitivity fails or routes to an explicitly permitted binding without silent reclassification;
 - exact path/operation and validation allowlists are enforced before and after every attempt;
 - the daemon owns `run_id`, effective route, effective risk, data scope, and source sensitivity; routing can elevate but never downgrade frontier requirements;
-- MiMo, MiMo repair, and GLM escalation follow the exact bounded state machine;
+- qwen3.6, qwen3.6 repair, and gemma4 escalation follow the exact bounded state machine;
 - high-risk work bypasses economy execution and follows the terminal frontier state machine without automatic repair;
 - deterministic validation failure prevents acceptance and commit;
 - every Sol review has a fresh ephemeral session inside a capsule where the worktree is not mounted or visible;
@@ -827,4 +827,4 @@ After V4 is validated in the starter repository:
 - OpenCode project custom tools may execute code and replace built-in tools with the same name: https://opencode.ai/docs/custom-tools/
 - OpenCode automatically discovers project/global `AGENTS.md` and Claude-compatible rules from its working-directory ancestry: https://opencode.ai/docs/rules/
 - OpenCode custom configuration directories and managed configuration precedence: https://opencode.ai/docs/config/
-- ArliAI OpenAI-compatible chat, structured output, and tool parameters: https://www.arliai.com/docs/api
+- Any live NAN binding must pass the versioned capability probes against its configured API contract before it is eligible for routing.

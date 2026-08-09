@@ -88,7 +88,7 @@ export const runtimeProfileV4Schema = z.object({
     reviewer: bindingSchema,
   }).strict(),
   runtime: z.object({
-    maxArliParallelRequests: z.number().int().positive().max(64),
+    maxEconomyParallelRequests: z.number().int().positive().max(64),
     maxConcurrentRunsPerRepository: z.number().int().positive().max(64),
   }).strict(),
 }).strict();

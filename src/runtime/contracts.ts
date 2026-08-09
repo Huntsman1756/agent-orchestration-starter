@@ -50,7 +50,7 @@ export interface RuntimeProfileV4 {
   schemaVersion: 4;
   id: string;
   bindings: Record<RuntimeRoleV4, RuntimeBindingV4>;
-  runtime: { maxArliParallelRequests: number; maxConcurrentRunsPerRepository: number };
+  runtime: { maxEconomyParallelRequests: number; maxConcurrentRunsPerRepository: number };
 }
 
 export interface RuntimeRepositoryPolicyV4 {
