@@ -231,11 +231,32 @@ function containerName(executionId: string): string {
   return `ao-${executionId.replaceAll('_', '-')}`;
 }
 
+interface DockerCreateAuthorityV4 {
+  readonly name: string;
+  readonly nonce: string;
+  readonly label_args: readonly string[];
+}
+
+function createDockerAuthorityV4(executionId: string, imageId: `sha256:${string}`): DockerCreateAuthorityV4 {
+  const nonce = randomBytes(16).toString('hex');
+  return Object.freeze({
+    name: `${containerName(executionId)}-${nonce}`,
+    nonce,
+    label_args: Object.freeze([
+      `--label=agent-orchestration.execution=${executionId}`,
+      `--label=agent-orchestration.nonce=${nonce}`,
+      `--label=agent-orchestration.image=${imageId}`,
+    ]),
+  });
+}
+
 export function buildDockerRunArgvV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4): readonly string[] {
   validateDockerSandboxRequestV4(config, request);
+  const authority = createDockerAuthorityV4(request.execution_id, config.image_id);
   const argv: string[] = [
     ...DOCKER_ISOLATION_ARGS_V4,
-    `--name=${containerName(request.execution_id)}`,
+    `--name=${authority.name}`,
+    ...authority.label_args,
     '--init',
     `--workdir=${request.working_directory}`,
   ];
@@ -284,6 +305,20 @@ interface CapturedProcessV4 {
   readonly stderrTruncated: boolean;
 }
 
+type DockerCommandClassV4 = 'IDENTITY' | 'CREATE' | 'CONTROL' | 'CLEANUP' | 'NETWORK';
+const DOCKER_COMMAND_DEADLINES_V4: Readonly<Record<DockerCommandClassV4, number>> = Object.freeze({
+  IDENTITY: 10_000,
+  CREATE: 15_000,
+  CONTROL: 10_000,
+  CLEANUP: 10_000,
+  NETWORK: 10_000,
+});
+
+interface DockerCliOptionsV4 {
+  readonly command_class?: DockerCommandClassV4;
+  readonly signal?: AbortSignal;
+}
+
 function appendBounded(current: Buffer[], size: number, chunk: Buffer, limit: number): { size: number; truncated: boolean } {
   if (size >= limit) return { size, truncated: true };
   const available = limit - size;
@@ -296,11 +331,13 @@ async function runDockerCliV4(
   executable: string,
   argv: readonly string[],
   maxOutputBytes: number,
+  options: DockerCliOptionsV4 = {},
 ): Promise<CapturedProcessV4> {
   return await new Promise((resolvePromise, reject) => {
     const child = spawn(executable, [...argv], {
       shell: false,
       windowsHide: true,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: dockerCliEnvironment(),
     });
@@ -322,22 +359,71 @@ async function runDockerCliV4(
       stderrBytes = appended.size;
       stderrTruncated ||= appended.truncated;
     });
-    child.once('error', reject);
-    child.once('close', (exitCode, signal) => resolvePromise({
-      exitCode,
-      signal,
-      stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'),
-      stdoutTruncated,
-      stderrTruncated,
-    }));
+    let settled = false;
+    let stopping = false;
+    let settlementDeadline: NodeJS.Timeout | null = null;
+    const failure = new Error('PROCESS_SANDBOX_UNAVAILABLE: Docker CLI did not settle within policy');
+    const cleanup = () => {
+      clearTimeout(deadline);
+      if (settlementDeadline !== null) clearTimeout(settlementDeadline);
+      options.signal?.removeEventListener('abort', stop);
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(failure);
+    };
+    const killTree = () => {
+      if (child.pid === undefined) return;
+      if (process.platform === 'win32') {
+        const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+          shell: false, windowsHide: true, stdio: 'ignore',
+        });
+        const killerDeadline = setTimeout(() => killer.kill('SIGKILL'), 1_000);
+        killerDeadline.unref();
+        killer.once('close', () => clearTimeout(killerDeadline));
+        killer.once('error', () => child.kill('SIGKILL'));
+      } else {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      }
+    };
+    const stop = () => {
+      if (stopping || settled) return;
+      stopping = true;
+      killTree();
+      settlementDeadline = setTimeout(fail, 1_500);
+      settlementDeadline.unref();
+    };
+    const deadline = setTimeout(stop, DOCKER_COMMAND_DEADLINES_V4[options.command_class ?? 'CONTROL']);
+    deadline.unref();
+    if (options.signal?.aborted === true) stop();
+    else options.signal?.addEventListener('abort', stop, { once: true });
+    child.once('error', fail);
+    child.once('close', (exitCode, signal) => {
+      if (settled) return;
+      if (stopping) {
+        fail();
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolvePromise({
+        exitCode,
+        signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        stdoutTruncated,
+        stderrTruncated,
+      });
+    });
   });
 }
 
-async function exactContainerIdPresentV4(config: DockerSandboxConfigV4, containerId: string): Promise<boolean> {
+async function exactContainerIdPresentV4(config: DockerSandboxConfigV4, containerId: string, signal?: AbortSignal): Promise<boolean> {
   const result = await runDockerCliV4(config.docker_executable, [
     'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
-  ], 4_096).catch(() => unavailable());
+  ], 4_096, { command_class: 'CONTROL', signal }).catch(() => unavailable());
   if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) unavailable();
   const output = result.stdout.trim();
   if (output === '') return false;
@@ -373,9 +459,11 @@ function environmentArgs(request: SandboxRunRequestV4): string[] {
     .map(([key, value]) => `--env=${key}=${value}`);
 }
 
-async function assertInternalNetworkV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4): Promise<void> {
+async function assertInternalNetworkV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4, signal?: AbortSignal): Promise<void> {
   if (request.network.mode !== 'INTERNAL') unavailable();
-  const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', request.network.name], 256 * 1024).catch(() => unavailable());
+  const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', request.network.name], 256 * 1024, {
+    command_class: 'NETWORK', signal,
+  }).catch(() => unavailable());
   if (inspected.exitCode !== 0 || inspected.stdoutTruncated) unavailable();
   try {
     const value = JSON.parse(inspected.stdout) as Array<{ Driver?: unknown; Internal?: unknown; Labels?: Record<string, string> }>;
@@ -466,6 +554,7 @@ interface DockerExecutionLifecycleV4 {
   cancelled: boolean;
   controller: DockerContainerRemovalControllerV4 | null;
   cleanup_error: unknown | null;
+  readonly abort_controller: AbortController;
   readonly settled: Promise<void>;
   readonly settle: () => void;
 }
@@ -473,7 +562,7 @@ interface DockerExecutionLifecycleV4 {
 function createDockerExecutionLifecycleV4(): DockerExecutionLifecycleV4 {
   let settle!: () => void;
   const settled = new Promise<void>((resolvePromise) => { settle = resolvePromise; });
-  return { cancelled: false, controller: null, cleanup_error: null, settled, settle };
+  return { cancelled: false, controller: null, cleanup_error: null, abort_controller: new AbortController(), settled, settle };
 }
 
 async function cancellationCheckpointV4(lifecycle?: DockerExecutionLifecycleV4): Promise<void> {
@@ -489,6 +578,43 @@ async function cancellationCheckpointV4(lifecycle?: DockerExecutionLifecycleV4):
   unavailable();
 }
 
+async function recoverCreatedContainerV4(
+  config: DockerSandboxConfigV4,
+  request: SandboxRunRequestV4,
+  authority: DockerCreateAuthorityV4,
+): Promise<DockerContainerRemovalControllerV4 | null> {
+  const listed = await runDockerCliV4(config.docker_executable, [
+    'container', 'ls', '--all', '--no-trunc',
+    `--filter=label=agent-orchestration.nonce=${authority.nonce}`,
+    '--format', '{{.ID}}',
+  ], 4_096, { command_class: 'CLEANUP' }).catch(() => unavailable());
+  if (listed.exitCode !== 0 || listed.stdoutTruncated || listed.stderrTruncated) unavailable();
+  const ids = listed.stdout.trim().split('\n').filter(Boolean);
+  if (ids.length === 0) return null;
+  if (ids.length !== 1 || !/^[a-f0-9]{64}$/.test(ids[0]!)) unavailable();
+  const containerId = ids[0]!;
+  const inspected = await runDockerCliV4(config.docker_executable, ['container', 'inspect', containerId], 256 * 1024, {
+    command_class: 'CLEANUP',
+  }).catch(() => unavailable());
+  if (inspected.exitCode !== 0 || inspected.stdoutTruncated || inspected.stderrTruncated) unavailable();
+  try {
+    const values = JSON.parse(inspected.stdout) as Array<{
+      Id?: unknown;
+      Config?: { Image?: unknown; Labels?: Record<string, string> };
+    }>;
+    const value = values[0];
+    if (values.length !== 1
+      || value?.Id !== containerId
+      || value.Config?.Image !== config.image_id
+      || value.Config?.Labels?.['agent-orchestration.execution'] !== request.execution_id
+      || value.Config.Labels['agent-orchestration.nonce'] !== authority.nonce
+      || value.Config.Labels['agent-orchestration.image'] !== config.image_id) unavailable();
+    return removalControllerV4(config, containerId);
+  } catch {
+    unavailable();
+  }
+}
+
 async function runDockerSandboxCandidateOwnedV4(
   config: DockerSandboxConfigV4,
   request: SandboxRunRequestV4,
@@ -499,10 +625,10 @@ async function runDockerSandboxCandidateOwnedV4(
   await cancellationCheckpointV4(lifecycle);
   const mountProof = await proveDockerSandboxMountsV4(config, request);
   await cancellationCheckpointV4(lifecycle);
-  const name = containerName(request.execution_id);
+  const authority = createDockerAuthorityV4(request.execution_id, config.image_id);
   if (request.network.mode === 'INTERNAL') {
     await cancellationCheckpointV4(lifecycle);
-    await assertInternalNetworkV4(config, request);
+    await assertInternalNetworkV4(config, request, lifecycle?.abort_controller.signal);
     await cancellationCheckpointV4(lifecycle);
   }
   await cancellationCheckpointV4(lifecycle);
@@ -512,7 +638,8 @@ async function runDockerSandboxCandidateOwnedV4(
   const createArgs = [
     'create',
     ...DOCKER_ISOLATION_ARGS_V4.slice(1),
-    `--name=${name}`,
+    `--name=${authority.name}`,
+    ...authority.label_args,
     '--init',
     `--workdir=${request.working_directory}`,
     ...(networkless ? environmentArgs(request) : []),
@@ -521,17 +648,33 @@ async function runDockerSandboxCandidateOwnedV4(
     ...(networkless ? request.argv : ['node', '-e', 'setInterval(()=>{},2147483647)']),
   ];
   await cancellationCheckpointV4(lifecycle);
-  const created = await runDockerCliV4(config.docker_executable, createArgs, 16_384).catch(() => unavailable());
+  let created: CapturedProcessV4;
+  try {
+    created = await runDockerCliV4(config.docker_executable, createArgs, 16_384, {
+      command_class: 'CREATE', signal: lifecycle?.abort_controller.signal,
+    });
+  } catch {
+    const recovered = await recoverCreatedContainerV4(config, request, authority);
+    if (recovered !== null) {
+      if (lifecycle !== undefined) lifecycle.controller = recovered;
+      onController?.(recovered);
+      await recovered.remove();
+    }
+    unavailable();
+  }
   const containerId = created.stdout.trim();
-  if (created.exitCode !== 0
-    || created.stdoutTruncated
-    || created.stderrTruncated
-    || !/^[a-f0-9]{64}$/.test(containerId)
-    || !await exactContainerIdPresentV4(config, containerId)) unavailable();
-  const removal = removalControllerV4(config, containerId);
+  let removal: DockerContainerRemovalControllerV4 | null = null;
+  if (/^[a-f0-9]{64}$/.test(containerId)) removal = removalControllerV4(config, containerId);
+  else removal = await recoverCreatedContainerV4(config, request, authority);
+  if (removal === null) unavailable();
   if (lifecycle !== undefined) lifecycle.controller = removal;
   onController?.(removal);
   try {
+    if (created.exitCode !== 0
+      || created.stdoutTruncated
+      || created.stderrTruncated
+      || containerId !== removal.container_id
+      || !await exactContainerIdPresentV4(config, containerId, lifecycle?.abort_controller.signal)) unavailable();
     await cancellationCheckpointV4(lifecycle);
     if (networkless) {
       await cancellationCheckpointV4(lifecycle);
@@ -539,14 +682,20 @@ async function runDockerSandboxCandidateOwnedV4(
       await cancellationCheckpointV4(lifecycle);
       return result;
     }
-    const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', containerId], 16_384);
+    const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', containerId], 16_384, {
+      command_class: 'NETWORK', signal: lifecycle?.abort_controller.signal,
+    });
     await cancellationCheckpointV4(lifecycle);
     if (disconnected.exitCode !== 0) unavailable();
-    const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, containerId], 16_384);
+    const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, containerId], 16_384, {
+      command_class: 'NETWORK', signal: lifecycle?.abort_controller.signal,
+    });
     await cancellationCheckpointV4(lifecycle);
     if (connected.exitCode !== 0) unavailable();
     await cancellationCheckpointV4(lifecycle);
-    const started = await runDockerCliV4(config.docker_executable, ['start', containerId], 16_384);
+    const started = await runDockerCliV4(config.docker_executable, ['start', containerId], 16_384, {
+      command_class: 'CONTROL', signal: lifecycle?.abort_controller.signal,
+    });
     await cancellationCheckpointV4(lifecycle);
     if (started.exitCode !== 0 || started.stdout.trim() !== containerId) unavailable();
     await cancellationCheckpointV4(lifecycle);
@@ -571,13 +720,6 @@ async function runDockerSandboxCandidateOwnedV4(
   }
 }
 
-export async function runDockerSandboxCertificationCandidateV4(
-  config: DockerSandboxConfigV4,
-  request: SandboxRunRequestV4,
-): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
-  return await runDockerSandboxCandidateOwnedV4(config, request);
-}
-
 function normalizedArchitecture(value: string): string {
   const normalized = value.toLowerCase();
   if (normalized === 'x64' || normalized === 'x86_64' || normalized === 'amd64') return 'amd64';
@@ -588,11 +730,12 @@ function normalizedArchitecture(value: string): string {
 export async function inspectDockerSandboxIdentityV4(
   config: DockerSandboxConfigV4,
   profile: SandboxProfileV4,
+  signal?: AbortSignal,
 ): Promise<SandboxCertificationIdentityV4> {
   validateDockerSandboxConfigV4(config);
   const [serverOutput, imageOutput] = await Promise.all([
-    runDockerCliV4(config.docker_executable, ['info', '--format', '{{json .}}'], 1024 * 1024).catch(() => unavailable()),
-    runDockerCliV4(config.docker_executable, ['image', 'inspect', config.image_id], 1024 * 1024).catch(() => unavailable()),
+    runDockerCliV4(config.docker_executable, ['info', '--format', '{{json .}}'], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
+    runDockerCliV4(config.docker_executable, ['image', 'inspect', config.image_id], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
   ]);
   if (serverOutput.exitCode !== 0
     || imageOutput.exitCode !== 0
@@ -659,28 +802,130 @@ async function requiredDockerOutputV4(
   return result.stdout.trim();
 }
 
+export function isDockerNetworkSubnetOverlapV4(stderr: string): boolean {
+  return /^Error response from daemon: Pool overlaps with other one on this address space\r?\n?$/.test(stderr);
+}
+
+interface CertificationNetworkAuthorityV4 {
+  readonly execution_id: string;
+  readonly image_id: `sha256:${string}`;
+  readonly internal: boolean;
+  readonly kind: 'internal' | 'outbound';
+  readonly name: string;
+  readonly nonce: string;
+  readonly subnet?: string;
+}
+
+async function recoverCertificationNetworkV4(
+  config: DockerSandboxConfigV4,
+  authority: CertificationNetworkAuthorityV4,
+): Promise<string | null> {
+  const listed = await runDockerCliV4(config.docker_executable, [
+    'network', 'ls', '--no-trunc',
+    '--filter', `label=agent-orchestration.execution=${authority.execution_id}`,
+    '--filter', `label=agent-orchestration.nonce=${authority.nonce}`,
+    '--filter', `label=agent-orchestration.network-kind=${authority.kind}`,
+    '--format', '{{.ID}}',
+  ], 16_384, { command_class: 'NETWORK' });
+  if (listed.exitCode !== 0 || listed.stdoutTruncated || listed.stderrTruncated) unavailable();
+  const ids = listed.stdout.trim().split('\n').filter(Boolean);
+  if (ids.length === 0) return null;
+  if (ids.length !== 1 || !/^[a-f0-9]{64}$/.test(ids[0]!)) unavailable();
+
+  const networkId = ids[0]!;
+  const inspected = await runDockerCliV4(
+    config.docker_executable,
+    ['network', 'inspect', networkId],
+    256 * 1024,
+    { command_class: 'NETWORK' },
+  );
+  if (inspected.exitCode !== 0 || inspected.stdoutTruncated || inspected.stderrTruncated) unavailable();
+  let record: {
+    Id?: unknown;
+    Name?: unknown;
+    Driver?: unknown;
+    Internal?: unknown;
+    Labels?: Record<string, unknown> | null;
+  };
+  try {
+    const parsed = JSON.parse(inspected.stdout) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== 1 || typeof parsed[0] !== 'object' || parsed[0] === null) unavailable();
+    record = parsed[0] as typeof record;
+  } catch {
+    unavailable();
+  }
+  if (record.Id !== networkId
+    || record.Name !== authority.name
+    || record.Driver !== 'bridge'
+    || record.Internal !== authority.internal
+    || record.Labels?.['agent-orchestration.execution'] !== authority.execution_id
+    || record.Labels?.['agent-orchestration.nonce'] !== authority.nonce
+    || record.Labels?.['agent-orchestration.image'] !== authority.image_id
+    || record.Labels?.['agent-orchestration.network-kind'] !== authority.kind) unavailable();
+  return networkId;
+}
+
 async function createCertificationNetworkV4(
   config: DockerSandboxConfigV4,
-  argv: readonly string[],
+  authority: CertificationNetworkAuthorityV4,
   overlapRetryMs = 0,
+  register: (networkId: string) => void,
 ): Promise<string> {
   const deadline = Date.now() + overlapRetryMs;
+  const argv = [
+    '--driver=bridge',
+    ...(authority.internal ? ['--internal'] : []),
+    ...(authority.subnet === undefined ? [] : [`--subnet=${authority.subnet}`]),
+    '--label', `agent-orchestration.execution=${authority.execution_id}`,
+    '--label', `agent-orchestration.nonce=${authority.nonce}`,
+    '--label', `agent-orchestration.image=${authority.image_id}`,
+    '--label', `agent-orchestration.network-kind=${authority.kind}`,
+    authority.name,
+  ];
   do {
-    const created = await runDockerCliV4(config.docker_executable, ['network', 'create', ...argv], 16_384).catch(() => unavailable());
-    const networkId = created.stdout.trim();
-    if (created.exitCode === 0
-      && !created.stdoutTruncated
-      && !created.stderrTruncated
-      && /^[a-f0-9]{64}$/.test(networkId)) return networkId;
+    let created: Awaited<ReturnType<typeof runDockerCliV4>> | null = null;
+    try {
+      created = await runDockerCliV4(config.docker_executable, ['network', 'create', ...argv], 16_384, {
+        command_class: 'NETWORK',
+      });
+      const networkId = created.stdout.trim();
+      if (created.exitCode === 0
+        && !created.stdoutTruncated
+        && !created.stderrTruncated
+        && /^[a-f0-9]{64}$/.test(networkId)) {
+        register(networkId);
+        return networkId;
+      }
+    } catch {
+      // A timed out or interrupted create may still have changed Docker state.
+    }
+
+    const recovered = await recoverCertificationNetworkV4(config, authority);
+    if (recovered !== null) {
+      register(recovered);
+      await removeCertificationNetworkV4(config, recovered);
+      unavailable();
+    }
+    if (created === null || !isDockerNetworkSubnetOverlapV4(created.stderr)) unavailable();
     if (Date.now() >= deadline) unavailable();
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   } while (true);
 }
 
 async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, networkId: string): Promise<void> {
-  const removed = await runDockerCliV4(config.docker_executable, ['network', 'rm', networkId], 16_384).catch(() => unavailable());
+  const removed = await runDockerCliV4(
+    config.docker_executable,
+    ['network', 'rm', networkId],
+    16_384,
+    { command_class: 'CLEANUP' },
+  ).catch(() => unavailable());
   if (removed.exitCode !== 0 || removed.stdoutTruncated || removed.stderrTruncated) unavailable();
-  const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', networkId], 16_384).catch(() => unavailable());
+  const inspected = await runDockerCliV4(
+    config.docker_executable,
+    ['network', 'inspect', networkId],
+    16_384,
+    { command_class: 'CLEANUP' },
+  ).catch(() => unavailable());
   if (inspected.exitCode === 0) unavailable();
 }
 
@@ -761,7 +1006,7 @@ export async function runDockerSandboxHostileCertificationV4(
   config: DockerSandboxConfigV4,
   identity: SandboxCertificationIdentityV4,
 ): Promise<SandboxCertificationTranscriptV4> {
-  const runSuffix = randomBytes(6).toString('hex');
+  const runSuffix = randomBytes(16).toString('hex');
   const root = await mkdtemp(join(config.allowed_mount_roots[0]!, `.ao-cert-${runSuffix}-`)).catch(() => unavailable());
   if (overlaps(root, homedir()) || overlaps(root, config.active_worktree) || overlaps(root, config.broker_state_directory)) {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
@@ -867,12 +1112,25 @@ export async function runDockerSandboxHostileCertificationV4(
     if (certificateResult.exit_code !== 0 || certificateResult.timed_out) unavailable();
     const caPem = await readFile(join(certificateDirectory, 'cert.pem'), 'utf8');
 
-    internalNetworkId = await createCertificationNetworkV4(config, [
-      '--driver=bridge', '--internal', '--label', `agent-orchestration.execution=${executionPrefix}_network`, internalName,
-    ]);
-    outboundNetworkId = await createCertificationNetworkV4(config, [
-      '--driver=bridge', '--subnet=93.184.216.0/24', '--label', `agent-orchestration.execution=${executionPrefix}_network`, outboundName,
-    ], 30_000);
+    const internalNonce = randomBytes(16).toString('hex');
+    internalNetworkId = await createCertificationNetworkV4(config, {
+      execution_id: `${executionPrefix}_network`,
+      image_id: config.image_id,
+      internal: true,
+      kind: 'internal',
+      name: internalName,
+      nonce: internalNonce,
+    }, 0, (networkId) => { internalNetworkId = networkId; });
+    const outboundNonce = randomBytes(16).toString('hex');
+    outboundNetworkId = await createCertificationNetworkV4(config, {
+      execution_id: `${executionPrefix}_network`,
+      image_id: config.image_id,
+      internal: false,
+      kind: 'outbound',
+      name: outboundName,
+      nonce: outboundNonce,
+      subnet: '93.184.216.0/24',
+    }, 30_000, (networkId) => { outboundNetworkId = networkId; });
     upstream = await startCertificationTlsFixtureV4(
       config,
       outboundNetworkId,
@@ -1009,18 +1267,25 @@ const unsupportedResult: SandboxProbeResultV4 = Object.freeze({
 });
 
 const hostileCertificationFlightsV4 = new Map<string, Promise<SandboxCertificationTranscriptV4>>();
+const hostileCertificationEvidenceV4 = new Map<string, SandboxCertificationTranscriptV4>();
 
 async function runSingleFlightHostileCertificationV4(
   config: DockerSandboxConfigV4,
   identity: SandboxCertificationIdentityV4,
 ): Promise<SandboxCertificationTranscriptV4> {
   const key = hashCanonicalV4(identity);
+  const cached = hostileCertificationEvidenceV4.get(key);
+  if (cached !== undefined
+    && new Date(cached.completed_at).getTime() + config.certification_ttl_seconds * 1_000 >= Date.now()) return cached;
+  hostileCertificationEvidenceV4.delete(key);
   const existing = hostileCertificationFlightsV4.get(key);
   if (existing !== undefined) return await existing;
   const flight = runDockerSandboxHostileCertificationV4(config, identity);
   hostileCertificationFlightsV4.set(key, flight);
   try {
-    return await flight;
+    const transcript = await flight;
+    hostileCertificationEvidenceV4.set(key, transcript);
+    return transcript;
   } finally {
     if (hostileCertificationFlightsV4.get(key) === flight) hostileCertificationFlightsV4.delete(key);
   }
@@ -1087,9 +1352,9 @@ export function createDockerProcessSandboxV4(
     })}`;
   };
   const executions = new Map<string, DockerExecutionLifecycleV4>();
-  const probe = async (profile: SandboxProfileV4): Promise<SandboxProbeResultV4> => {
+  const probeOwned = async (profile: SandboxProfileV4, signal?: AbortSignal): Promise<SandboxProbeResultV4> => {
     try {
-      const identity = await inspectDockerSandboxIdentityV4(config, profile);
+      const identity = await inspectDockerSandboxIdentityV4(config, profile, signal);
       const checkedAt = new Date().toISOString();
       let certification = cache.get(profile);
       if (certification === undefined || !matches(certification, identity, checkedAt)) {
@@ -1110,6 +1375,7 @@ export function createDockerProcessSandboxV4(
       return unsupportedResult;
     }
   };
+  const probe = async (profile: SandboxProfileV4): Promise<SandboxProbeResultV4> => await probeOwned(profile);
   return Object.freeze({
     id: 'docker-engine-linux-v4',
     probe,
@@ -1119,7 +1385,7 @@ export function createDockerProcessSandboxV4(
       executions.set(request.execution_id, lifecycle);
       try {
         await cancellationCheckpointV4(lifecycle);
-        const supported = await probe(request.profile);
+        const supported = await probeOwned(request.profile, lifecycle.abort_controller.signal);
         await cancellationCheckpointV4(lifecycle);
         if (supported.status !== 'SUPPORTED') unavailable();
         const result = await runDockerSandboxCandidateOwnedV4(config, request, lifecycle);
@@ -1134,6 +1400,7 @@ export function createDockerProcessSandboxV4(
       const lifecycle = executions.get(executionId);
       if (lifecycle === undefined) return;
       lifecycle.cancelled = true;
+      lifecycle.abort_controller.abort();
       if (lifecycle.controller !== null) {
         try {
           await lifecycle.controller.remove();

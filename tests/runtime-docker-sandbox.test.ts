@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -57,13 +57,20 @@ function validationRequest(overrides: Partial<SandboxRunRequestV4> = {}): Sandbo
 
 test('Docker validation argv contains the complete immutable isolation policy before the image ID', () => {
   const argv = buildDockerRunArgvV4(config, validationRequest());
+  const secondArgv = buildDockerRunArgvV4(config, validationRequest());
   const imageIndex = argv.indexOf(imageId);
 
   assert.deepEqual(argv.slice(0, DOCKER_ISOLATION_ARGS_V4.length), DOCKER_ISOLATION_ARGS_V4);
   assert.ok(imageIndex > DOCKER_ISOLATION_ARGS_V4.length);
   assert.deepEqual(argv.slice(imageIndex), [imageId, 'node', '--version']);
   assert.deepEqual(argv.filter((entry) => entry.startsWith('--network')), ['--network=none']);
-  assert.ok(argv.includes('--name=ao-exec-contract-0001'));
+  const name = argv.find((entry) => entry.startsWith('--name=ao-exec-contract-0001-'));
+  const secondName = secondArgv.find((entry) => entry.startsWith('--name=ao-exec-contract-0001-'));
+  assert.match(name ?? '', /^--name=ao-exec-contract-0001-[a-f0-9]{32}$/);
+  assert.notEqual(secondName, name);
+  assert.ok(argv.includes('--label=agent-orchestration.execution=exec_contract_0001'));
+  assert.ok(argv.some((entry) => /^--label=agent-orchestration.nonce=[a-f0-9]{32}$/.test(entry)));
+  assert.ok(argv.includes(`--label=agent-orchestration.image=${imageId}`));
   assert.ok(argv.includes('--workdir=/capsule'));
   assert.ok(argv.includes('--env=HOME=/tmp/home'));
   assert.ok(argv.includes('--env=TMPDIR=/tmp'));
@@ -204,7 +211,7 @@ test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, 
       );
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
@@ -359,7 +366,9 @@ test('certification rejects a forged all-true boolean record without bounded run
 });
 
 test('production backend rejects every injected identity, runner, or clock authority', async () => {
+  const dockerModule = await import('../src/runtime/docker-sandbox.js');
   const certificationModule = await import('../src/runtime/sandbox-certification.js');
+  assert.equal('runDockerSandboxCertificationCandidateV4' in dockerModule, false);
   assert.equal('createSandboxCertificationV4' in certificationModule, false);
   assert.throws(
     () => (createDockerProcessSandboxV4 as unknown as (...args: unknown[]) => unknown)(config, {
@@ -425,4 +434,55 @@ test('certification transcript contains exactly one artifact of each required ki
     ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
+});
+
+test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 7_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-cli-block-'));
+  const previousCwd = process.cwd();
+  try {
+    await Promise.all([
+      mkdir(join(root, 'active')),
+      mkdir(join(root, 'broker')),
+      writeFile(join(root, 'info'), 'setTimeout(()=>process.exit(2),2000);'),
+      writeFile(join(root, 'image'), 'setTimeout(()=>process.exit(2),2000);'),
+    ]);
+    process.chdir(root);
+    const backend = createDockerProcessSandboxV4({
+      ...config,
+      docker_executable: process.execPath,
+      allowed_mount_roots: [root],
+      active_worktree: join(root, 'active'),
+      broker_state_directory: join(root, 'broker'),
+    });
+    const request = validationRequest({ execution_id: 'exec_blocked_probe_0001' });
+    const firstRun = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const started = Date.now();
+    await backend.terminate(request.execution_id);
+    assert.equal(Date.now() - started < 1_000, true, 'terminate must abort the blocked CLI rather than await its natural exit');
+    await firstRun;
+
+    const reused = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await backend.terminate(request.execution_id);
+    await reused;
+  } finally {
+    process.chdir(previousCwd);
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test('network retry classification accepts only Docker subnet-overlap failures', async () => {
+  const runtime = await import('../src/runtime/docker-sandbox.js') as unknown as {
+    isDockerNetworkSubnetOverlapV4?: (stderr: string) => boolean;
+  };
+  const classify = runtime.isDockerNetworkSubnetOverlapV4;
+  assert.equal(typeof classify, 'function');
+  assert.equal(classify!('Error response from daemon: Pool overlaps with other one on this address space\n'), true);
+  for (const error of [
+    'permission denied',
+    'Cannot connect to the Docker daemon',
+    'Error response from daemon: network already exists',
+    'Error response from daemon: Pool overlaps with other one on this address space; ignored suffix',
+  ]) assert.equal(classify!(error), false, error);
 });

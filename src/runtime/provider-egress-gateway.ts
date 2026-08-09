@@ -56,6 +56,8 @@ async function docker(executable: string, argv: readonly string[]): Promise<stri
       windowsHide: true,
       maxBuffer: 512 * 1024,
       env: dockerEnvironment(),
+      timeout: 10_000,
+      killSignal: 'SIGKILL',
     });
     return result.stdout.trim();
   } catch {

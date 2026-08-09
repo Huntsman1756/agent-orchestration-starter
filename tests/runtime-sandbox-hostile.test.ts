@@ -10,7 +10,6 @@ import test from 'node:test';
 import {
   createDockerProcessSandboxV4,
   inspectDockerSandboxIdentityV4,
-  runDockerSandboxCertificationCandidateV4,
   runDockerSandboxHostileCertificationV4,
   type DockerSandboxConfigV4,
 } from '../src/runtime/docker-sandbox.js';
@@ -36,6 +35,62 @@ async function waitForContainer(name: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error('container did not become inspectable');
+}
+
+async function waitForExecutionContainer(executionId: string): Promise<{ id: string; name: string }> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const output = await docker(
+      'ps', '--all', '--no-trunc', `--filter=label=agent-orchestration.execution=${executionId}`,
+      '--format', '{{.ID}} {{.Names}}',
+    ).catch(() => '');
+    const entries = output.split('\n').filter(Boolean);
+    if (entries.length === 1) {
+      const [id, name] = entries[0]!.split(' ');
+      if (/^[a-f0-9]{64}$/.test(id ?? '') && name) return { id: id!, name };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('execution container did not become inspectable');
+}
+
+async function writeDockerForwarder(directory: string, blockedExecutionId: string): Promise<void> {
+  const source = [
+    "import {spawnSync} from 'node:child_process';import {basename,dirname} from 'node:path';import {appendFileSync,writeSync} from 'node:fs';",
+    "const command=basename(process.argv[1]),args=process.argv.slice(2);",
+    "appendFileSync(dirname(process.argv[1])+'/commands.log',command+' '+args.join(' ')+'\\n');",
+    "const child=spawnSync('docker',[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});appendFileSync(dirname(process.argv[1])+'/commands.log','=> '+String(child.status)+' '+JSON.stringify(child.stdout??'')+' '+JSON.stringify(child.stderr??'')+'\\n');writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');",
+    `const block=command==='create'&&args.some((arg)=>arg==='--label=agent-orchestration.execution=${blockedExecutionId}');`,
+    "if(block)setTimeout(()=>process.exit(child.status??1),2000);else process.exit(child.status??1);",
+  ].join('');
+  await Promise.all([
+    'info', 'image', 'container', 'rm', 'network', 'create', 'start', 'exec', 'inspect', 'ps', 'version',
+  ].map(async (command) => await writeFile(join(directory, command), source)));
+}
+
+async function writeNetworkCreateForwarder(directory: string, mode: 'AMBIGUOUS' | 'UNRELATED_ERROR'): Promise<void> {
+  const source = [
+    "import {spawnSync} from 'node:child_process';import {basename,dirname} from 'node:path';import {appendFileSync,readFileSync,writeFileSync,writeSync} from 'node:fs';",
+    "const command=basename(process.argv[1]),args=process.argv.slice(2),root=dirname(process.argv[1]);",
+    "appendFileSync(root+'/commands.log',command+' '+args.join(' ')+'\\n');",
+    "const internalCreate=command==='network'&&args[0]==='create'&&args.includes('--internal');",
+    `if(internalCreate&&${JSON.stringify(mode)}==='UNRELATED_ERROR'){writeSync(2,'Error response from daemon: permission denied\\n');process.exit(1);}`,
+    "const child=spawnSync('docker',[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');",
+    "if(internalCreate&&child.status===0){const id=(child.stdout??'').trim(),name=args.at(-1),execution=args.find((arg)=>arg.startsWith('agent-orchestration.execution='))?.split('=')[1];writeFileSync(root+'/created-network.json',JSON.stringify({id,name,execution}));setTimeout(()=>process.exit(0),12000);}",
+    "else if(command==='network'&&args[0]==='rm'&&child.status===0){try{const state=JSON.parse(readFileSync(root+'/created-network.json','utf8'));spawnSync('docker',['network','create','--driver=bridge','--label','agent-orchestration.execution=unrelated',state.name],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});}catch{}process.exit(0);}",
+    "else process.exit(child.status??1);",
+  ].join('');
+  await Promise.all([
+    'info', 'image', 'container', 'rm', 'network', 'create', 'start', 'exec', 'inspect', 'ps', 'version',
+  ].map(async (command) => await writeFile(join(directory, command), source)));
+}
+
+async function waitForJsonFile<T>(path: string): Promise<T> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const value = await readFile(path, 'utf8').then((raw) => JSON.parse(raw) as T, () => null);
+    if (value !== null) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('expected JSON evidence was not written');
 }
 
 async function createTlsCertificate(directory: string, hostname: string): Promise<void> {
@@ -86,13 +141,15 @@ function config(allowedMountRoots: readonly string[] = [dirname(process.cwd())])
   };
 }
 
+const certifiedBackend = imageId?.startsWith('sha256:') ? createDockerProcessSandboxV4(config()) : null;
+
 dockerIntegration('trusted sandbox image runs as uid 1000 with the exact pinned harness versions', { timeout: 30_000 }, async () => {
   const source = [
     "const {execFileSync}=require('node:child_process');",
     "const read=(name)=>execFileSync(name,['--version'],{encoding:'utf8'}).trim();",
     "console.log(JSON.stringify({uid:process.getuid(),cwd:process.cwd(),opencode:read('opencode'),codex:read('codex')}));",
   ].join('');
-  const result = await runDockerSandboxCertificationCandidateV4(config(), {
+  const result = await certifiedBackend!.run({
     execution_id: 'exec_hostile_image_0001',
     profile: 'VALIDATION_UNTRUSTED',
     argv: ['node', '-e', source],
@@ -144,7 +201,7 @@ dockerIntegration('Docker effects reject a mount alias introduced before create 
     await writeFile(sentinel, 'mount-alias-sentinel', 'utf8');
     await symlink(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
     await assert.rejects(
-      () => runDockerSandboxCertificationCandidateV4(config([allowed]), {
+      () => certifiedBackend!.run({
         execution_id: 'exec_hostile_mount_alias_0001',
         profile: 'VALIDATION_UNTRUSTED',
         argv: ['node', '-e', "process.stdout.write(require('node:fs').readFileSync('/capsule/sentinel.txt','utf8'))"],
@@ -158,9 +215,18 @@ dockerIntegration('Docker effects reject a mount alias introduced before create 
       /PROCESS_SANDBOX_UNAVAILABLE/,
     );
     assert.equal(await readFile(sentinel, 'utf8'), 'mount-alias-sentinel');
-    await assert.rejects(() => docker('inspect', 'ao-exec-hostile-mount-alias-0001'));
+    assert.equal(await docker(
+      'ps', '--all', '--quiet', '--no-trunc',
+      '--filter=label=agent-orchestration.execution=exec_hostile_mount_alias_0001',
+    ), '');
   } finally {
-    await docker('rm', '--force', 'ao-exec-hostile-mount-alias-0001').catch(() => undefined);
+    const leaked = await docker(
+      'ps', '--all', '--quiet', '--no-trunc',
+      '--filter=label=agent-orchestration.execution=exec_hostile_mount_alias_0001',
+    ).catch(() => '');
+    await Promise.all(leaked.split('\n').filter(Boolean).map(async (id) => {
+      await docker('rm', '--force', id).catch(() => undefined);
+    }));
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -170,14 +236,14 @@ dockerIntegration('timeout removes the immutable container ID and preserves a na
   const capsule = join(root, 'capsule');
   const scratch = join(root, 'scratch');
   const survivor = join(scratch, 'grandchild-survived.txt');
-  const name = 'ao-exec-hostile-timeout-id-0001';
-  const preserved = `${name}-preserved`;
+  let name = '';
+  let preserved = '';
   let originalId = '';
   let replacementId = '';
   try {
     await Promise.all([mkdir(capsule, { recursive: true }), mkdir(scratch, { recursive: true })]);
     await copyFile(join(fixtureDirectory, 'hostile-child.mjs'), join(capsule, 'hostile-child.mjs'));
-    const running = runDockerSandboxCertificationCandidateV4(config([root]), {
+    const running = certifiedBackend!.run({
       execution_id: 'exec_hostile_timeout_id_0001',
       profile: 'VALIDATION_UNTRUSTED',
       argv: ['node', '/capsule/hostile-child.mjs', 'grandchild', '/scratch/grandchild-survived.txt'],
@@ -191,8 +257,10 @@ dockerIntegration('timeout removes the immutable container ID and preserves a na
       timeout_ms: 750,
       max_output_bytes: 4_096,
     });
-    await waitForContainer(name);
-    originalId = await docker('inspect', '--format', '{{.Id}}', name);
+    const original = await waitForExecutionContainer('exec_hostile_timeout_id_0001');
+    originalId = original.id;
+    name = original.name;
+    preserved = `${name}-preserved`;
     await docker('rename', name, preserved);
     replacementId = await docker(
       'create', `--name=${name}`, '--read-only', '--cap-drop=ALL',
@@ -226,12 +294,17 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
   const blockedFixture = 'ao-upstream-blocked-0001';
   const gatewayContainer = 'ao-gateway-exec-hostile-network-0001';
   const preservedGatewayContainer = `${gatewayContainer}-preserved`;
-  const executorContainer = 'ao-exec-hostile-network-0001';
+  let executorContainer = '';
   const syntheticCredential = 'synthetic-arliai-credential-task4-only';
   let lease: Awaited<ReturnType<typeof startProviderEgressGatewayV4>> | null = null;
   let gatewayOriginalId = '';
   let replacementId = '';
   try {
+    assert.equal(
+      (await certifiedBackend!.probe('EXECUTOR_NETWORKED')).status,
+      'SUPPORTED',
+      'the real networked certification must complete before the fixture reserves its fixed subnet',
+    );
     await Promise.all([mkdir(capsule), mkdir(certAllowed), mkdir(certBlocked)]);
     await copyFile(join(fixtureDirectory, 'network-probe.mjs'), join(capsule, 'network-probe.mjs'));
     await createTlsCertificate(certAllowed, 'api.arliai.com');
@@ -256,7 +329,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       startup_timeout_ms: 10_000,
     });
 
-    const runPromise = runDockerSandboxCertificationCandidateV4(config([root]), {
+    const runPromise = certifiedBackend!.run({
       execution_id: executionId,
       profile: 'EXECUTOR_NETWORKED',
       argv: [
@@ -274,7 +347,11 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       timeout_ms: 15_000,
       max_output_bytes: 64 * 1024,
     });
-    await Promise.all([waitForContainer(gatewayContainer), waitForContainer(executorContainer)]);
+    const [, executor] = await Promise.all([
+      waitForContainer(gatewayContainer),
+      waitForExecutionContainer(executionId),
+    ]);
+    executorContainer = executor.name;
     const [gatewayInspection, executorInspection] = await Promise.all([
       docker('inspect', gatewayContainer),
       docker('inspect', executorContainer),
@@ -367,8 +444,8 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
   assert.equal(result.stdout, 'certified');
   await backend.terminate('exec_certified_smoke_0001');
 
-  const terminatingName = 'ao-exec-certified-terminate-0001';
-  const preservedName = `${terminatingName}-preserved`;
+  let terminatingName = '';
+  let preservedName = '';
   let terminatingId = '';
   let replacementId = '';
   try {
@@ -383,8 +460,10 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
       timeout_ms: 10_000,
       max_output_bytes: 4_096,
     }), /PROCESS_SANDBOX_UNAVAILABLE/);
-    await waitForContainer(terminatingName);
-    terminatingId = await docker('inspect', '--format', '{{.Id}}', terminatingName);
+    const original = await waitForExecutionContainer('exec_certified_terminate_0001');
+    terminatingId = original.id;
+    terminatingName = original.name;
+    preservedName = `${terminatingName}-preserved`;
     await docker('rename', terminatingName, preservedName);
     replacementId = await docker(
       'create', `--name=${terminatingName}`, '--read-only', '--cap-drop=ALL',
@@ -424,7 +503,10 @@ dockerIntegration('terminate persists cancellation while the production probe is
 
   await backend.terminate(executionId);
   await assert.rejects(() => running, /PROCESS_SANDBOX_UNAVAILABLE/);
-  await assert.rejects(() => docker('inspect', 'ao-exec-cancel-during-probe-0001'));
+  assert.equal(await docker(
+    'ps', '--all', '--quiet', '--no-trunc',
+    `--filter=label=agent-orchestration.execution=${executionId}`,
+  ), '');
 });
 
 dockerIntegration('concurrent production probes share one exact hostile certification run', { timeout: 90_000 }, async () => {
@@ -458,4 +540,117 @@ dockerIntegration('independent hostile runners wait out fixed-subnet overlap wit
   });
 
   await Promise.all([launch(), launch()]);
+});
+
+dockerIntegration('cancellation after an ambiguous create effect removes only the exact broker container', { timeout: 120_000 }, async () => {
+  const executionId = 'exec_ambiguous_create_0001';
+  const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-docker-wrapper-'));
+  const originalCwd = process.cwd();
+  const baseConfig = config();
+  let originalId = '';
+  let replacementId = '';
+  let replacementName = '';
+  try {
+    await writeDockerForwarder(wrapperRoot, executionId);
+    assert.equal((await createDockerProcessSandboxV4(baseConfig).probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
+    process.chdir(wrapperRoot);
+    const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: process.execPath });
+    const warmed = await backend.probe('VALIDATION_UNTRUSTED');
+    if (warmed.status !== 'SUPPORTED') {
+      const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
+      assert.fail(`wrapper-backed production probe was unsupported\n${commands}`);
+    }
+    const running = assert.rejects(() => backend.run({
+      execution_id: executionId,
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: ['node', '-e', "process.stdout.write('must-not-run')"],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [],
+      network: { mode: 'NONE' },
+      timeout_ms: 5_000,
+      max_output_bytes: 4_096,
+    }), /PROCESS_SANDBOX_UNAVAILABLE/);
+    const original = await waitForExecutionContainer(executionId).catch(async (error) => {
+      const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
+      throw new Error(`${String(error)}\n${commands}`);
+    });
+    originalId = original.id;
+    replacementName = original.name;
+    await docker('rename', original.id, `${original.name}-preserved`);
+    replacementId = await docker(
+      'create', `--name=${original.name}`, '--label=agent-orchestration.execution=unrelated',
+      '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--network=none',
+      baseConfig.image_id, 'node', '-e', 'setInterval(()=>{},2147483647)',
+    );
+    await backend.terminate(executionId);
+    await running;
+    const survivor = await docker('inspect', originalId).then((raw) => JSON.parse(raw)[0], () => null) as null | {
+      Id?: string; Config?: { Image?: string; Labels?: Record<string, string> };
+    };
+    if (survivor !== null) {
+      const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
+      assert.fail(`broker container survived recovery: ${JSON.stringify({ Id: survivor.Id, Config: survivor.Config })}\n${commands}`);
+    }
+    assert.equal(await docker('inspect', '--format', '{{.Id}}', replacementId), replacementId);
+  } finally {
+    process.chdir(originalCwd);
+    await Promise.all([originalId, replacementId, replacementName, `${replacementName}-preserved`].filter(Boolean).map(async (target) => {
+      await docker('rm', '--force', target).catch(() => undefined);
+    }));
+    await rm(wrapperRoot, { recursive: true, force: true });
+  }
+});
+
+dockerIntegration('ambiguous network create removes the exact effect, preserves its replacement, and unrelated errors do not retry', { timeout: 120_000 }, async () => {
+  const baseConfig = config();
+  const identity = await inspectDockerSandboxIdentityV4(baseConfig, 'VALIDATION_UNTRUSTED');
+  const originalCwd = process.cwd();
+
+  for (const mode of ['AMBIGUOUS', 'UNRELATED_ERROR'] as const) {
+    const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-network-wrapper-'));
+    let replacementName = '';
+    try {
+      await writeNetworkCreateForwarder(wrapperRoot, mode);
+      process.chdir(wrapperRoot);
+      const rejected = assert.rejects(
+        () => runDockerSandboxHostileCertificationV4(
+          { ...baseConfig, docker_executable: process.execPath },
+          identity,
+        ),
+        /PROCESS_SANDBOX_UNAVAILABLE/,
+      );
+
+      if (mode === 'AMBIGUOUS') {
+        const created = await waitForJsonFile<{ id: string; name: string; execution: string }>(
+          join(wrapperRoot, 'created-network.json'),
+        );
+        replacementName = created.name;
+        await rejected;
+        await assert.rejects(() => docker('network', 'inspect', created.id), 'the exact ambiguous network ID must be absent');
+        const replacement = JSON.parse(await docker('network', 'inspect', created.name))[0] as {
+          Id: string;
+          Labels: Record<string, string>;
+        };
+        assert.notEqual(replacement.Id, created.id);
+        assert.equal(replacement.Labels['agent-orchestration.execution'], 'unrelated');
+        assert.equal(await docker(
+          'network', 'ls', '--quiet', '--no-trunc',
+          `--filter=label=agent-orchestration.execution=${created.execution}`,
+        ), '');
+      } else {
+        await rejected;
+        const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8');
+        assert.equal(
+          commands.split('\n').filter((line) => line.startsWith('network create ') && line.includes('--internal')).length,
+          1,
+          'an unrelated network-create failure must not be retried',
+        );
+      }
+    } finally {
+      process.chdir(originalCwd);
+      if (replacementName !== '') await docker('network', 'rm', replacementName).catch(() => undefined);
+      await rm(wrapperRoot, { recursive: true, force: true });
+    }
+  }
 });
