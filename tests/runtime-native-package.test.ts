@@ -47,11 +47,16 @@ async function createDisposablePackageProjectForTest(container: string): Promise
   const project = join(container, 'project');
   await mkdir(join(project, 'scripts'), { recursive: true });
   await mkdir(join(project, 'src'), { recursive: true });
+  await mkdir(join(project, 'native', 'linux'), { recursive: true });
   await copyFile(join(process.cwd(), 'package.json'), join(project, 'package.json'));
   await copyFile(join(process.cwd(), 'tsconfig.json'), join(project, 'tsconfig.json'));
   await copyFile(
     join(process.cwd(), 'scripts', 'build-linux-native-helper.mjs'),
     join(project, 'scripts', 'build-linux-native-helper.mjs'),
+  );
+  await copyFile(
+    join(process.cwd(), 'native', 'linux', 'renameat2-helper.c'),
+    join(project, 'native', 'linux', 'renameat2-helper.c'),
   );
   return project;
 }
@@ -118,6 +123,40 @@ test('clean-only refuses a bind-mounted native root without traversing external 
       const unmounted = await runForPackageTest('/usr/bin/umount', [join(fixtureRoot, 'project', 'dist', 'native')]);
       if (unmounted.code !== 0) throw new Error(`privileged test unmount failed: ${unmounted.stderr}`);
     }
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('Linux prepack recovers interrupted native cleanup holders before creating its tarball', {
+  skip: process.platform !== 'linux' || process.env.AO_NATIVE_PACKAGE_TEST !== '1',
+}, async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'runner-v4-native-interruption-'));
+  const packageDirectory = join(fixtureRoot, 'packed');
+  try {
+    const project = await createDisposablePackageProjectForTest(fixtureRoot);
+    const legacyHolder = join(project, 'dist', '.native-clean-ABC123');
+    const currentHolder = join(project, '.agent-orchestration-native-clean', 'holder-ABC123');
+    await mkdir(join(legacyHolder, 'native', 'linux-arm64'), { recursive: true });
+    await writeFile(join(legacyHolder, 'native', 'linux-arm64', 'foreign-helper'), 'legacy foreign helper\n');
+    await mkdir(join(currentHolder, 'detached', 'linux-arm64'), { recursive: true });
+    await writeFile(join(currentHolder, 'detached', 'linux-arm64', 'foreign-helper'), 'current foreign helper\n');
+    await writeFile(join(project, 'src', 'index.ts'), 'export const packageFixture = true;\n');
+    await mkdir(packageDirectory);
+    assert.equal(await lstat(join(project, 'dist', 'native')).catch(() => null), null);
+
+    const command = npmPackCommandForTest(['--json', '--pack-destination', packageDirectory]);
+    const packed = await runForPackageTest(command.executable, command.args, project);
+    assert.equal(packed.code, 0, `${packed.stdout}\n${packed.stderr}`);
+    const results = JSON.parse(packed.stdout) as Array<{ filename: string }>;
+    assert.equal(results.length, 1);
+    const listed = await runForPackageTest('/usr/bin/tar', ['-tzf', join(packageDirectory, results[0]!.filename)]);
+    assert.equal(listed.code, 0, listed.stderr);
+    assert.equal(listed.stdout.includes('.native-clean-'), false);
+    assert.equal(listed.stdout.includes('.agent-orchestration-native-clean'), false);
+    assert.equal(listed.stdout.includes('foreign-helper'), false);
+    await assert.rejects(() => lstat(legacyHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+    await assert.rejects(() => lstat(currentHolder), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
 });

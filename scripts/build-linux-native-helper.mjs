@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,9 +8,12 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const sourcePath = join(projectRoot, 'native', 'linux', 'renameat2-helper.c');
 const distRoot = join(projectRoot, 'dist');
 const nativeRoot = join(distRoot, 'native');
+const cleanupNamespace = join(projectRoot, '.agent-orchestration-native-clean');
 const compilerPath = '/usr/bin/cc';
 const helperName = 'agent-orchestration-renameat2';
 const supportedTargets = new Set(['linux-x64']);
+const cleanupHolderNamePattern = /^holder-[A-Za-z0-9]{6}$/;
+const legacyCleanupHolderNamePattern = /^\.native-clean-[A-Za-z0-9]{6}$/;
 const argumentsAfterScript = process.argv.slice(2);
 if (
   argumentsAfterScript.length > 1
@@ -23,29 +26,115 @@ const cleanOnly = argumentsAfterScript.includes('--clean-only');
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
-async function cleanNativeRoot() {
-  const nativeMetadata = await lstat(nativeRoot).catch((error) => {
+async function loadMetadataOrNull(path) {
+  return lstat(path, { bigint: true }).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  if (nativeMetadata === null) return;
+}
 
-  const distMetadata = await lstat(distRoot);
-  if (!distMetadata.isDirectory() || distMetadata.isSymbolicLink()) {
-    throw new Error('Native build output parent is not a physical directory');
+function requirePhysicalDirectory(metadata) {
+  if (metadata === null || !metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error('Native cleanup path is not a physical directory');
   }
+  return metadata;
+}
 
-  const detachedRoot = await mkdtemp(join(distRoot, '.native-clean-'));
+function requireSameFilesystem(sourceMetadata, cleanupMetadata) {
+  if (sourceMetadata.dev !== cleanupMetadata.dev) {
+    throw new Error('Native cleanup requires a same-filesystem rename');
+  }
+}
+
+async function createCleanupNamespace() {
+  const projectMetadata = requirePhysicalDirectory(await loadMetadataOrNull(projectRoot));
+  await mkdir(cleanupNamespace, { mode: 0o700 }).catch((error) => {
+    if (error.code !== 'EEXIST') throw error;
+  });
+  const cleanupMetadata = requirePhysicalDirectory(await loadMetadataOrNull(cleanupNamespace));
+  requireSameFilesystem(projectMetadata, cleanupMetadata);
+  return cleanupMetadata;
+}
+
+async function validateCleanupHolder(path, allowedChild, cleanupMetadata) {
+  const metadata = requirePhysicalDirectory(await loadMetadataOrNull(path));
+  requireSameFilesystem(metadata, cleanupMetadata);
+  const entries = (await readdir(path)).sort();
+  if (entries.length > 1 || entries.length === 1 && entries[0] !== allowedChild) {
+    throw new Error('Native cleanup holder inventory is invalid');
+  }
+  if (entries.length === 1) {
+    const childMetadata = requirePhysicalDirectory(await loadMetadataOrNull(join(path, allowedChild)));
+    requireSameFilesystem(childMetadata, cleanupMetadata);
+  }
+  return metadata;
+}
+
+async function detachAndRemove(source, sourceMetadata, cleanupMetadata) {
+  requireSameFilesystem(sourceMetadata, cleanupMetadata);
+  const reaper = await mkdtemp(join(cleanupNamespace, 'holder-'));
   try {
-    await rename(nativeRoot, join(detachedRoot, 'native'));
+    await rename(source, join(reaper, 'detached'));
   } catch (error) {
-    await rm(detachedRoot, { recursive: true, force: true }).catch(() => undefined);
+    await rmdir(reaper).catch(() => undefined);
     throw error;
   }
-  await rm(detachedRoot, { recursive: true, force: true });
+  await rm(reaper, { recursive: true, force: true });
+}
+
+async function auditCurrentCleanupHolders(cleanupMetadata) {
+  const names = (await readdir(cleanupNamespace)).sort();
+  for (const name of names) {
+    if (!cleanupHolderNamePattern.test(name)) {
+      throw new Error('Native cleanup holder name is invalid');
+    }
+    const path = join(cleanupNamespace, name);
+    const metadata = await validateCleanupHolder(path, 'detached', cleanupMetadata);
+    await detachAndRemove(path, metadata, cleanupMetadata);
+  }
+  if ((await readdir(cleanupNamespace)).length !== 0) {
+    throw new Error('Native cleanup namespace changed during audit');
+  }
+}
+
+async function auditLegacyCleanupHolders(cleanupMetadata) {
+  const distMetadata = await loadMetadataOrNull(distRoot);
+  if (distMetadata === null) return;
+  requirePhysicalDirectory(distMetadata);
+  requireSameFilesystem(distMetadata, cleanupMetadata);
+  const names = (await readdir(distRoot)).filter((name) => name.startsWith('.native-clean-')).sort();
+  for (const name of names) {
+    if (!legacyCleanupHolderNamePattern.test(name)) {
+      throw new Error('Legacy native cleanup holder name is invalid');
+    }
+    const path = join(distRoot, name);
+    const metadata = await validateCleanupHolder(path, 'native', cleanupMetadata);
+    await detachAndRemove(path, metadata, cleanupMetadata);
+  }
+}
+
+async function cleanNativeRoot() {
+  const cleanupMetadata = await createCleanupNamespace();
+  await auditCurrentCleanupHolders(cleanupMetadata);
+  await auditLegacyCleanupHolders(cleanupMetadata);
+
+  const nativeMetadata = await loadMetadataOrNull(nativeRoot);
+  if (nativeMetadata !== null) {
+    requirePhysicalDirectory(nativeMetadata);
+    await detachAndRemove(nativeRoot, nativeMetadata, cleanupMetadata);
+  }
+
+  if ((await readdir(cleanupNamespace)).length !== 0) {
+    throw new Error('Native cleanup namespace changed during cleanup');
+  }
+  await rmdir(cleanupNamespace);
 }
 
 async function verifyExactInventory(outputDirectory, helperPath, manifestPath) {
+  const packableCleanupEntries = (await readdir(distRoot)).filter((name) => name.startsWith('.native-clean-'));
+  if (packableCleanupEntries.length !== 0 || await loadMetadataOrNull(cleanupNamespace) !== null) {
+    throw new Error('Linux native helper inventory verification failed');
+  }
   const rootEntries = (await readdir(nativeRoot)).sort();
   const expectedDirectory = `linux-${process.arch}`;
   if (rootEntries.length !== 1 || rootEntries[0] !== expectedDirectory) {
