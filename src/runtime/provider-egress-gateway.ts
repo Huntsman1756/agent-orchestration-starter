@@ -6,7 +6,10 @@ import { isIP } from 'node:net';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 
+import { createDockerContainerRemovalControllerV4 } from './process-sandbox.js';
+
 export interface ProviderGatewayLeaseV4 {
+  readonly container_id: string;
   readonly gateway_base_url: string;
   readonly non_secret_api_key_value: 'broker-gateway';
   revoke(): Promise<void>;
@@ -30,6 +33,7 @@ export interface ProviderGatewayStartRequestV4 {
 interface GatewayBootPayloadV4 {
   readonly api_key: string;
   readonly ca_pem: string;
+  readonly listen_address: string;
 }
 
 const execFileAsync = promisify(execFile);
@@ -57,6 +61,15 @@ async function docker(executable: string, argv: readonly string[]): Promise<stri
   } catch {
     unavailable();
   }
+}
+
+async function exactContainerIdPresentV4(executable: string, containerId: string): Promise<boolean> {
+  const output = await docker(executable, [
+    'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
+  ]);
+  if (output === '') return false;
+  if (output === containerId) return true;
+  unavailable();
 }
 
 function gatewayContainerName(executionId: string): string {
@@ -113,6 +126,57 @@ async function validateNetwork(
   }
 }
 
+async function inspectGatewayNetworkBindingV4(
+  executable: string,
+  containerId: string,
+  internalNetwork: string,
+  outboundNetwork: string,
+  outboundAddress: string,
+): Promise<string> {
+  const raw = await docker(executable, ['inspect', containerId]);
+  try {
+    const values = JSON.parse(raw) as Array<{
+      Id?: unknown;
+      NetworkSettings?: { Networks?: Record<string, { IPAddress?: unknown }> };
+    }>;
+    const value = values[0];
+    const networks = value?.NetworkSettings?.Networks;
+    if (values.length !== 1 || value?.Id !== containerId || networks === undefined) unavailable();
+    const names = Object.keys(networks).sort();
+    if (names.length !== 2 || names[0] !== [internalNetwork, outboundNetwork].sort()[0] || names[1] !== [internalNetwork, outboundNetwork].sort()[1]) unavailable();
+    const internalAddress = networks[internalNetwork]?.IPAddress;
+    if (typeof internalAddress !== 'string'
+      || isIP(internalAddress) === 0
+      || internalAddress === '0.0.0.0'
+      || internalAddress === '::'
+      || networks[outboundNetwork]?.IPAddress !== outboundAddress) unavailable();
+    return internalAddress;
+  } catch {
+    unavailable();
+  }
+}
+
+async function waitForGatewayNetworkBindingV4(
+  request: ProviderGatewayStartRequestV4,
+  containerId: string,
+): Promise<string> {
+  const deadline = Date.now() + request.startup_timeout_ms;
+  while (Date.now() < deadline) {
+    try {
+      return await inspectGatewayNetworkBindingV4(
+        request.docker_executable,
+        containerId,
+        request.internal_network,
+        request.outbound_network,
+        request.outbound_address,
+      );
+    } catch {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    }
+  }
+  unavailable();
+}
+
 export async function startProviderEgressGatewayV4(
   request: ProviderGatewayStartRequestV4,
 ): Promise<ProviderGatewayLeaseV4> {
@@ -133,20 +197,27 @@ export async function startProviderEgressGatewayV4(
     '--allowed-method=POST',
     '--allowed-path=/v1/chat/completions',
   ];
-  await docker(request.docker_executable, createArgs);
+  const containerId = await docker(request.docker_executable, createArgs);
+  if (!/^[a-f0-9]{64}$/.test(containerId)) unavailable();
   let attach: ReturnType<typeof spawn> | null = null;
-  let revoked = false;
+  const removal = createDockerContainerRemovalControllerV4(containerId, {
+    inspect_exact_id: async (id) => await exactContainerIdPresentV4(request.docker_executable, id),
+    force_remove_exact_id: async (id) => {
+      const removed = await docker(request.docker_executable, ['rm', '--force', id]);
+      if (removed !== id) unavailable();
+    },
+    poll_interval_ms: 25,
+    absence_timeout_ms: 5_000,
+  });
   const cleanup = async (): Promise<void> => {
-    if (revoked) return;
-    revoked = true;
-    await docker(request.docker_executable, ['rm', '--force', name]).catch(() => undefined);
+    await removal.remove();
     if (attach !== null && attach.exitCode === null && attach.signalCode === null) attach.kill('SIGKILL');
   };
   try {
-    await docker(request.docker_executable, ['network', 'disconnect', 'none', name]);
-    await docker(request.docker_executable, ['network', 'connect', '--alias=provider-gateway', request.internal_network, name]);
-    await docker(request.docker_executable, ['network', 'connect', `--ip=${request.outbound_address}`, request.outbound_network, name]);
-    attach = spawn(request.docker_executable, ['start', '--attach', '--interactive', name], {
+    await docker(request.docker_executable, ['network', 'disconnect', 'none', containerId]);
+    await docker(request.docker_executable, ['network', 'connect', '--alias=provider-gateway', request.internal_network, containerId]);
+    await docker(request.docker_executable, ['network', 'connect', `--ip=${request.outbound_address}`, request.outbound_network, containerId]);
+    attach = spawn(request.docker_executable, ['start', '--attach', '--interactive', containerId], {
       shell: false,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -156,6 +227,7 @@ export async function startProviderEgressGatewayV4(
     const attachedStdin = attached.stdin;
     const attachedStdout = attached.stdout;
     if (attachedStdin === null || attachedStdout === null) unavailable();
+    const listenAddress = await waitForGatewayNetworkBindingV4(request, containerId);
     await new Promise<void>((resolvePromise, reject) => {
       let buffered = '';
       let settled = false;
@@ -184,13 +256,14 @@ export async function startProviderEgressGatewayV4(
       });
       attached.once('error', () => finish(new Error('gateway attach failed')));
       attached.once('close', () => finish(new Error('gateway exited before readiness')));
-      attachedStdin.end(`${JSON.stringify({ api_key: request.real_api_key, ca_pem: request.ca_pem })}\n`);
+      attachedStdin.end(`${JSON.stringify({ api_key: request.real_api_key, ca_pem: request.ca_pem, listen_address: listenAddress })}\n`);
     });
   } catch {
     await cleanup();
     unavailable();
   }
   return Object.freeze({
+    container_id: containerId,
     gateway_base_url: 'http://provider-gateway:8080/v1',
     non_secret_api_key_value: 'broker-gateway' as const,
     revoke: cleanup,
@@ -410,8 +483,12 @@ async function readBootPayload(): Promise<GatewayBootPayloadV4> {
     if (typeof value.api_key !== 'string'
       || value.api_key.length < 16
       || typeof value.ca_pem !== 'string'
-      || !value.ca_pem.includes('-----BEGIN CERTIFICATE-----')) unavailable();
-    return { api_key: value.api_key, ca_pem: value.ca_pem };
+      || !value.ca_pem.includes('-----BEGIN CERTIFICATE-----')
+      || typeof value.listen_address !== 'string'
+      || isIP(value.listen_address) === 0
+      || value.listen_address === '0.0.0.0'
+      || value.listen_address === '::') unavailable();
+    return { api_key: value.api_key, ca_pem: value.ca_pem, listen_address: value.listen_address };
   } catch {
     unavailable();
   }
@@ -431,7 +508,7 @@ async function serveGateway(): Promise<void> {
   server.keepAliveTimeout = 2_000;
   await new Promise<void>((resolvePromise, reject) => {
     server.once('error', reject);
-    server.listen(8080, '0.0.0.0', resolvePromise);
+    server.listen(8080, boot.listen_address, resolvePromise);
   });
   process.stdout.write(`${JSON.stringify({ event: 'GATEWAY_READY', host: origin.hostname })}\n`);
 }

@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
-import { createServer as createTcpServer } from 'node:net';
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -13,20 +11,19 @@ import {
   createDockerProcessSandboxV4,
   inspectDockerSandboxIdentityV4,
   runDockerSandboxCertificationCandidateV4,
+  runDockerSandboxHostileCertificationV4,
   type DockerSandboxConfigV4,
 } from '../src/runtime/docker-sandbox.js';
 import { startProviderEgressGatewayV4 } from '../src/runtime/provider-egress-gateway.js';
 import {
   REQUIRED_SANDBOX_EFFECTS_V4,
-  createSandboxCertificationV4,
-  type SandboxHostileEffectV4,
+  validateSandboxCertificationTranscriptV4,
 } from '../src/runtime/sandbox-certification.js';
 
 const imageId = process.env.AO_SANDBOX_IMAGE;
 const dockerIntegration = imageId?.startsWith('sha256:') ? test : test.skip;
 const fixtureDirectory = dirname(fileURLToPath(new URL('./fixtures/sandbox/hostile-child.mjs', import.meta.url)));
 const execFileAsync = promisify(execFile);
-const observedEffects: Partial<Record<SandboxHostileEffectV4, true>> = {};
 
 async function docker(...argv: string[]): Promise<string> {
   const { stdout } = await execFileAsync('docker', argv, { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });
@@ -77,12 +74,15 @@ async function startTlsFixture(options: {
   await waitForContainer(options.name);
 }
 
-function config(): DockerSandboxConfigV4 {
+function config(allowedMountRoots: readonly string[] = [dirname(process.cwd())]): DockerSandboxConfigV4 {
   return {
     docker_executable: 'docker',
     image_id: imageId as `sha256:${string}`,
     certification_ttl_seconds: 900,
     provider_hosts: ['api.arliai.com'],
+    allowed_mount_roots: allowedMountRoots,
+    active_worktree: process.cwd(),
+    broker_state_directory: join(dirname(process.cwd()), '.ao-broker-state-not-mounted'),
   };
 }
 
@@ -112,92 +112,73 @@ dockerIntegration('trusted sandbox image runs as uid 1000 with the exact pinned 
   assert.match(evidence.codex, /(?:^|\s)0\.147\.0(?:$|\s)/);
 });
 
-dockerIntegration('hostile validation cannot observe or mutate host state and hits the OS PID ceiling', { timeout: 60_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-sandbox-hostile-'));
-  const capsule = join(root, 'capsule');
-  const sentinel = join(root, 'outside', 'secret.txt');
-  let loopbackConnections = 0;
-  const loopbackServer = createTcpServer((socket) => {
-    loopbackConnections += 1;
-    socket.destroy();
-  });
-  await new Promise<void>((resolvePromise, reject) => {
-    loopbackServer.once('error', reject);
-    loopbackServer.listen(0, '127.0.0.1', resolvePromise);
-  });
-  const loopbackAddress = loopbackServer.address();
-  assert.notEqual(loopbackAddress, null);
-  assert.equal(typeof loopbackAddress, 'object');
-  const loopbackPort = typeof loopbackAddress === 'object' && loopbackAddress !== null ? loopbackAddress.port : 0;
+dockerIntegration('production-owned hostile runner records all 17 effects in one bounded live transcript', { timeout: 120_000 }, async () => {
+  const identity = await inspectDockerSandboxIdentityV4(config(), 'VALIDATION_UNTRUSTED');
+  const transcript = await runDockerSandboxHostileCertificationV4(config(), identity);
+  const evidence = validateSandboxCertificationTranscriptV4(
+    transcript,
+    identity,
+    config().certification_ttl_seconds,
+    new Date().toISOString(),
+  );
+
+  assert.match(evidence.evidence_hash, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(
+    transcript.observations.map((observation) => observation.effect).sort(),
+    [...REQUIRED_SANDBOX_EFFECTS_V4].sort(),
+  );
+  assert.deepEqual(
+    [...new Set(transcript.artifacts.map((artifact) => artifact.kind))].sort(),
+    ['DOCKER_IDENTITY_RESULT', 'GATEWAY_NETWORK_RESULT', 'HOSTILE_PROCESS_RESULT', 'TIMEOUT_TREE_RESULT'],
+  );
+});
+
+dockerIntegration('Docker effects reject a mount alias introduced before create and preserve its target', { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-sandbox-mount-alias-'));
+  const allowed = join(root, 'allowed');
+  const outside = join(root, 'outside');
+  const alias = join(allowed, 'capsule');
+  const sentinel = join(outside, 'sentinel.txt');
   try {
-    await mkdir(capsule, { recursive: true });
-    await mkdir(dirname(sentinel), { recursive: true });
-    await copyFile(join(fixtureDirectory, 'hostile-child.mjs'), join(capsule, 'hostile-child.mjs'));
-    await writeFile(sentinel, 'synthetic-outside-sentinel', 'utf8');
-
-    const result = await runDockerSandboxCertificationCandidateV4(config(), {
-      execution_id: 'exec_hostile_audit_0001',
-      profile: 'VALIDATION_UNTRUSTED',
-      argv: [
-        'node', '/capsule/hostile-child.mjs', 'audit',
-        `--outside-host-path=${sentinel}`, `--host-home=${homedir()}`,
-        `--host-loopback-port=${loopbackPort}`,
-      ],
-      working_directory: '/capsule',
-      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
-      mounts: [{ source: capsule, target: '/capsule', access: 'READ_ONLY' }],
-      network: { mode: 'NONE' },
-      timeout_ms: 30_000,
-      max_output_bytes: 64 * 1024,
-    });
-
-    assert.equal(result.exit_code, 0, result.stderr);
-    const evidence = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-    assert.equal(evidence.outside_sentinel_readable, false);
-    assert.equal(evidence.host_home_enumerable, false);
-    assert.deepEqual(evidence.credential_environment, {});
-    assert.deepEqual(evidence.credential_argv, []);
-    assert.equal(evidence.credential_files, false);
-    assert.deepEqual(evidence.descendant_credential_environment, {});
-    assert.deepEqual(evidence.descendant_credential_argv, []);
-    assert.equal(evidence.outside_write_succeeded, false);
-    assert.equal((evidence.pid_limit as { rejected: number }).rejected > 0, true);
-    assert.equal(evidence.docker_socket_exists, false);
-    assert.equal(evidence.docker_socket_connectable, false);
-    assert.equal(evidence.host_loopback_connectable, false);
-    assert.equal(evidence.host_loopback_port, loopbackPort);
-    assert.equal(loopbackConnections, 0);
-    assert.equal(await readFile(sentinel, 'utf8'), 'synthetic-outside-sentinel');
-    Object.assign(observedEffects, {
-      outside_sentinel_blocked: true,
-      host_home_blocked: true,
-      credential_environment_blocked: true,
-      credential_argv_blocked: true,
-      credential_files_blocked: true,
-      descendant_state_blocked: true,
-      outside_write_blocked: true,
-      pid_limit_enforced: true,
-      docker_socket_blocked: true,
-      loopback_blocked: true,
-    } satisfies Partial<Record<SandboxHostileEffectV4, true>>);
+    await Promise.all([mkdir(allowed, { recursive: true }), mkdir(outside, { recursive: true })]);
+    await writeFile(sentinel, 'mount-alias-sentinel', 'utf8');
+    await symlink(outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(
+      () => runDockerSandboxCertificationCandidateV4(config([allowed]), {
+        execution_id: 'exec_hostile_mount_alias_0001',
+        profile: 'VALIDATION_UNTRUSTED',
+        argv: ['node', '-e', "process.stdout.write(require('node:fs').readFileSync('/capsule/sentinel.txt','utf8'))"],
+        working_directory: '/capsule',
+        environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+        mounts: [{ source: alias, target: '/capsule', access: 'READ_ONLY' }],
+        network: { mode: 'NONE' },
+        timeout_ms: 5_000,
+        max_output_bytes: 4_096,
+      }),
+      /PROCESS_SANDBOX_UNAVAILABLE/,
+    );
+    assert.equal(await readFile(sentinel, 'utf8'), 'mount-alias-sentinel');
+    await assert.rejects(() => docker('inspect', 'ao-exec-hostile-mount-alias-0001'));
   } finally {
-    await new Promise<void>((resolvePromise) => loopbackServer.close(() => resolvePromise()));
+    await docker('rm', '--force', 'ao-exec-hostile-mount-alias-0001').catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });
 
-dockerIntegration('timeout kills the whole container process tree before a detached grandchild can write', { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-sandbox-timeout-'));
+dockerIntegration('timeout removes the immutable container ID and preserves a name replacement', { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-sandbox-timeout-id-'));
   const capsule = join(root, 'capsule');
   const scratch = join(root, 'scratch');
   const survivor = join(scratch, 'grandchild-survived.txt');
+  const name = 'ao-exec-hostile-timeout-id-0001';
+  const preserved = `${name}-preserved`;
+  let originalId = '';
+  let replacementId = '';
   try {
-    await mkdir(capsule, { recursive: true });
-    await mkdir(scratch, { recursive: true });
+    await Promise.all([mkdir(capsule, { recursive: true }), mkdir(scratch, { recursive: true })]);
     await copyFile(join(fixtureDirectory, 'hostile-child.mjs'), join(capsule, 'hostile-child.mjs'));
-
-    const result = await runDockerSandboxCertificationCandidateV4(config(), {
-      execution_id: 'exec_hostile_timeout_0001',
+    const running = runDockerSandboxCertificationCandidateV4(config([root]), {
+      execution_id: 'exec_hostile_timeout_id_0001',
       profile: 'VALIDATION_UNTRUSTED',
       argv: ['node', '/capsule/hostile-child.mjs', 'grandchild', '/scratch/grandchild-survived.txt'],
       working_directory: '/capsule',
@@ -207,21 +188,34 @@ dockerIntegration('timeout kills the whole container process tree before a detac
         { source: scratch, target: '/scratch', access: 'READ_WRITE' },
       ],
       network: { mode: 'NONE' },
-      timeout_ms: 500,
+      timeout_ms: 750,
       max_output_bytes: 4_096,
     });
+    await waitForContainer(name);
+    originalId = await docker('inspect', '--format', '{{.Id}}', name);
+    await docker('rename', name, preserved);
+    replacementId = await docker(
+      'create', `--name=${name}`, '--read-only', '--cap-drop=ALL',
+      '--security-opt=no-new-privileges', '--network=none', config().image_id,
+      'node', '-e', 'setInterval(()=>{},2147483647)',
+    );
 
+    const result = await running;
     assert.equal(result.timed_out, true);
+    await assert.rejects(() => docker('inspect', originalId), 'timeout must remove the original exact ID');
+    assert.equal(await docker('inspect', '--format', '{{.Id}}', replacementId), replacementId);
     await new Promise((resolve) => setTimeout(resolve, 2_500));
     await assert.rejects(() => readFile(survivor), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
-    observedEffects.timeout_tree_killed = true;
   } finally {
+    await Promise.all([name, preserved, originalId, replacementId].filter((value) => value !== '').map(async (value) => {
+      await docker('rm', '--force', value).catch(() => undefined);
+    }));
     await rm(root, { recursive: true, force: true });
   }
 });
 
 dockerIntegration('networked executor reaches only the authenticated TLS gateway and never receives the real credential', { timeout: 90_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-sandbox-gateway-'));
+  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-sandbox-gateway-'));
   const capsule = join(root, 'capsule');
   const certAllowed = join(root, 'cert-allowed');
   const certBlocked = join(root, 'cert-blocked');
@@ -231,9 +225,12 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
   const allowedFixture = 'ao-upstream-allowed-0001';
   const blockedFixture = 'ao-upstream-blocked-0001';
   const gatewayContainer = 'ao-gateway-exec-hostile-network-0001';
+  const preservedGatewayContainer = `${gatewayContainer}-preserved`;
   const executorContainer = 'ao-exec-hostile-network-0001';
   const syntheticCredential = 'synthetic-arliai-credential-task4-only';
   let lease: Awaited<ReturnType<typeof startProviderEgressGatewayV4>> | null = null;
+  let gatewayOriginalId = '';
+  let replacementId = '';
   try {
     await Promise.all([mkdir(capsule), mkdir(certAllowed), mkdir(certBlocked)]);
     await copyFile(join(fixtureDirectory, 'network-probe.mjs'), join(capsule, 'network-probe.mjs'));
@@ -259,7 +256,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       startup_timeout_ms: 10_000,
     });
 
-    const runPromise = runDockerSandboxCertificationCandidateV4(config(), {
+    const runPromise = runDockerSandboxCertificationCandidateV4(config([root]), {
       execution_id: executionId,
       profile: 'EXECUTOR_NETWORKED',
       argv: [
@@ -301,22 +298,37 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
     );
     assert.equal(evidence.non_allowlisted.status, 403);
     assert.equal(evidence.direct_ip.ok, false);
+    const outboundIngress = JSON.parse(await docker(
+      'exec', blockedFixture, 'node', '-e',
+      "fetch('http://93.184.216.20:8080/v1/chat/completions',{method:'POST',body:'{}',signal:AbortSignal.timeout(1500)}).then((response)=>console.log(JSON.stringify({connected:true,status:response.status}))).catch(()=>console.log(JSON.stringify({connected:false})))",
+    )) as { connected: boolean; status?: number };
+    assert.equal(outboundIngress.connected, false, 'gateway ingress must not listen on its outbound-network interface');
     assert.doesNotMatch(await docker('logs', blockedFixture), /"event":"REQUEST"/);
     const gatewayLogs = await docker('logs', gatewayContainer);
     assert.doesNotMatch(gatewayLogs, /synthetic-arliai|authorization|request_body|response_body/i);
     assert.match(gatewayLogs, /"decision":"ALLOW"/);
     assert.match(gatewayLogs, /"decision":"DENY"/);
-    Object.assign(observedEffects, {
-      gateway_allowlisted_success: true,
-      gateway_non_allowlisted_blocked: true,
-      direct_ip_blocked: true,
-      gateway_credential_separated: true,
-      gateway_no_repository_mount: true,
-      metadata_only_logs: true,
-    } satisfies Partial<Record<SandboxHostileEffectV4, true>>);
+    gatewayOriginalId = await docker('inspect', '--format', '{{.Id}}', gatewayContainer);
+    await docker('rename', gatewayContainer, preservedGatewayContainer);
+    replacementId = await docker(
+      'create', `--name=${gatewayContainer}`, '--read-only', '--cap-drop=ALL',
+      '--security-opt=no-new-privileges', '--network=none', config().image_id,
+      'node', '-e', 'setInterval(()=>{},2147483647)',
+    );
+    await Promise.all([lease.revoke(), lease.revoke(), lease.revoke()]);
+    lease = null;
+    await assert.rejects(() => docker('inspect', gatewayOriginalId), 'the exact leased gateway ID must be absent');
+    assert.equal(
+      await docker('inspect', '--format', '{{.Id}}', replacementId),
+      replacementId,
+      'a replacement that acquired the old name must remain untouched',
+    );
   } finally {
     await lease?.revoke().catch(() => undefined);
-    await Promise.all([allowedFixture, blockedFixture, gatewayContainer, executorContainer].map(async (name) => {
+    await Promise.all([
+      allowedFixture, blockedFixture, gatewayContainer, preservedGatewayContainer,
+      executorContainer, gatewayOriginalId, replacementId,
+    ].filter((name) => name !== '').map(async (name) => {
       await docker('rm', '--force', name).catch(() => undefined);
     }));
     await Promise.all([internalNetwork, outboundNetwork].map(async (name) => {
@@ -327,24 +339,19 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
 });
 
 dockerIntegration('fresh hostile evidence certifies only the exact Docker host, image, policy, and broker', { timeout: 60_000 }, async () => {
-  assert.deepEqual(
-    REQUIRED_SANDBOX_EFFECTS_V4.filter((effect) => observedEffects[effect] !== true),
-    [],
-    'every hostile effect must pass in this process before a certificate can be issued',
-  );
   const identity = await inspectDockerSandboxIdentityV4(config(), 'VALIDATION_UNTRUSTED');
-  const certifiedAt = new Date().toISOString();
-  const certification = createSandboxCertificationV4(identity, observedEffects, config().certification_ttl_seconds, certifiedAt);
-  const backend = createDockerProcessSandboxV4(config(), { certifications: [certification] });
+  const probeStartedAt = Date.now();
+  const backend = createDockerProcessSandboxV4(config());
 
   const probe = await backend.probe('VALIDATION_UNTRUSTED');
-  assert.deepEqual(probe, {
-    status: 'SUPPORTED',
-    backend_id: 'docker-engine-linux-v4',
-    policy_hash: identity.policy_hash,
-    certification_hash: certification.certification_hash,
-    expires_at: certification.expires_at,
-  });
+  assert.equal(probe.status, 'SUPPORTED', 'production probe must run and validate the built-in hostile runner');
+  if (probe.status !== 'SUPPORTED') assert.fail('production hostile certification is required');
+  assert.equal(probe.backend_id, 'docker-engine-linux-v4');
+  assert.equal(probe.policy_hash, identity.policy_hash);
+  assert.match(probe.certification_hash, /^sha256:[a-f0-9]{64}$/);
+  const expiresAt = new Date(probe.expires_at).getTime();
+  assert.equal(expiresAt > probeStartedAt, true);
+  assert.equal(expiresAt <= Date.now() + config().certification_ttl_seconds * 1_000, true);
   const result = await backend.run({
     execution_id: 'exec_certified_smoke_0001',
     profile: 'VALIDATION_UNTRUSTED',
@@ -359,4 +366,43 @@ dockerIntegration('fresh hostile evidence certifies only the exact Docker host, 
   assert.equal(result.exit_code, 0, result.stderr);
   assert.equal(result.stdout, 'certified');
   await backend.terminate('exec_certified_smoke_0001');
+
+  const terminatingName = 'ao-exec-certified-terminate-0001';
+  const preservedName = `${terminatingName}-preserved`;
+  let terminatingId = '';
+  let replacementId = '';
+  try {
+    const terminating = backend.run({
+      execution_id: 'exec_certified_terminate_0001',
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: ['node', '-e', 'setInterval(()=>{},2147483647)'],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [],
+      network: { mode: 'NONE' },
+      timeout_ms: 10_000,
+      max_output_bytes: 4_096,
+    });
+    await waitForContainer(terminatingName);
+    terminatingId = await docker('inspect', '--format', '{{.Id}}', terminatingName);
+    await docker('rename', terminatingName, preservedName);
+    replacementId = await docker(
+      'create', `--name=${terminatingName}`, '--read-only', '--cap-drop=ALL',
+      '--security-opt=no-new-privileges', '--network=none', config().image_id,
+      'node', '-e', 'setInterval(()=>{},2147483647)',
+    );
+    await Promise.all([
+      backend.terminate('exec_certified_terminate_0001'),
+      backend.terminate('exec_certified_terminate_0001'),
+      backend.terminate('exec_certified_terminate_0001'),
+    ]);
+    await assert.rejects(() => docker('inspect', terminatingId));
+    await terminating;
+    assert.equal(await docker('inspect', '--format', '{{.Id}}', replacementId), replacementId);
+    await backend.terminate('exec_certified_terminate_0001');
+  } finally {
+    await Promise.all([terminatingName, preservedName, terminatingId, replacementId].filter((value) => value !== '').map(async (value) => {
+      await docker('rm', '--force', value).catch(() => undefined);
+    }));
+  }
 });

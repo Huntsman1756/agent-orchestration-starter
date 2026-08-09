@@ -1,25 +1,37 @@
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { createServer as createTcpServer } from 'node:net';
+import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { hashCanonicalV4 } from './canonical.js';
 import type {
+  DockerContainerRemovalControllerV4,
   ProcessSandboxBackendV4,
   SandboxProbeResultV4,
   SandboxProfileV4,
   SandboxRunRequestV4,
 } from './process-sandbox.js';
+import { createDockerContainerRemovalControllerV4 } from './process-sandbox.js';
+export { createDockerContainerRemovalControllerV4 } from './process-sandbox.js';
 import {
-  matchesSandboxCertificationV4,
+  REQUIRED_SANDBOX_EFFECTS_V4,
+  validateSandboxCertificationTranscriptV4,
   type SandboxCertificationIdentityV4,
-  type SandboxCertificationV4,
+  type SandboxCertificationTranscriptV4,
 } from './sandbox-certification.js';
+import { startProviderEgressGatewayV4 } from './provider-egress-gateway.js';
 
 export interface DockerSandboxConfigV4 {
   docker_executable: string;
   image_id: `sha256:${string}`;
   certification_ttl_seconds: number;
   provider_hosts: readonly string[];
+  allowed_mount_roots: readonly string[];
+  active_worktree: string;
+  broker_state_directory: string;
 }
 
 export const DOCKER_ISOLATION_ARGS_V4 = Object.freeze([
@@ -52,13 +64,28 @@ function isWithin(parent: string, child: string): boolean {
   return value === '' || (!value.startsWith('..') && !isAbsolute(value));
 }
 
+function overlaps(left: string, right: string): boolean {
+  return isWithin(left, right) || isWithin(right, left);
+}
+
 export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): void {
   if (config.docker_executable.length === 0 || config.docker_executable.includes('\0')) unavailable();
   if (!/^sha256:[a-f0-9]{64}$/.test(config.image_id)) unavailable();
   if (!Number.isSafeInteger(config.certification_ttl_seconds)
     || config.certification_ttl_seconds < 1
-    || config.certification_ttl_seconds > 86_400) unavailable();
+    || config.certification_ttl_seconds > 900) unavailable();
   if (config.provider_hosts.length !== 1 || config.provider_hosts[0] !== 'api.arliai.com') unavailable();
+  if (config.allowed_mount_roots.length === 0
+    || config.allowed_mount_roots.length > 16
+    || !isAbsolute(config.active_worktree)
+    || !isAbsolute(config.broker_state_directory)
+    || config.active_worktree.includes('\0')
+    || config.broker_state_directory.includes('\0')) unavailable();
+  const roots = new Set<string>();
+  for (const root of config.allowed_mount_roots) {
+    if (!isAbsolute(root) || root.includes('\0') || root.includes(',') || resolve(root) !== root || roots.has(root)) unavailable();
+    roots.add(root);
+  }
 }
 
 export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4): void {
@@ -81,14 +108,123 @@ export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, re
 
   const targets = new Set<string>();
   for (const mount of request.mounts) {
-    if (!isAbsolute(mount.source) || mount.source.includes('\0') || mount.source.includes(',')) unavailable();
+    if (!isAbsolute(mount.source)
+      || resolve(mount.source) !== mount.source
+      || mount.source.includes('\0')
+      || mount.source.includes(',')
+      || !(['/capsule', '/workspace', '/scratch'] as const).includes(mount.target)
+      || !(['READ_ONLY', 'READ_WRITE'] as const).includes(mount.access)) unavailable();
     if (targets.has(mount.target)) unavailable();
     targets.add(mount.target);
     const normalized = mount.source.replaceAll('\\', '/').toLowerCase();
     if (normalized === '/var/run/docker.sock' || normalized.endsWith('/docker.sock')) unavailable();
-    if (isWithin(mount.source, homedir()) || isWithin(process.cwd(), mount.source)) unavailable();
-    if (credentialLocations.some((location) => isWithin(join(homedir(), location), mount.source))) unavailable();
+    if (!config.allowed_mount_roots.some((root) => isWithin(root, mount.source))) unavailable();
+    if (overlaps(mount.source, homedir())
+      || overlaps(mount.source, config.active_worktree)
+      || overlaps(mount.source, config.broker_state_directory)) unavailable();
+    if (credentialLocations.some((location) => overlaps(join(homedir(), location), mount.source))) unavailable();
   }
+}
+
+interface PhysicalPathIdentityV4 {
+  readonly path: string;
+  readonly device: string;
+  readonly inode: string;
+}
+
+export interface DockerSandboxMountProofV4 {
+  readonly request_hash: `sha256:${string}`;
+  readonly policy_hash: `sha256:${string}`;
+  readonly sources: readonly {
+    readonly source: string;
+    readonly canonical_source: string;
+    readonly chain: readonly PhysicalPathIdentityV4[];
+  }[];
+}
+
+const issuedMountProofs = new WeakSet<object>();
+
+function normalizedPhysicalPath(value: string): string {
+  const normalized = resolve(value);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+async function inspectPhysicalSourceV4(source: string): Promise<{
+  source: string;
+  canonical_source: string;
+  chain: readonly PhysicalPathIdentityV4[];
+}> {
+  const paths: string[] = [];
+  let current = resolve(source);
+  const root = parse(current).root;
+  while (true) {
+    paths.push(current);
+    if (current === root) break;
+    const parent = dirname(current);
+    if (parent === current) unavailable();
+    current = parent;
+  }
+  paths.reverse();
+  const chain: PhysicalPathIdentityV4[] = [];
+  for (const path of paths) {
+    let metadata: Awaited<ReturnType<typeof lstat>>;
+    try {
+      metadata = await lstat(path, { bigint: true });
+    } catch {
+      unavailable();
+    }
+    if (metadata.isSymbolicLink() || !metadata.isDirectory() || metadata.ino <= 0n || metadata.dev < 0n) unavailable();
+    chain.push(Object.freeze({ path, device: String(metadata.dev), inode: String(metadata.ino) }));
+  }
+  let canonical: string;
+  try {
+    canonical = await realpath(source);
+  } catch {
+    unavailable();
+  }
+  if (normalizedPhysicalPath(canonical) !== normalizedPhysicalPath(source)) unavailable();
+  return Object.freeze({ source, canonical_source: canonical, chain: Object.freeze(chain) });
+}
+
+function mountRequestHashV4(request: SandboxRunRequestV4): `sha256:${string}` {
+  return `sha256:${hashCanonicalV4({ mounts: request.mounts, execution_id: request.execution_id })}`;
+}
+
+function mountPolicyHashV4(config: DockerSandboxConfigV4): `sha256:${string}` {
+  return `sha256:${hashCanonicalV4({
+    active_worktree: config.active_worktree,
+    allowed_mount_roots: config.allowed_mount_roots,
+    broker_state_directory: config.broker_state_directory,
+  })}`;
+}
+
+export async function proveDockerSandboxMountsV4(
+  config: DockerSandboxConfigV4,
+  request: SandboxRunRequestV4,
+): Promise<DockerSandboxMountProofV4> {
+  validateDockerSandboxRequestV4(config, request);
+  const sources = await Promise.all(request.mounts.map(async (mount) => await inspectPhysicalSourceV4(mount.source)));
+  const proof = Object.freeze({
+    request_hash: mountRequestHashV4(request),
+    policy_hash: mountPolicyHashV4(config),
+    sources: Object.freeze(sources),
+  });
+  issuedMountProofs.add(proof);
+  return proof;
+}
+
+export async function reproveDockerSandboxMountsV4(
+  config: DockerSandboxConfigV4,
+  request: SandboxRunRequestV4,
+  proof: DockerSandboxMountProofV4,
+): Promise<void> {
+  validateDockerSandboxRequestV4(config, request);
+  if (!issuedMountProofs.has(proof)
+    || proof.request_hash !== mountRequestHashV4(request)
+    || proof.policy_hash !== mountPolicyHashV4(config)
+    || proof.sources.length !== request.mounts.length) unavailable();
+  const current = await Promise.all(request.mounts.map(async (mount) => await inspectPhysicalSourceV4(mount.source)));
+  if (hashCanonicalV4(current) !== hashCanonicalV4(proof.sources)) unavailable();
 }
 
 function containerName(executionId: string): string {
@@ -122,6 +258,11 @@ export function dockerSandboxPolicyHashV4(config: DockerSandboxConfigV4, profile
     isolation_args: DOCKER_ISOLATION_ARGS_V4,
     profile,
     provider_hosts: [...config.provider_hosts],
+    mount_policy: {
+      active_worktree: config.active_worktree,
+      allowed_mount_roots: [...config.allowed_mount_roots],
+      broker_state_directory: config.broker_state_directory,
+    },
   })}`;
 }
 
@@ -193,8 +334,30 @@ async function runDockerCliV4(
   });
 }
 
-async function forceRemoveContainerV4(config: DockerSandboxConfigV4, name: string): Promise<void> {
-  await runDockerCliV4(config.docker_executable, ['rm', '--force', name], 4_096).catch(() => undefined);
+async function exactContainerIdPresentV4(config: DockerSandboxConfigV4, containerId: string): Promise<boolean> {
+  const result = await runDockerCliV4(config.docker_executable, [
+    'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
+  ], 4_096).catch(() => unavailable());
+  if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) unavailable();
+  const output = result.stdout.trim();
+  if (output === '') return false;
+  if (output === containerId) return true;
+  unavailable();
+}
+
+function removalControllerV4(config: DockerSandboxConfigV4, containerId: string) {
+  return createDockerContainerRemovalControllerV4(containerId, {
+    inspect_exact_id: async (id) => await exactContainerIdPresentV4(config, id),
+    force_remove_exact_id: async (id) => {
+      const result = await runDockerCliV4(config.docker_executable, ['rm', '--force', id], 4_096).catch(() => unavailable());
+      if (result.exitCode !== 0
+        || result.stdoutTruncated
+        || result.stderrTruncated
+        || result.stdout.trim() !== id) unavailable();
+    },
+    poll_interval_ms: 25,
+    absence_timeout_ms: 5_000,
+  });
 }
 
 function mountArgs(request: SandboxRunRequestV4): string[] {
@@ -229,7 +392,7 @@ async function assertInternalNetworkV4(config: DockerSandboxConfigV4, request: S
 async function runAttachedContainerProcessV4(
   config: DockerSandboxConfigV4,
   request: SandboxRunRequestV4,
-  name: string,
+  removal: DockerContainerRemovalControllerV4,
   executableArgs: readonly string[],
 ): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
   const startedAt = Date.now();
@@ -258,9 +421,10 @@ async function runAttachedContainerProcessV4(
     stderrTruncated ||= appended.truncated;
   });
   let timedOut = false;
+  let timeoutCleanup: Promise<void> | null = null;
   const timeout = setTimeout(() => {
     timedOut = true;
-    void forceRemoveContainerV4(config, name).finally(() => {
+    timeoutCleanup = removal.remove().finally(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     });
   }, request.timeout_ms);
@@ -273,11 +437,18 @@ async function runAttachedContainerProcessV4(
     });
   } catch {
     clearTimeout(timeout);
-    await forceRemoveContainerV4(config, name);
+    await removal.remove();
     unavailable();
   }
   clearTimeout(timeout);
-  if (timedOut) await forceRemoveContainerV4(config, name);
+  if (timedOut) {
+    if (timeoutCleanup === null) unavailable();
+    try {
+      await timeoutCleanup;
+    } catch {
+      unavailable();
+    }
+  }
   return Object.freeze({
     execution_id: request.execution_id,
     exit_code: outcome.exitCode,
@@ -291,44 +462,65 @@ async function runAttachedContainerProcessV4(
   });
 }
 
+async function runDockerSandboxCandidateOwnedV4(
+  config: DockerSandboxConfigV4,
+  request: SandboxRunRequestV4,
+  lifecycle?: (controller: DockerContainerRemovalControllerV4 | null) => void,
+): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
+  validateDockerSandboxRequestV4(config, request);
+  const mountProof = await proveDockerSandboxMountsV4(config, request);
+  const name = containerName(request.execution_id);
+  if (request.network.mode === 'INTERNAL') await assertInternalNetworkV4(config, request);
+  await reproveDockerSandboxMountsV4(config, request, mountProof);
+  const networkless = request.network.mode === 'NONE';
+  const createArgs = [
+    'create',
+    ...DOCKER_ISOLATION_ARGS_V4.slice(1),
+    `--name=${name}`,
+    '--init',
+    `--workdir=${request.working_directory}`,
+    ...(networkless ? environmentArgs(request) : []),
+    ...mountArgs(request),
+    config.image_id,
+    ...(networkless ? request.argv : ['node', '-e', 'setInterval(()=>{},2147483647)']),
+  ];
+  const created = await runDockerCliV4(config.docker_executable, createArgs, 16_384).catch(() => unavailable());
+  const containerId = created.stdout.trim();
+  if (created.exitCode !== 0
+    || created.stdoutTruncated
+    || created.stderrTruncated
+    || !/^[a-f0-9]{64}$/.test(containerId)
+    || !await exactContainerIdPresentV4(config, containerId)) unavailable();
+  const removal = removalControllerV4(config, containerId);
+  lifecycle?.(removal);
+  try {
+    if (networkless) {
+      return await runAttachedContainerProcessV4(config, request, removal, ['start', '--attach', containerId]);
+    }
+    const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', containerId], 16_384);
+    if (disconnected.exitCode !== 0) unavailable();
+    const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, containerId], 16_384);
+    if (connected.exitCode !== 0) unavailable();
+    const started = await runDockerCliV4(config.docker_executable, ['start', containerId], 16_384);
+    if (started.exitCode !== 0 || started.stdout.trim() !== containerId) unavailable();
+    return await runAttachedContainerProcessV4(config, request, removal, [
+      'exec',
+      `--workdir=${request.working_directory}`,
+      ...environmentArgs(request),
+      containerId,
+      ...request.argv,
+    ]);
+  } finally {
+    await removal.remove();
+    lifecycle?.(null);
+  }
+}
+
 export async function runDockerSandboxCertificationCandidateV4(
   config: DockerSandboxConfigV4,
   request: SandboxRunRequestV4,
 ): Promise<import('./process-sandbox.js').SandboxRunResultV4> {
-  validateDockerSandboxRequestV4(config, request);
-  const name = containerName(request.execution_id);
-  if (request.network.mode === 'NONE') {
-    return await runAttachedContainerProcessV4(config, request, name, buildDockerRunArgvV4(config, request));
-  }
-
-  await assertInternalNetworkV4(config, request);
-  const bootstrap = [
-    ...DOCKER_ISOLATION_ARGS_V4,
-    `--name=${name}`,
-    '--init',
-    `--workdir=${request.working_directory}`,
-    ...mountArgs(request),
-    '--detach',
-    config.image_id,
-    'node', '-e', 'setInterval(()=>{},2147483647)',
-  ];
-  const launched = await runDockerCliV4(config.docker_executable, bootstrap, 16_384).catch(() => unavailable());
-  if (launched.exitCode !== 0 || launched.stdoutTruncated || launched.stderrTruncated) unavailable();
-  try {
-    const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', name], 16_384);
-    if (disconnected.exitCode !== 0) unavailable();
-    const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, name], 16_384);
-    if (connected.exitCode !== 0) unavailable();
-    return await runAttachedContainerProcessV4(config, request, name, [
-      'exec',
-      `--workdir=${request.working_directory}`,
-      ...environmentArgs(request),
-      name,
-      ...request.argv,
-    ]);
-  } finally {
-    await forceRemoveContainerV4(config, name);
-  }
+  return await runDockerSandboxCandidateOwnedV4(config, request);
 }
 
 function normalizedArchitecture(value: string): string {
@@ -402,9 +594,358 @@ export async function inspectDockerSandboxIdentityV4(
   }
 }
 
+async function requiredDockerOutputV4(
+  config: DockerSandboxConfigV4,
+  argv: readonly string[],
+  limit = 1024 * 1024,
+): Promise<string> {
+  const result = await runDockerCliV4(config.docker_executable, argv, limit).catch(() => unavailable());
+  if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) unavailable();
+  return result.stdout.trim();
+}
+
+async function createCertificationNetworkV4(
+  config: DockerSandboxConfigV4,
+  argv: readonly string[],
+): Promise<string> {
+  const networkId = await requiredDockerOutputV4(config, ['network', 'create', ...argv], 16_384);
+  if (!/^[a-f0-9]{64}$/.test(networkId)) unavailable();
+  return networkId;
+}
+
+async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, networkId: string): Promise<void> {
+  const removed = await runDockerCliV4(config.docker_executable, ['network', 'rm', networkId], 16_384).catch(() => unavailable());
+  if (removed.exitCode !== 0 || removed.stdoutTruncated || removed.stderrTruncated) unavailable();
+  const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', networkId], 16_384).catch(() => unavailable());
+  if (inspected.exitCode === 0) unavailable();
+}
+
+async function waitForExactContainerRunningV4(config: DockerSandboxConfigV4, containerId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const state = await runDockerCliV4(
+      config.docker_executable,
+      ['inspect', '--format', '{{.State.Running}}', containerId],
+      4_096,
+    ).catch(() => unavailable());
+    if (state.exitCode === 0 && state.stdout.trim() === 'true') return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+  }
+  unavailable();
+}
+
+async function startCertificationTlsFixtureV4(
+  config: DockerSandboxConfigV4,
+  networkId: string,
+  address: string,
+  certificateDirectory: string,
+  suffix: string,
+): Promise<DockerContainerRemovalControllerV4> {
+  const source = [
+    "const https=require('node:https'),fs=require('node:fs'),crypto=require('node:crypto');",
+    "const server=https.createServer({key:fs.readFileSync('/scratch/key.pem'),cert:fs.readFileSync('/scratch/cert.pem')},(req,res)=>{",
+    "let bytes=0;req.on('data',(chunk)=>{bytes+=chunk.length});req.on('end',()=>{",
+    "const authHash=crypto.createHash('sha256').update(req.headers.authorization??'').digest('hex');",
+    "res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({auth_hash:authHash,bytes}));});});",
+    "server.listen(443,'0.0.0.0');",
+  ].join('');
+  const name = `ao-cert-upstream-${suffix}`;
+  const createArgs = [
+    'create', `--name=${name}`, '--read-only', '--cap-drop=ALL',
+    '--security-opt=no-new-privileges', '--pids-limit=32', '--memory=256m', '--cpus=1',
+    '--user=1000:1000', '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m', '--network=none',
+    '--mount', `type=bind,src=${certificateDirectory},dst=/scratch,readonly`,
+    config.image_id, 'node', '-e', source,
+  ];
+  const containerId = await requiredDockerOutputV4(config, createArgs, 16_384);
+  if (!/^[a-f0-9]{64}$/.test(containerId) || !await exactContainerIdPresentV4(config, containerId)) unavailable();
+  const removal = removalControllerV4(config, containerId);
+  try {
+    await requiredDockerOutputV4(config, ['network', 'disconnect', 'none', containerId], 16_384);
+    await requiredDockerOutputV4(config, ['network', 'connect', '--alias=api.arliai.com', `--ip=${address}`, networkId, containerId], 16_384);
+    const started = await requiredDockerOutputV4(config, ['start', containerId], 16_384);
+    if (started !== containerId) unavailable();
+    await waitForExactContainerRunningV4(config, containerId);
+    return removal;
+  } catch {
+    await removal.remove();
+    unavailable();
+  }
+}
+
+function transcriptArtifactV4(
+  artifactId: string,
+  executionId: string,
+  kind: import('./sandbox-certification.js').SandboxCertificationArtifactKindV4,
+  startedAt: string,
+  completedAt: string,
+  content: string,
+) {
+  const bytes = Buffer.from(content);
+  return Object.freeze({
+    artifact_id: artifactId,
+    execution_id: executionId,
+    kind,
+    started_at: startedAt,
+    completed_at: completedAt,
+    content_base64: bytes.toString('base64'),
+    content_hash: `sha256:${createHash('sha256').update(bytes).digest('hex')}` as const,
+  });
+}
+
+export async function runDockerSandboxHostileCertificationV4(
+  config: DockerSandboxConfigV4,
+  identity: SandboxCertificationIdentityV4,
+): Promise<SandboxCertificationTranscriptV4> {
+  const runSuffix = randomBytes(6).toString('hex');
+  const root = await mkdtemp(join(config.allowed_mount_roots[0]!, `.ao-cert-${runSuffix}-`)).catch(() => unavailable());
+  if (overlaps(root, homedir()) || overlaps(root, config.active_worktree) || overlaps(root, config.broker_state_directory)) {
+    await rm(root, { recursive: true, force: true }).catch(() => undefined);
+    unavailable();
+  }
+  const startedAt = new Date().toISOString();
+  const certificateDirectory = join(root, 'certificate');
+  const scratchDirectory = join(root, 'scratch');
+  const sentinel = join(root, 'outside-sentinel.txt');
+  const survivor = join(scratchDirectory, 'grandchild-survived.txt');
+  const internalName = `ao-int-exec-cert-${runSuffix}`;
+  const outboundName = `ao-out-exec-cert-${runSuffix}`;
+  const executionPrefix = `exec_cert_${runSuffix}`;
+  const syntheticCredential = `synthetic-arliai-certification-${runSuffix}`;
+  let loopbackConnections = 0;
+  const loopbackServer = createTcpServer((socket) => {
+    loopbackConnections += 1;
+    socket.destroy();
+  });
+  let internalNetworkId = '';
+  let outboundNetworkId = '';
+  let upstream: DockerContainerRemovalControllerV4 | null = null;
+  let gateway: Awaited<ReturnType<typeof startProviderEgressGatewayV4>> | null = null;
+  let cleanupFailure = false;
+  try {
+    await Promise.all([
+      mkdir(certificateDirectory, { recursive: true }),
+      mkdir(scratchDirectory, { recursive: true }),
+      import('node:fs/promises').then(async ({ writeFile }) => await writeFile(sentinel, 'synthetic-outside-sentinel', 'utf8')),
+    ]);
+    await new Promise<void>((resolvePromise, reject) => {
+      loopbackServer.once('error', reject);
+      loopbackServer.listen(0, '127.0.0.1', resolvePromise);
+    });
+    const address = loopbackServer.address();
+    if (address === null || typeof address === 'string') unavailable();
+
+    const processResult = await runDockerSandboxCandidateOwnedV4(config, {
+      execution_id: `${executionPrefix}_process`,
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: [
+        'node', '/broker/certification/hostile-child.mjs', 'audit',
+        `--outside-host-path=${sentinel}`, `--host-home=${homedir()}`,
+        `--host-loopback-port=${address.port}`,
+      ],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [],
+      network: { mode: 'NONE' },
+      timeout_ms: 30_000,
+      max_output_bytes: 64 * 1024,
+    });
+    if (processResult.exit_code !== 0 || processResult.timed_out) unavailable();
+    const processEvidence = JSON.parse(processResult.stdout) as Record<string, unknown>;
+    const pidLimit = processEvidence.pid_limit as { rejected?: unknown };
+    if (processEvidence.outside_sentinel_readable !== false
+      || processEvidence.host_home_enumerable !== false
+      || hashCanonicalV4(processEvidence.credential_environment) !== hashCanonicalV4({})
+      || hashCanonicalV4(processEvidence.credential_argv) !== hashCanonicalV4([])
+      || processEvidence.credential_files !== false
+      || hashCanonicalV4(processEvidence.descendant_credential_environment) !== hashCanonicalV4({})
+      || hashCanonicalV4(processEvidence.descendant_credential_argv) !== hashCanonicalV4([])
+      || processEvidence.outside_write_succeeded !== false
+      || typeof pidLimit?.rejected !== 'number'
+      || pidLimit.rejected <= 0
+      || processEvidence.docker_socket_exists !== false
+      || processEvidence.docker_socket_connectable !== false
+      || processEvidence.host_loopback_connectable !== false
+      || processEvidence.host_loopback_port !== address.port
+      || loopbackConnections !== 0
+      || await readFile(sentinel, 'utf8') !== 'synthetic-outside-sentinel') unavailable();
+
+    const timeoutResult = await runDockerSandboxCandidateOwnedV4(config, {
+      execution_id: `${executionPrefix}_timeout`,
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: ['node', '/broker/certification/hostile-child.mjs', 'grandchild', '/scratch/grandchild-survived.txt'],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [{ source: scratchDirectory, target: '/scratch', access: 'READ_WRITE' }],
+      network: { mode: 'NONE' },
+      timeout_ms: 500,
+      max_output_bytes: 4_096,
+    });
+    if (!timeoutResult.timed_out) unavailable();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 2_500));
+    if (await readFile(survivor).then(() => true, () => false)) unavailable();
+
+    const certificateResult = await runDockerSandboxCandidateOwnedV4(config, {
+      execution_id: `${executionPrefix}_openssl`,
+      profile: 'VALIDATION_UNTRUSTED',
+      argv: [
+        'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
+        '-keyout', '/scratch/key.pem', '-out', '/scratch/cert.pem', '-subj', '/CN=api.arliai.com',
+        '-addext', 'subjectAltName=DNS:api.arliai.com',
+      ],
+      working_directory: '/capsule',
+      environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
+      mounts: [{ source: certificateDirectory, target: '/scratch', access: 'READ_WRITE' }],
+      network: { mode: 'NONE' },
+      timeout_ms: 15_000,
+      max_output_bytes: 16_384,
+    });
+    if (certificateResult.exit_code !== 0 || certificateResult.timed_out) unavailable();
+    const caPem = await readFile(join(certificateDirectory, 'cert.pem'), 'utf8');
+
+    internalNetworkId = await createCertificationNetworkV4(config, [
+      '--driver=bridge', '--internal', '--label', `agent-orchestration.execution=${executionPrefix}_network`, internalName,
+    ]);
+    outboundNetworkId = await createCertificationNetworkV4(config, [
+      '--driver=bridge', '--subnet=93.184.216.0/24', '--label', `agent-orchestration.execution=${executionPrefix}_network`, outboundName,
+    ]);
+    upstream = await startCertificationTlsFixtureV4(
+      config,
+      outboundNetworkId,
+      '93.184.216.10',
+      certificateDirectory,
+      runSuffix,
+    );
+    gateway = await startProviderEgressGatewayV4({
+      docker_executable: config.docker_executable,
+      image_id: config.image_id,
+      execution_id: `${executionPrefix}_network`,
+      internal_network: internalName,
+      outbound_network: outboundName,
+      outbound_address: '93.184.216.20',
+      provider_origin: 'https://api.arliai.com',
+      allowed_methods: ['POST'],
+      allowed_paths: ['/v1/chat/completions'],
+      real_api_key: syntheticCredential,
+      ca_pem: caPem,
+      startup_timeout_ms: 10_000,
+    });
+    let executorId = '';
+    const executorResultPromise = runDockerSandboxCandidateOwnedV4(config, {
+      execution_id: `${executionPrefix}_network`,
+      profile: 'EXECUTOR_NETWORKED',
+      argv: [
+        'node', '/broker/certification/network-probe.mjs', gateway.gateway_base_url,
+        'https://blocked.example', 'https://93.184.216.10', '1500',
+      ],
+      working_directory: '/capsule',
+      environment: {
+        HOME: '/tmp/home', TMPDIR: '/tmp',
+        ARLIAI_API_KEY: gateway.non_secret_api_key_value,
+        ARLIAI_BASE_URL: gateway.gateway_base_url,
+      },
+      mounts: [],
+      network: { mode: 'INTERNAL', name: internalName },
+      timeout_ms: 15_000,
+      max_output_bytes: 64 * 1024,
+    }, (controller) => {
+      if (controller !== null) executorId = controller.container_id;
+    });
+    const executorDeadline = Date.now() + 5_000;
+    while (executorId === '' && Date.now() < executorDeadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    }
+    if (executorId === '') unavailable();
+    const [gatewayInspection, executorInspection] = await Promise.all([
+      requiredDockerOutputV4(config, ['inspect', gateway.container_id]),
+      requiredDockerOutputV4(config, ['inspect', executorId]),
+    ]);
+    if (gatewayInspection.includes(syntheticCredential)
+      || executorInspection.includes(syntheticCredential)
+      || (JSON.parse(gatewayInspection) as Array<{ Mounts?: unknown[] }>)[0]?.Mounts?.length !== 0) unavailable();
+    const executorResult = await executorResultPromise;
+    if (executorResult.exit_code !== 0 || executorResult.timed_out) unavailable();
+    const gatewayEvidence = JSON.parse(executorResult.stdout) as {
+      allowlisted?: { ok?: unknown; status?: unknown; body?: unknown };
+      non_allowlisted?: { status?: unknown };
+      direct_ip?: { ok?: unknown };
+    };
+    if (gatewayEvidence.allowlisted?.ok !== true
+      || gatewayEvidence.allowlisted.status !== 200
+      || typeof gatewayEvidence.allowlisted.body !== 'string'
+      || (JSON.parse(gatewayEvidence.allowlisted.body) as { auth_hash?: unknown }).auth_hash
+        !== createHash('sha256').update(`Bearer ${syntheticCredential}`).digest('hex')
+      || gatewayEvidence.non_allowlisted?.status !== 403
+      || gatewayEvidence.direct_ip?.ok !== false) unavailable();
+    const outboundIngress = await requiredDockerOutputV4(config, [
+      'exec', upstream.container_id, 'node', '-e',
+      "fetch('http://93.184.216.20:8080/v1/chat/completions',{method:'POST',body:'{}',signal:AbortSignal.timeout(1500)}).then(()=>process.stdout.write('connected')).catch(()=>process.stdout.write('blocked'))",
+    ], 4_096);
+    if (outboundIngress !== 'blocked') unavailable();
+    const gatewayLogs = await requiredDockerOutputV4(config, ['logs', gateway.container_id], 64 * 1024);
+    if (/synthetic-arliai|authorization|request_body|response_body/i.test(gatewayLogs)
+      || !gatewayLogs.includes('"decision":"ALLOW"')
+      || !gatewayLogs.includes('"decision":"DENY"')) unavailable();
+
+    const completedAt = new Date().toISOString();
+    const artifacts = [
+      transcriptArtifactV4('artifact_identity_0001', `${executionPrefix}_identity`, 'DOCKER_IDENTITY_RESULT', startedAt, completedAt, JSON.stringify(identity)),
+      transcriptArtifactV4('artifact_process_0001', `${executionPrefix}_process`, 'HOSTILE_PROCESS_RESULT', startedAt, completedAt, JSON.stringify({ processResult, processEvidence })),
+      transcriptArtifactV4('artifact_timeout_0001', `${executionPrefix}_timeout`, 'TIMEOUT_TREE_RESULT', startedAt, completedAt, JSON.stringify({ timeoutResult, survivor_absent: true })),
+      transcriptArtifactV4('artifact_gateway_0001', `${executionPrefix}_network`, 'GATEWAY_NETWORK_RESULT', startedAt, completedAt, JSON.stringify({
+        gatewayEvidence,
+        outbound_ingress_blocked: true,
+        gateway_inspection_hash: createHash('sha256').update(gatewayInspection).digest('hex'),
+        executor_inspection_hash: createHash('sha256').update(executorInspection).digest('hex'),
+        gateway_logs_hash: createHash('sha256').update(gatewayLogs).digest('hex'),
+      })),
+    ];
+    const artifactByKind = new Map(artifacts.map((artifact) => [artifact.kind, artifact.artifact_id]));
+    return Object.freeze({
+      run_id: `cert_run_${runSuffix}`,
+      identity,
+      started_at: startedAt,
+      completed_at: completedAt,
+      artifacts: Object.freeze(artifacts),
+      observations: Object.freeze(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => Object.freeze({
+        effect,
+        passed: true as const,
+        artifact_ids: Object.freeze([artifactByKind.get(effect === 'timeout_tree_killed'
+          ? 'TIMEOUT_TREE_RESULT'
+          : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
+            ? 'GATEWAY_NETWORK_RESULT'
+            : 'HOSTILE_PROCESS_RESULT')!]),
+      }))),
+    });
+  } catch {
+    unavailable();
+  } finally {
+    const cleanups: Array<() => Promise<void>> = [];
+    if (gateway !== null) cleanups.push(async () => await gateway!.revoke());
+    if (upstream !== null) cleanups.push(async () => await upstream!.remove());
+    if (internalNetworkId !== '') cleanups.push(async () => await removeCertificationNetworkV4(config, internalNetworkId));
+    if (outboundNetworkId !== '') cleanups.push(async () => await removeCertificationNetworkV4(config, outboundNetworkId));
+    cleanups.push(async () => await new Promise<void>((resolvePromise) => loopbackServer.close(() => resolvePromise())));
+    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    for (const cleanup of cleanups) {
+      try {
+        await cleanup();
+      } catch {
+        cleanupFailure = true;
+      }
+    }
+    if (cleanupFailure) unavailable();
+  }
+  unavailable();
+}
+
 export interface DockerProcessSandboxDependenciesV4 {
-  readonly certifications: readonly SandboxCertificationV4[];
   readonly now?: () => string;
+  readonly test_only?: {
+    readonly explicit_test_only: true;
+    readonly inspect_identity: (profile: SandboxProfileV4) => Promise<SandboxCertificationIdentityV4>;
+    readonly run_hostile_certification: (identity: SandboxCertificationIdentityV4) => Promise<SandboxCertificationTranscriptV4>;
+  };
 }
 
 const unsupportedResult: SandboxProbeResultV4 = Object.freeze({
@@ -414,17 +955,86 @@ const unsupportedResult: SandboxProbeResultV4 = Object.freeze({
 
 export function createDockerProcessSandboxV4(
   config: DockerSandboxConfigV4,
-  dependencies: DockerProcessSandboxDependenciesV4,
+  dependencies: DockerProcessSandboxDependenciesV4 = {},
 ): ProcessSandboxBackendV4 {
   validateDockerSandboxConfigV4(config);
-  const certifications = Object.freeze([...dependencies.certifications]);
-  const active = new Set<string>();
+  if (Object.keys(dependencies).some((key) => key !== 'now' && key !== 'test_only')
+    || (dependencies.test_only !== undefined
+      && (dependencies.test_only.explicit_test_only !== true
+        || Object.keys(dependencies.test_only).some((key) => !['explicit_test_only', 'inspect_identity', 'run_hostile_certification'].includes(key))))) unavailable();
+  interface IssuedCertificationV4 {
+    readonly identity: SandboxCertificationIdentityV4;
+    readonly evidence_hash: `sha256:${string}`;
+    readonly certified_at: string;
+    readonly expires_at: string;
+    readonly certification_hash: `sha256:${string}`;
+  }
+  const issued = new WeakSet<object>();
+  const cache = new Map<SandboxProfileV4, IssuedCertificationV4>();
+  const issue = (identity: SandboxCertificationIdentityV4, transcript: SandboxCertificationTranscriptV4, now: string): IssuedCertificationV4 => {
+    const evidence = validateSandboxCertificationTranscriptV4(
+      transcript,
+      identity,
+      config.certification_ttl_seconds,
+      now,
+    );
+    const record = Object.freeze({
+      identity: Object.freeze({ ...identity }),
+      evidence_hash: evidence.evidence_hash,
+      certified_at: evidence.certified_at,
+      expires_at: evidence.expires_at,
+      certification_hash: `sha256:${hashCanonicalV4({
+        certified_at: evidence.certified_at,
+        evidence_hash: evidence.evidence_hash,
+        expires_at: evidence.expires_at,
+        identity,
+      })}` as const,
+    });
+    issued.add(record);
+    return record;
+  };
+  const matches = (
+    certification: IssuedCertificationV4,
+    identity: SandboxCertificationIdentityV4,
+    now: string,
+  ): boolean => {
+    if (!issued.has(certification) || !/^sha256:[a-f0-9]{64}$/.test(certification.certification_hash)) return false;
+    const checked = new Date(now);
+    const certified = new Date(certification.certified_at);
+    const expires = new Date(certification.expires_at);
+    if (!Number.isFinite(checked.getTime())
+      || checked.toISOString() !== now
+      || !Number.isFinite(certified.getTime())
+      || !Number.isFinite(expires.getTime())
+      || checked.getTime() < certified.getTime()
+      || checked.getTime() > expires.getTime()
+      || expires.getTime() - certified.getTime() !== config.certification_ttl_seconds * 1_000
+      || hashCanonicalV4(certification.identity) !== hashCanonicalV4(identity)) return false;
+    return certification.certification_hash === `sha256:${hashCanonicalV4({
+      certified_at: certification.certified_at,
+      evidence_hash: certification.evidence_hash,
+      expires_at: certification.expires_at,
+      identity: certification.identity,
+    })}`;
+  };
+  const inspectIdentity = dependencies.test_only?.inspect_identity
+    ?? ((profile: SandboxProfileV4) => inspectDockerSandboxIdentityV4(config, profile));
+  const runCertification = dependencies.test_only?.run_hostile_certification
+    ?? (async (identity: SandboxCertificationIdentityV4) => await runDockerSandboxHostileCertificationV4(config, identity));
+  const active = new Map<string, DockerContainerRemovalControllerV4>();
+  const starting = new Set<string>();
   const probe = async (profile: SandboxProfileV4): Promise<SandboxProbeResultV4> => {
     try {
-      const identity = await inspectDockerSandboxIdentityV4(config, profile);
-      const now = dependencies.now?.() ?? new Date().toISOString();
-      const certification = certifications.find((candidate) => matchesSandboxCertificationV4(candidate, identity, now));
-      if (certification === undefined) return unsupportedResult;
+      const identity = await inspectIdentity(profile);
+      const checkedAt = dependencies.now?.() ?? new Date().toISOString();
+      let certification = cache.get(profile);
+      if (certification === undefined || !matches(certification, identity, checkedAt)) {
+        const transcript = await runCertification(identity);
+        const issuedAt = dependencies.now?.() ?? new Date().toISOString();
+        certification = issue(identity, transcript, issuedAt);
+        if (!matches(certification, identity, issuedAt)) return unsupportedResult;
+        cache.set(profile, certification);
+      }
       return Object.freeze({
         status: 'SUPPORTED',
         backend_id: 'docker-engine-linux-v4',
@@ -440,17 +1050,27 @@ export function createDockerProcessSandboxV4(
     id: 'docker-engine-linux-v4',
     probe,
     run: async (request: SandboxRunRequestV4) => {
-      if ((await probe(request.profile)).status !== 'SUPPORTED' || active.has(request.execution_id)) unavailable();
-      active.add(request.execution_id);
+      if ((await probe(request.profile)).status !== 'SUPPORTED'
+        || active.has(request.execution_id)
+        || starting.has(request.execution_id)) unavailable();
+      starting.add(request.execution_id);
       try {
-        return await runDockerSandboxCertificationCandidateV4(config, request);
+        return await runDockerSandboxCandidateOwnedV4(config, request, (controller) => {
+          if (controller === null) active.delete(request.execution_id);
+          else {
+            starting.delete(request.execution_id);
+            active.set(request.execution_id, controller);
+          }
+        });
       } finally {
-        active.delete(request.execution_id);
+        starting.delete(request.execution_id);
       }
     },
     terminate: async (executionId: string) => {
-      if (!active.has(executionId)) return;
-      await forceRemoveContainerV4(config, containerName(executionId));
+      const controller = active.get(executionId);
+      if (controller === undefined) return;
+      await controller.remove();
+      if (active.get(executionId) === controller) active.delete(executionId);
     },
   });
 }

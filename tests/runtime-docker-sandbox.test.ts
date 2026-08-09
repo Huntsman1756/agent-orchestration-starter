@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
-import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 
 import {
   DOCKER_ISOLATION_ARGS_V4,
   buildDockerRunArgvV4,
+  createDockerContainerRemovalControllerV4,
+  createDockerProcessSandboxV4,
   dockerSandboxPolicyHashV4,
+  proveDockerSandboxMountsV4,
+  reproveDockerSandboxMountsV4,
   validateDockerSandboxConfigV4,
   validateDockerSandboxRequestV4,
   type DockerSandboxConfigV4,
@@ -17,9 +24,9 @@ import {
 } from '../src/runtime/provider-egress-gateway.js';
 import {
   REQUIRED_SANDBOX_EFFECTS_V4,
-  createSandboxCertificationV4,
-  matchesSandboxCertificationV4,
+  validateSandboxCertificationTranscriptV4,
   type SandboxCertificationIdentityV4,
+  type SandboxCertificationTranscriptV4,
 } from '../src/runtime/sandbox-certification.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
@@ -28,6 +35,9 @@ const config: DockerSandboxConfigV4 = {
   image_id: imageId,
   certification_ttl_seconds: 900,
   provider_hosts: ['api.arliai.com'],
+  allowed_mount_roots: [tmpdir()],
+  active_worktree: process.cwd(),
+  broker_state_directory: join(tmpdir(), 'ao-broker-state-not-mounted'),
 };
 
 function validationRequest(overrides: Partial<SandboxRunRequestV4> = {}): SandboxRunRequestV4 {
@@ -59,16 +69,22 @@ test('Docker validation argv contains the complete immutable isolation policy be
   assert.ok(argv.includes('--env=TMPDIR=/tmp'));
 });
 
-test('Docker policy hashes are deterministic, profile-bound, and provider-host-bound', () => {
+test('Docker policy hashes bind the profile, provider origin, and host mount policy', () => {
   const first = dockerSandboxPolicyHashV4(config, 'VALIDATION_UNTRUSTED');
   const repeated = dockerSandboxPolicyHashV4({ ...config, provider_hosts: ['api.arliai.com'] }, 'VALIDATION_UNTRUSTED');
   const networked = dockerSandboxPolicyHashV4(config, 'EXECUTOR_NETWORKED');
   const otherHost = dockerSandboxPolicyHashV4({ ...config, provider_hosts: ['other.example'] }, 'VALIDATION_UNTRUSTED');
+  const otherMountRoot = dockerSandboxPolicyHashV4({ ...config, allowed_mount_roots: [join(tmpdir(), 'other-root')] }, 'VALIDATION_UNTRUSTED');
+  const otherWorktree = dockerSandboxPolicyHashV4({ ...config, active_worktree: join(tmpdir(), 'other-worktree') }, 'VALIDATION_UNTRUSTED');
+  const otherBrokerState = dockerSandboxPolicyHashV4({ ...config, broker_state_directory: join(tmpdir(), 'other-broker-state') }, 'VALIDATION_UNTRUSTED');
 
   assert.match(first, /^sha256:[a-f0-9]{64}$/);
   assert.equal(repeated, first);
   assert.notEqual(networked, first);
   assert.notEqual(otherHost, first);
+  assert.notEqual(otherMountRoot, first);
+  assert.notEqual(otherWorktree, first);
+  assert.notEqual(otherBrokerState, first);
 });
 
 test('Docker config rejects mutable images and non-canonical provider origins', () => {
@@ -155,6 +171,117 @@ test('networked executor permits only an internal network and the fixed non-secr
   );
 });
 
+test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', async () => {
+  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-mount-proof-'));
+  const allowed = join(root, 'allowed');
+  const source = join(allowed, 'capsule');
+  const activeWorktree = join(root, 'active-worktree');
+  const brokerState = join(allowed, 'broker-state');
+  const alias = join(allowed, 'capsule-alias');
+  const physicalConfig = {
+    ...config,
+    allowed_mount_roots: [allowed],
+    active_worktree: activeWorktree,
+    broker_state_directory: brokerState,
+  } as DockerSandboxConfigV4;
+  try {
+    await Promise.all([mkdir(source, { recursive: true }), mkdir(activeWorktree, { recursive: true }), mkdir(brokerState, { recursive: true })]);
+    await symlink(source, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.doesNotReject(() => proveDockerSandboxMountsV4(physicalConfig, validationRequest({
+      mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }],
+    })));
+    for (const mount of [
+      { source: alias, target: '/capsule', access: 'READ_ONLY' },
+      { source: join(allowed, 'missing-parent', 'capsule'), target: '/capsule', access: 'READ_ONLY' },
+      { source: brokerState, target: '/capsule', access: 'READ_ONLY' },
+      { source: activeWorktree, target: '/capsule', access: 'READ_ONLY' },
+      { source, target: '/etc', access: 'READ_ONLY' },
+      { source, target: '/capsule', access: 'OWNER_WRITE' },
+    ]) {
+      await assert.rejects(
+        () => proveDockerSandboxMountsV4(physicalConfig, validationRequest({ mounts: [mount] as never })),
+        /PROCESS_SANDBOX_UNAVAILABLE/,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('mount capability reproof rejects a source replaced by an alias before Docker effects', async () => {
+  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-mount-reproof-'));
+  const allowed = join(root, 'allowed');
+  const source = join(allowed, 'capsule');
+  const replacement = join(allowed, 'replacement');
+  const physicalConfig = {
+    ...config,
+    allowed_mount_roots: [allowed],
+    active_worktree: join(root, 'active-worktree'),
+    broker_state_directory: join(root, 'broker-state'),
+  } as DockerSandboxConfigV4;
+  try {
+    await Promise.all([
+      mkdir(source, { recursive: true }),
+      mkdir(replacement, { recursive: true }),
+      mkdir(physicalConfig.active_worktree, { recursive: true }),
+      mkdir(physicalConfig.broker_state_directory, { recursive: true }),
+    ]);
+    const request = validationRequest({ mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }] });
+    const proof = await proveDockerSandboxMountsV4(physicalConfig, request);
+    await rm(source, { recursive: true });
+    await symlink(replacement, source, process.platform === 'win32' ? 'junction' : 'dir');
+
+    await assert.rejects(
+      () => reproveDockerSandboxMountsV4(physicalConfig, request, proof),
+      /PROCESS_SANDBOX_UNAVAILABLE/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('container removal is ID-bound, propagates failure, remains retryable, and serializes concurrent revoke', async () => {
+  const containerId = 'a'.repeat(64);
+  let present = true;
+  let removeCalls = 0;
+  let failFirst = true;
+  const controller = createDockerContainerRemovalControllerV4(containerId, {
+    inspect_exact_id: async (id) => {
+      assert.equal(id, containerId);
+      return present;
+    },
+    force_remove_exact_id: async (id) => {
+      assert.equal(id, containerId);
+      removeCalls += 1;
+      if (failFirst) {
+        failFirst = false;
+        throw new Error('synthetic removal failure');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      present = false;
+    },
+    poll_interval_ms: 1,
+    absence_timeout_ms: 100,
+  });
+
+  await assert.rejects(() => controller.remove(), /PROCESS_SANDBOX_UNAVAILABLE/);
+  assert.equal(present, true);
+  await Promise.all([controller.remove(), controller.remove(), controller.remove()]);
+  assert.equal(removeCalls, 2, 'one failed call plus one serialized retry');
+  await controller.remove();
+  assert.equal(removeCalls, 2, 'verified absence makes later removal idempotent');
+});
+
+test('container removal fails closed when the exact ID remains inspectable', async () => {
+  const controller = createDockerContainerRemovalControllerV4('b'.repeat(64), {
+    inspect_exact_id: async () => true,
+    force_remove_exact_id: async () => {},
+    poll_interval_ms: 1,
+    absence_timeout_ms: 5,
+  });
+  await assert.rejects(() => controller.remove(), /PROCESS_SANDBOX_UNAVAILABLE/);
+});
+
 const certificationIdentity: SandboxCertificationIdentityV4 = {
   backend_id: 'docker-engine-linux-v4',
   docker_server_id: 'server-a',
@@ -168,34 +295,163 @@ const certificationIdentity: SandboxCertificationIdentityV4 = {
   policy_hash: `sha256:${'b'.repeat(64)}`,
   broker_version: '0.1.0-v4',
 };
-const completeEffects = Object.fromEntries(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => [effect, true]));
+function transcript(overrides: Partial<SandboxCertificationTranscriptV4> = {}): SandboxCertificationTranscriptV4 {
+  const artifact = (id: string, kind: 'DOCKER_IDENTITY_RESULT' | 'HOSTILE_PROCESS_RESULT' | 'TIMEOUT_TREE_RESULT' | 'GATEWAY_NETWORK_RESULT') => ({
+    artifact_id: id,
+    execution_id: 'exec_hostile_cert_0001',
+    kind,
+    started_at: '2026-08-09T10:00:00.000Z',
+    completed_at: '2026-08-09T10:00:01.000Z',
+    content_base64: Buffer.from(kind === 'DOCKER_IDENTITY_RESULT'
+      ? JSON.stringify(certificationIdentity)
+      : `bounded-real-run-artifact:${kind}`).toString('base64'),
+    content_hash: `sha256:${'0'.repeat(64)}` as const,
+  });
+  const artifacts = [
+    artifact('artifact_identity_0001', 'DOCKER_IDENTITY_RESULT'),
+    artifact('artifact_process_0001', 'HOSTILE_PROCESS_RESULT'),
+    artifact('artifact_timeout_0001', 'TIMEOUT_TREE_RESULT'),
+    artifact('artifact_gateway_0001', 'GATEWAY_NETWORK_RESULT'),
+  ];
+  return {
+    run_id: 'cert_run_0001',
+    identity: certificationIdentity,
+    started_at: '2026-08-09T10:00:00.000Z',
+    completed_at: '2026-08-09T10:00:01.000Z',
+    artifacts,
+    observations: REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => ({
+      effect,
+      passed: true as const,
+      artifact_ids: [effect === 'timeout_tree_killed'
+        ? 'artifact_timeout_0001'
+        : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
+          ? 'artifact_gateway_0001'
+          : 'artifact_process_0001'],
+    })),
+    ...overrides,
+  };
+}
 
-test('certification refuses to bless a candidate when any hostile OS effect remains possible', () => {
-  const effects = { ...completeEffects, docker_socket_blocked: false };
+function validTranscript(overrides: Partial<SandboxCertificationTranscriptV4> = {}): SandboxCertificationTranscriptV4 {
+  const unsigned = transcript();
+  return transcript({
+    artifacts: unsigned.artifacts.map((artifact) => ({
+      ...artifact,
+      content_hash: `sha256:${createHash('sha256').update(Buffer.from(artifact.content_base64, 'base64')).digest('hex')}`,
+    })),
+    ...overrides,
+  });
+}
+
+test('certification rejects a forged all-true boolean record without bounded run artifacts', () => {
+  const forged = {
+    run_id: 'cert_run_0001',
+    identity: certificationIdentity,
+    started_at: '2026-08-09T10:00:00.000Z',
+    completed_at: '2026-08-09T10:00:01.000Z',
+    observations: Object.fromEntries(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => [effect, true])),
+  };
 
   assert.throws(
-    () => createSandboxCertificationV4(certificationIdentity, effects, 900, '2026-08-09T10:00:00.000Z'),
+    () => validateSandboxCertificationTranscriptV4(forged, certificationIdentity, 900, '2026-08-09T10:00:01.000Z'),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
 
-test('certification is valid only for the exact host, image, profile, policy, broker, and TTL', () => {
-  const certification = createSandboxCertificationV4(
-    certificationIdentity,
-    completeEffects,
-    900,
-    '2026-08-09T10:00:00.000Z',
+test('production backend rejects injected certification records and exposes no arbitrary issuer', async () => {
+  const certificationModule = await import('../src/runtime/sandbox-certification.js');
+  assert.equal('createSandboxCertificationV4' in certificationModule, false);
+  assert.throws(
+    () => createDockerProcessSandboxV4(config, {
+      certifications: [{ identity: certificationIdentity }],
+    } as never),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
   );
+});
 
-  assert.equal(matchesSandboxCertificationV4(certification, certificationIdentity, '2026-08-09T10:14:59.000Z'), true);
-  assert.equal(matchesSandboxCertificationV4(certification, certificationIdentity, '2026-08-09T10:15:01.000Z'), false);
-  for (const mismatch of [
-    { ...certificationIdentity, docker_server_id: 'server-b' },
-    { ...certificationIdentity, image_id: `sha256:${'c'.repeat(64)}` as const },
-    { ...certificationIdentity, profile: 'EXECUTOR_NETWORKED' as const },
-    { ...certificationIdentity, policy_hash: `sha256:${'d'.repeat(64)}` as const },
-    { ...certificationIdentity, broker_version: '0.1.1-v4' },
-  ]) {
-    assert.equal(matchesSandboxCertificationV4(certification, mismatch, '2026-08-09T10:01:00.000Z'), false);
-  }
+test('certification transcript binds artifact bytes, exact identity, config TTL, and non-future time', () => {
+  const valid = validTranscript();
+
+  const evidence = validateSandboxCertificationTranscriptV4(valid, certificationIdentity, 900, '2026-08-09T10:00:01.000Z');
+  assert.match(evidence.evidence_hash, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(evidence.certified_at, '2026-08-09T10:00:01.000Z');
+  assert.equal(evidence.expires_at, '2026-08-09T10:15:01.000Z');
+
+  assert.throws(
+    () => validateSandboxCertificationTranscriptV4(valid, certificationIdentity, 900, '2026-08-09T10:00:00.999Z'),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+  assert.throws(
+    () => validateSandboxCertificationTranscriptV4(valid, certificationIdentity, 901, '2026-08-09T10:00:01.000Z'),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+  assert.throws(
+    () => validateSandboxCertificationTranscriptV4(
+      { ...valid, identity: { ...certificationIdentity, docker_server_id: 'server-b' } },
+      certificationIdentity,
+      900,
+      '2026-08-09T10:00:01.000Z',
+    ),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+  assert.throws(
+    () => validateSandboxCertificationTranscriptV4(
+      { ...valid, artifacts: [{ ...valid.artifacts[0]!, content_base64: Buffer.from('tampered').toString('base64') }] },
+      certificationIdentity,
+      900,
+      '2026-08-09T10:00:01.000Z',
+    ),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+});
+
+test('backend probe owns transcript issuance, applies configured TTL, and caches only its live exact binding', async () => {
+  let runnerCalls = 0;
+  let now = '2026-08-09T10:00:01.000Z';
+  const backend = createDockerProcessSandboxV4(config, {
+    now: () => now,
+    test_only: {
+      explicit_test_only: true,
+      inspect_identity: async () => certificationIdentity,
+      run_hostile_certification: async (identity) => {
+        runnerCalls += 1;
+        assert.deepEqual(identity, certificationIdentity);
+        return validTranscript();
+      },
+    },
+  });
+
+  const first = await backend.probe('VALIDATION_UNTRUSTED');
+  assert.equal(first.status, 'SUPPORTED');
+  if (first.status !== 'SUPPORTED') assert.fail('probe must certify the completed transcript');
+  assert.equal(first.expires_at, '2026-08-09T10:15:01.000Z');
+  assert.match(first.certification_hash, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(runnerCalls, 1);
+
+  now = '2026-08-09T10:14:59.000Z';
+  assert.equal((await backend.probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
+  assert.equal(runnerCalls, 1, 'an unexpired exact live binding may be reused');
+
+  now = '2026-08-09T10:15:02.000Z';
+  assert.equal((await backend.probe('VALIDATION_UNTRUSTED')).status, 'UNSUPPORTED');
+  assert.equal(runnerCalls, 2, 'expiry requires a new hostile run; a stale record is not accepted');
+});
+
+test('backend probe cannot certify an injected all-true record through the test-only runner seam', async () => {
+  const backend = createDockerProcessSandboxV4(config, {
+    now: () => '2026-08-09T10:00:01.000Z',
+    test_only: {
+      explicit_test_only: true,
+      inspect_identity: async () => certificationIdentity,
+      run_hostile_certification: async () => ({
+        identity: certificationIdentity,
+        observations: Object.fromEntries(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => [effect, true])),
+      }) as never,
+    },
+  });
+
+  assert.deepEqual(await backend.probe('VALIDATION_UNTRUSTED'), {
+    status: 'UNSUPPORTED',
+    failure: 'PROCESS_SANDBOX_UNAVAILABLE',
+  });
 });
