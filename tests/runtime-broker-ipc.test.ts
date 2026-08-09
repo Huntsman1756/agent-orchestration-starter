@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, Server, Socket } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { join, posix, resolve, sep } from 'node:path';
@@ -154,7 +154,7 @@ function physicalPathBackend(
       reclaimBrokerSocket: (expectedOwnerIdentity) => reclaimUnixSocketV4(endpoint, expectedOwnerIdentity),
       listenBrokerSocket: async (server) => {
         await listenForTest(server, endpoint);
-        return { kind: 'unix-broker-listener-binding', release: async () => {} } as UnixBrokerListenerBindingV4;
+        return { kind: 'unix-broker-listener-binding', server, release: async () => {} } as UnixBrokerListenerBindingV4;
       },
       publishBrokerSocket: ({ expected_owner_identity, verifier }) => secureUnixEndpointV4(endpoint, expected_owner_identity, {
         metadata: async (path) => {
@@ -864,6 +864,56 @@ test('real Linux native capability round-trips through the direct broker.sock ch
   }
 });
 
+test('production Linux close preserves replacements at every observable listener pathname', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-close-path-replacement-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const displacedEndpoint = join(stateDirectory, 'displaced-broker.sock');
+  const coordinator = createInProcessReclamationCoordinatorV4('native-linux-close-path-replacement');
+  const physicalBackend = await linuxNativePhysicalPathBackendForTest();
+  const platformVerifier: BrokerIpcPlatformVerifierV4 = {
+    verifyOwnerOnlyPath: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+    verifyPeer: async ({ expected_owner_identity }) => ({ owner_identity: expected_owner_identity }),
+  };
+  const listenerPaths = async (): Promise<Set<string>> => {
+    const table = await readFile('/proc/net/unix', 'utf8');
+    return new Set(table.split('\n').flatMap((line) => {
+      const columns = line.trim().split(/\s+/);
+      const path = columns.length >= 8 ? columns.at(-1) : undefined;
+      return typeof path === 'string' && path.includes('.broker.sock.bind-') ? [path] : [];
+    }));
+  };
+  const before = await listenerPaths();
+  let server: Awaited<ReturnType<typeof createBrokerIpcServer>> | null = null;
+  try {
+    server = await createBrokerIpcServer({
+      daemon: minimalDaemonForIpcTest(),
+      stateDirectory,
+      endpoint,
+      platform: 'linux',
+      platformVerifier,
+      endpointCoordinator: coordinator,
+      allowInProcessCoordinatorForTests: true,
+      unixPhysicalPathBackend: physicalBackend,
+      requestDeadlineMs: 1_000,
+    });
+    const retainedPaths = [...await listenerPaths()].filter((path) => !before.has(path));
+    await rename(endpoint, displacedEndpoint);
+    await writeFile(endpoint, 'public replacement', { mode: 0o600 });
+    for (const path of retainedPaths) await writeFile(path, 'retained-path replacement', { mode: 0o600 });
+
+    await server.close();
+    server = null;
+
+    assert.equal(await readFile(endpoint, 'utf8'), 'public replacement');
+    for (const path of retainedPaths) {
+      assert.equal(await readFile(path, 'utf8'), 'retained-path replacement');
+    }
+  } finally {
+    await server?.close().catch(() => undefined);
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
 test('post-listen Unix reproof failure closes the server handle and leaves a replacement endpoint intact', { skip: process.platform !== 'linux' }, async () => {
   const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-post-listen-reproof-');
   const endpoint = join(stateDirectory, 'broker.sock');
@@ -1530,6 +1580,11 @@ test('external Linux replacement between owned cleanup phases is never unlinked'
     const replacementMetadata = await lstat(endpoint);
     assert.equal(replacementMetadata.isSocket(), true);
     assert.notEqual(`linux:dev:${replacementMetadata.dev}:ino:${replacementMetadata.ino}`, originalIdentity);
+    const quarantineNames = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-'));
+    assert.equal(quarantineNames.length, 1);
+    const quarantinedReplacement = await lstat(join(stateDirectory, quarantineNames[0]!));
+    assert.equal(quarantinedReplacement.dev, replacementMetadata.dev);
+    assert.equal(quarantinedReplacement.ino, replacementMetadata.ino);
     await new Promise<void>((resolvePromise, reject) => {
       const socket = createConnection(endpoint);
       socket.once('connect', () => { socket.destroy(); resolvePromise(); });
@@ -1541,6 +1596,42 @@ test('external Linux replacement between owned cleanup phases is never unlinked'
       replacementProcess.kill('SIGKILL');
       await once(replacementProcess, 'exit').catch(() => undefined);
     }
+    await rm(stateDirectory, { recursive: true, force: true });
+  }
+});
+
+test('real Linux owned cleanup retains the exact socket in quarantine instead of pathname-unlinking it', { skip: process.platform !== 'linux' }, async () => {
+  const stateDirectory = await linuxSecureDirectoryForTest('.runner-v4-owned-quarantine-');
+  const endpoint = join(stateDirectory, 'broker.sock');
+  const heldEndpoint = join(stateDirectory, 'held-broker.sock');
+  const oldServer = createServer();
+  try {
+    await listenForTest(oldServer, endpoint);
+    await chmod(endpoint, 0o600);
+    const original = await lstat(endpoint);
+    const originalIdentity = `linux:dev:${original.dev}:ino:${original.ino}`;
+    await rename(endpoint, heldEndpoint);
+    await closeForTest(oldServer);
+    await rename(heldEndpoint, endpoint);
+
+    await removeOwnedUnixEndpointV4(endpoint, originalIdentity, {
+      metadata: async () => { throw new Error('native cleanup must not use raw endpoint metadata'); },
+      remove: async () => { throw new Error('native cleanup must not use raw endpoint unlink'); },
+    }, endpointCoordinator, {
+      stateDirectory,
+      expectedOwnerIdentity: currentUnixOwnerIdentityForTest(),
+      unixPhysicalPathBackend: await linuxNativePhysicalPathBackendForTest(),
+      allowInProcessCoordinatorForTests: true,
+    });
+
+    await assert.rejects(() => lstat(endpoint), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+    const quarantineNames = (await readdir(stateDirectory)).filter((name) => name.startsWith('.broker.sock.quarantine-'));
+    assert.equal(quarantineNames.length, 1);
+    const quarantined = await lstat(join(stateDirectory, quarantineNames[0]!));
+    assert.equal(quarantined.dev, original.dev);
+    assert.equal(quarantined.ino, original.ino);
+  } finally {
+    await closeForTest(oldServer);
     await rm(stateDirectory, { recursive: true, force: true });
   }
 });

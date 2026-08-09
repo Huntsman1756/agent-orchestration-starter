@@ -1,9 +1,10 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { chmod, link, lstat, mkdir, open, readFile, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { join, posix, resolve, win32 } from 'node:path';
-import { createConnection, createServer, type Server, type Socket } from 'node:net';
+import { createConnection, createServer, Server, type Socket } from 'node:net';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { BrokerDaemonV4, BrokerReplyV4 } from './broker-daemon.js';
@@ -81,6 +82,7 @@ export interface UnixOwnedEndpointCleanupDependenciesV4 {
 
 export interface UnixBrokerListenerBindingV4 {
   readonly kind: 'unix-broker-listener-binding';
+  readonly server: Server;
   release(): Promise<void>;
 }
 
@@ -280,6 +282,112 @@ async function closeServerHandleV4(server: Server): Promise<void> {
   });
 }
 
+// A libuv Pipe remembers its bind pathname and pathname-unlinks it on close.
+// The short-lived binder transfers the listening fd over SCM_RIGHTS and then
+// kills itself without libuv cleanup; the receiver therefore owns a listener
+// handle with no pathname cleanup authority.
+const LINUX_LISTENER_BINDER_SCRIPT_V4 = String.raw`
+const { lstatSync } = require('node:fs');
+const { createServer } = require('node:net');
+const die = () => process.kill(process.pid, 'SIGKILL');
+process.umask(0o177);
+const endpoint = '/proc/self/fd/4/broker.sock';
+const server = createServer();
+server.once('error', () => {
+  if (!process.connected) die();
+  process.send({ kind: 'error' }, () => die());
+});
+server.listen(endpoint, () => {
+  const metadata = lstatSync(endpoint, { bigint: true });
+  process.send({
+    kind: 'bound',
+    object_identity: 'linux:dev:' + metadata.dev.toString() + ':ino:' + metadata.ino.toString(),
+    owner_identity: 'uid:' + metadata.uid.toString(),
+    owner_only: (metadata.mode & 0o077n) === 0n,
+  }, server, { keepOpen: true }, (error) => {
+    if (error) die();
+  });
+});
+process.once('message', (message) => {
+  if (message && message.kind === 'terminate-without-cleanup') die();
+});
+process.once('disconnect', die);
+setTimeout(die, 10_000);
+`;
+
+interface LinuxAdoptedListenerV4 {
+  server: Server;
+  objectIdentity: string;
+}
+
+function killLinuxBinderV4(child: ChildProcess): void {
+  if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+}
+
+async function adoptPathlessLinuxListenerV4(directoryFd: number, sourceServer: Server): Promise<LinuxAdoptedListenerV4> {
+  const child = spawn(process.execPath, ['-e', LINUX_LISTENER_BINDER_SCRIPT_V4], {
+    env: {},
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc', directoryFd],
+  });
+  return new Promise<LinuxAdoptedListenerV4>((resolveAdopted, rejectAdopted) => {
+    let adoptedServer: Server | null = null;
+    let settled = false;
+    const timeout = setTimeout(() => fail(), 5_000);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off('message', onMessage);
+      child.off('error', onError);
+      child.off('exit', onPrematureExit);
+    };
+    const rejectClosed = () => {
+      const server = adoptedServer;
+      adoptedServer = null;
+      void (server === null ? Promise.resolve() : closeServerHandleV4(server).catch(() => undefined))
+        .finally(() => rejectAdopted(new Error('AUTHENTICATION_FAILED: native Linux listener adoption failed')));
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      killLinuxBinderV4(child);
+      rejectClosed();
+    };
+    const onError = () => fail();
+    const onPrematureExit = () => fail();
+    const onMessage = (message: unknown, handle: unknown) => {
+      if (settled || message === null || typeof message !== 'object') return fail();
+      const candidate = message as Record<string, unknown>;
+      if (
+        candidate.kind !== 'bound'
+        || typeof candidate.object_identity !== 'string'
+        || !/^linux:dev:[0-9]+:ino:[0-9]+$/.test(candidate.object_identity)
+        || candidate.owner_identity !== linuxOwnerIdentityV4(BigInt(process.getuid!()))
+        || candidate.owner_only !== true
+        || !(handle instanceof Server)
+        || !handle.listening
+      ) return fail();
+      adoptedServer = handle;
+      child.off('exit', onPrematureExit);
+      child.once('exit', (_code, signal) => {
+        if (settled) return;
+        if (signal !== 'SIGKILL' || adoptedServer === null) return fail();
+        for (const listener of sourceServer.listeners('connection') as Array<(socket: Socket) => void>) {
+          adoptedServer.on('connection', listener);
+        }
+        settled = true;
+        cleanup();
+        resolveAdopted({ server: adoptedServer, objectIdentity: candidate.object_identity as string });
+      });
+      child.send({ kind: 'terminate-without-cleanup' }, (error) => {
+        if (error) fail();
+      });
+    };
+    child.on('message', onMessage);
+    child.once('error', onError);
+    child.once('exit', onPrematureExit);
+  });
+}
+
 async function openLinuxPhysicalStateDirectoryV4(input: {
   state_directory: string;
   expected_owner_identity: string;
@@ -329,16 +437,16 @@ async function openLinuxPhysicalStateDirectoryV4(input: {
 class LinuxNativeBrokerListenerBindingV4 implements UnixBrokerListenerBindingV4 {
   readonly kind = 'unix-broker-listener-binding' as const;
   readonly directoryIdentity: string;
-  readonly temporaryName: string;
-  readonly temporaryIdentity: string;
+  readonly endpointIdentity: string;
   readonly handle: FileHandle;
+  readonly server: Server;
   #released = false;
 
-  constructor(handle: FileHandle, directoryIdentity: string, temporaryName: string, temporaryIdentity: string) {
+  constructor(handle: FileHandle, directoryIdentity: string, endpointIdentity: string, server: Server) {
     this.handle = handle;
     this.directoryIdentity = directoryIdentity;
-    this.temporaryName = temporaryName;
-    this.temporaryIdentity = temporaryIdentity;
+    this.endpointIdentity = endpointIdentity;
+    this.server = server;
     linuxNativeListenerBindingBrandV4.add(this);
   }
 
@@ -400,10 +508,12 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
 
   async #restoreWithoutOverwrite(quarantineName: string): Promise<void> {
     try {
+      // Keep the quarantine link: Node has no identity-conditional unlink, so
+      // deleting this pathname after a separate metadata read is unsafe.
       await link(this.#childPath(quarantineName), this.#childPath('broker.sock'));
-      await unlink(this.#childPath(quarantineName));
       await this.#syncDirectory();
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
       throw new Error('REPOSITORY_BUSY: quarantined broker endpoint was preserved');
     }
   }
@@ -425,8 +535,6 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       await this.#restoreWithoutOverwrite(quarantineName);
       throw new Error('REPOSITORY_BUSY: broker endpoint changed during quarantine');
     }
-    await unlink(this.#childPath(quarantineName));
-    await this.#syncDirectory();
     return 'removed';
   }
 
@@ -486,22 +594,26 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
   }
 
   async listenBrokerSocket(server: Server): Promise<UnixBrokerListenerBindingV4> {
-    const temporaryName = `.broker.sock.bind-${process.pid}-${randomBytes(16).toString('hex')}`;
-    let listening = false;
+    let adopted: LinuxAdoptedListenerV4 | null = null;
     try {
-      await listen(server, this.#childPath(temporaryName));
-      listening = true;
-      const before = await this.#metadata(temporaryName);
-      if (before === null || before.kind !== 'socket' || before.owner_identity !== this.#expectedOwnerIdentity) physicalPathRejected();
-      await chmod(this.#childPath(temporaryName), 0o600);
-      const after = await this.#metadata(temporaryName);
-      if (after === null || after.kind !== 'socket' || after.owner_identity !== this.#expectedOwnerIdentity || !after.owner_only || after.object_identity !== before.object_identity) physicalPathRejected();
+      adopted = await adoptPathlessLinuxListenerV4(this.#handle.fd, server);
+      const endpoint = await this.#metadata('broker.sock');
+      if (
+        endpoint === null
+        || endpoint.kind !== 'socket'
+        || endpoint.owner_identity !== this.#expectedOwnerIdentity
+        || !endpoint.owner_only
+        || endpoint.object_identity !== adopted.objectIdentity
+      ) physicalPathRejected();
       const directoryIdentity = this.inspection.components.at(-1)?.object_identity;
       if (typeof directoryIdentity !== 'string') physicalPathRejected();
       this.#transferred = true;
-      return new LinuxNativeBrokerListenerBindingV4(this.#handle, directoryIdentity, temporaryName, after.object_identity);
+      return new LinuxNativeBrokerListenerBindingV4(this.#handle, directoryIdentity, endpoint.object_identity, adopted.server);
     } catch (error) {
-      if (listening) await closeServerHandleV4(server).catch(() => undefined);
+      if (adopted !== null) {
+        await closeServerHandleV4(adopted.server).catch(() => undefined);
+        await this.#quarantineOwnedEndpoint(adopted.objectIdentity).catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -514,15 +626,9 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
     if (!linuxNativeListenerBindingBrandV4.has(input.binding) || !(input.binding instanceof LinuxNativeBrokerListenerBindingV4) || input.binding.released) physicalPathRejected();
     const directoryIdentity = this.inspection.components.at(-1)?.object_identity;
     if (directoryIdentity !== input.binding.directoryIdentity) physicalPathRejected();
-    const temporary = await this.#metadata(input.binding.temporaryName);
-    if (temporary === null || temporary.kind !== 'socket' || temporary.object_identity !== input.binding.temporaryIdentity) physicalPathRejected();
-    let published = false;
     try {
-      await link(this.#childPath(input.binding.temporaryName), this.#childPath('broker.sock'));
-      published = true;
-      await this.#syncDirectory();
       const endpoint = await this.#metadata('broker.sock');
-      if (endpoint === null || endpoint.kind !== 'socket' || endpoint.object_identity !== input.binding.temporaryIdentity || endpoint.owner_identity !== input.expected_owner_identity || !endpoint.owner_only) physicalPathRejected();
+      if (endpoint === null || endpoint.kind !== 'socket' || endpoint.object_identity !== input.binding.endpointIdentity || endpoint.owner_identity !== input.expected_owner_identity || !endpoint.owner_only) physicalPathRejected();
       const proof = await callAdapter(() => input.verifier.verifyOwnerOnlyPath({
         path: this.#childPath('broker.sock'),
         kind: 'endpoint',
@@ -530,12 +636,10 @@ class LinuxNativePhysicalDirectoryCapabilityV4 implements UnixPhysicalDirectoryC
       })).catch(() => null);
       if (proof?.owner_identity !== input.expected_owner_identity) throw new Error('AUTHENTICATION_FAILED: native endpoint ownership/ACL proof failed');
       const verified = await this.#metadata('broker.sock');
-      if (verified?.object_identity !== input.binding.temporaryIdentity) physicalPathRejected();
-      await unlink(this.#childPath(input.binding.temporaryName));
-      await this.#syncDirectory();
-      return input.binding.temporaryIdentity;
+      if (verified?.object_identity !== input.binding.endpointIdentity) physicalPathRejected();
+      return input.binding.endpointIdentity;
     } catch (error) {
-      if (published) await this.#quarantineOwnedEndpoint(input.binding.temporaryIdentity).catch(() => undefined);
+      await this.#quarantineOwnedEndpoint(input.binding.endpointIdentity).catch(() => undefined);
       throw error;
     }
   }
@@ -1142,6 +1246,7 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
         }
         await critical.runSensitive((capability) => capability.reclaimBrokerSocket(expectedOwnerIdentity));
         unixListenerBinding = await critical.runSensitive((capability) => capability.listenBrokerSocket(server)).catch(() => { throw new Error('UNKNOWN_FAILURE: local IPC startup failed'); });
+        server = unixListenerBinding.server;
         ownedUnixEndpointIdentity = await critical.runSensitive((capability) => capability.publishBrokerSocket({
           binding: unixListenerBinding!,
           expected_owner_identity: expectedOwnerIdentity,
