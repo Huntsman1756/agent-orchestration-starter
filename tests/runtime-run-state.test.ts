@@ -74,6 +74,31 @@ test('rejects every lifecycle transition that bypasses execution, reinspection, 
   }
 });
 
+test('COMMIT_CREATED marks only matching accepted evidence as FINALIZED', () => {
+  const acceptedCommand = accepted();
+  const reviewedCommand: Extract<BrokerCommandV4, { type: 'RUN_ACCEPTED' }> = { ...acceptedCommand, result: {
+    ...validRuntimeResult(),
+    state: 'REVIEW_ACCEPTED',
+    branch: `codex/auto/${acceptedCommand.run_id}`,
+    head_sha: null,
+    commit_sha: null,
+  } as typeof acceptedCommand.result };
+  const reviewed = reduceBrokerStateV4(initialBrokerStateV4(), reviewedCommand);
+  const command: Extract<BrokerCommandV4, { type: 'COMMIT_CREATED' }> = {
+    type: 'COMMIT_CREATED', command_id: 'commit-created', run_id: acceptedCommand.run_id,
+    task_ref: `refs/heads/codex/auto/${reviewedCommand.run_id}`,
+    base_sha: reviewedCommand.contract.base_sha,
+    git_tree_sha: 'c'.repeat(40), evidence_tree_hash: reviewedCommand.result.tree_hash,
+    commit_sha: 'd'.repeat(40), contract_hash: reviewedCommand.contract.contract_hash,
+    diff_hash: reviewedCommand.result.diff_hash, validation_manifest_hash: 'e'.repeat(64),
+    review_attestation_hash: reviewedCommand.result.review_attestation_hash!,
+  };
+  const finalized = reduceBrokerStateV4(reviewed, command);
+  assert.equal(finalized.runs[reviewedCommand.run_id].result.state, 'FINALIZED');
+  assert.equal(finalized.runs[reviewedCommand.run_id].result.commit_sha, command.commit_sha);
+  assert.throws(() => reduceBrokerStateV4(reviewed, { ...command, evidence_tree_hash: '0'.repeat(64) }), /BROKER_STATE_CORRUPT/);
+});
+
 test('rejects an atomic cache snapshot that disagrees with journal replay', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-state-'));
   const journal = await createJournalV4(directory);
