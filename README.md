@@ -136,6 +136,8 @@ Cross-system interoperability can use the optional, version-pinned A2A v1 task p
 
 Before activation in another repository, `assessRuntimeActivationV4` reports portable route coverage and host readiness for analysis-only, isolated execution, or autonomous publication. It does not infer project-specific production rules. See [`docs/activation-readiness-v4.md`](docs/activation-readiness-v4.md).
 
+The provider-neutral autonomous dispatcher is the outer supervisor for authorized task intake, durable leases, idempotent runtime submission, crash recovery, circuit breaking, and exact-merge post-verification. It supports persistent `RUNNING`, `DRAINING`, and `PAUSED` modes and a cancelable serial service loop. GitHub/CI credentials and task-to-contract planning remain privileged host-adapter responsibilities. See [`docs/autonomous-dispatcher-v4.md`](docs/autonomous-dispatcher-v4.md).
+
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos
