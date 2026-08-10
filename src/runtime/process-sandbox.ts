@@ -6,7 +6,7 @@ export type SandboxProfileV4 =
 
 export interface SandboxMountV4 {
   readonly source: string;
-  readonly target: '/capsule' | '/workspace' | '/scratch';
+  readonly target: '/capsule' | '/capsule/repo' | '/workspace' | '/scratch';
   readonly access: 'READ_ONLY' | 'READ_WRITE';
 }
 

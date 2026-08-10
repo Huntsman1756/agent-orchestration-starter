@@ -1,0 +1,32 @@
+schemaVersion: 4
+id: provider-neutral-runtime-example
+bindings:
+  orchestrator: &frontier_read
+    harness: codex
+    provider: frontier-provider
+    model: frontier-model
+    capability: frontier_reasoning
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+  executor: &economy_write
+    harness: opencode
+    provider: economy-provider
+    model: economy-model
+    capability: agentic_tool_execution
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+  escalationExecutor: *economy_write
+  frontierExecutor:
+    harness: opencode
+    provider: frontier-provider
+    model: frontier-model
+    capability: agentic_tool_execution
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: contract-write
+  reviewer: *frontier_read
+runtime:
+  maxEconomyParallelRequests: 1
+  maxConcurrentRunsPerRepository: 1

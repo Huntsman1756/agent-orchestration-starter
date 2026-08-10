@@ -35,7 +35,9 @@ import {
 } from '../src/runtime/sandbox-certification.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
-const trustedFixtureParent = join(homedir(), '.agent-orchestration-test-fixtures');
+const trustedFixtureParent = process.platform === 'win32'
+  ? join(process.cwd(), '.tmp', 'agent-orchestration-test-fixtures')
+  : join(homedir(), '.agent-orchestration-test-fixtures');
 
 async function makeTrustedFixtureRoot(prefix: string): Promise<string> {
   await mkdir(trustedFixtureParent, { recursive: true });
@@ -148,6 +150,7 @@ test('Docker policy hashes bind the profile, provider origin, and host mount pol
 });
 
 test('Docker config rejects mutable images and non-canonical provider origins', () => {
+  assert.doesNotThrow(() => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['api.provider-one.example', 'gateway.provider-two.example'] }));
   assert.throws(
     () => validateDockerSandboxConfigV4({ ...config, docker_executable: 'docker' }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
@@ -162,6 +165,10 @@ test('Docker config rejects mutable images and non-canonical provider origins', 
   );
   assert.throws(
     () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['127.0.0.1'] }),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+  assert.throws(
+    () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['api.provider.example', 'api.provider.example'] }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
@@ -215,15 +222,17 @@ test('Docker launcher freezes the default endpoint and rejects isolated config m
   }
 });
 
-test('production gateway accepts only the exact lower-case ArliAI TLS origin', () => {
-  assert.equal(validateProviderGatewayOriginV4('https://api.arliai.com').origin, 'https://api.arliai.com');
+test('production gateway accepts only an exact allowlisted lower-case provider TLS origin', () => {
+  assert.equal(validateProviderGatewayOriginV4('https://api.arliai.com', ['api.arliai.com']).origin, 'https://api.arliai.com');
+  assert.equal(validateProviderGatewayOriginV4('https://api.provider.example', ['api.provider.example']).origin, 'https://api.provider.example');
+  assert.throws(() => validateProviderGatewayOriginV4('https://api.provider.example', ['other.provider.example']), /PROCESS_SANDBOX_UNAVAILABLE/);
   for (const value of [
     'https://api.arliai.com:8443',
     'https://API.ARLIAI.COM',
     'https://127.0.0.1',
     'https://api.arliai.com/v1',
   ]) {
-    assert.throws(() => validateProviderGatewayOriginV4(value), /PROCESS_SANDBOX_UNAVAILABLE/);
+    assert.throws(() => validateProviderGatewayOriginV4(value, ['api.arliai.com']), /PROCESS_SANDBOX_UNAVAILABLE/);
   }
 });
 
@@ -245,7 +254,7 @@ test('validation rejects network, provider credentials, host-home, and Docker-so
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, validationRequest({ environment: { ARLIAI_API_KEY: 'real-secret' } })),
+    () => validateDockerSandboxRequestV4(config, validationRequest({ environment: { OPENAI_API_KEY: 'real-secret' } })),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
@@ -268,14 +277,14 @@ test('networked executor permits only an internal network and the fixed non-secr
     network: { mode: 'INTERNAL', name: 'ao-int-exec-contract-0001' },
     environment: {
       HOME: '/tmp/home',
-      ARLIAI_API_KEY: 'broker-gateway',
-      ARLIAI_BASE_URL: 'http://provider-gateway:8080/v1',
+      PROVIDER_GATEWAY_TOKEN: 'broker-gateway',
+      PROVIDER_BASE_URL: 'http://provider-gateway:8080/v1',
     },
   });
 
   assert.doesNotThrow(() => validateDockerSandboxRequestV4(config, request));
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, { ...request, environment: { ...request.environment, ARLIAI_API_KEY: 'synthetic-real-key' } }),
+    () => validateDockerSandboxRequestV4(config, { ...request, environment: { ...request.environment, OPENAI_API_KEY: 'synthetic-real-key' } }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
