@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import {
   DOCKER_ISOLATION_ARGS_V4,
@@ -35,6 +35,20 @@ import {
 } from '../src/runtime/sandbox-certification.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
+const trustedFixtureParent = join(homedir(), '.agent-orchestration-test-fixtures');
+
+async function makeTrustedFixtureRoot(prefix: string): Promise<string> {
+  await mkdir(trustedFixtureParent, { recursive: true });
+  await chmod(trustedFixtureParent, 0o700);
+  const root = await mkdtemp(join(trustedFixtureParent, prefix));
+  await writeFile(join(root, 'package.json'), '{"type":"commonjs"}\n', 'utf8');
+  return root;
+}
+
+after(async () => {
+  await rm(trustedFixtureParent, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+});
+
 const config: DockerSandboxConfigV4 = {
   docker_executable: join(tmpdir(), process.platform === 'win32' ? 'docker.exe' : 'docker'),
   image_id: imageId,
@@ -151,7 +165,7 @@ test('Docker launcher freezes the default endpoint and rejects isolated config m
   const previousContext = process.env.DOCKER_CONTEXT;
   process.env.DOCKER_HOST = 'tcp://127.0.0.1:2375';
   process.env.DOCKER_CONTEXT = 'same-name-attacker-context';
-  const root = await mkdtemp(join(tmpdir(), 'ao-docker-endpoint-'));
+  const root = await makeTrustedFixtureRoot('ao-docker-endpoint-');
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const brokerState = join(root, 'broker');
   await copyFile(process.execPath, executable);
@@ -251,7 +265,7 @@ test('networked executor permits only an internal network and the fixed non-secr
 });
 
 test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', async () => {
-  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-mount-proof-'));
+  const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-proof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');
   const activeWorktree = join(root, 'active-worktree');
@@ -288,7 +302,7 @@ test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, 
 });
 
 test('mount capability reproof rejects a source replaced by an alias before Docker effects', async () => {
-  const root = await mkdtemp(join(dirname(process.cwd()), 'ao-mount-reproof-'));
+  const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-reproof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');
   const replacement = join(allowed, 'replacement');
@@ -509,7 +523,7 @@ test('certification transcript contains exactly one artifact of each required ki
 });
 
 test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-cli-block-'));
+  const root = await makeTrustedFixtureRoot('ao-cli-block-');
   const previousCwd = process.cwd();
   try {
     await Promise.all([
@@ -567,7 +581,7 @@ test('Windows bounded termination waits for every detached descendant to be abse
       const pidPath = join(root, `descendant-${iteration}.pid`);
       const source = [
         "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-        "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+    `const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:${String(process.platform === 'win32')},stdio:'ignore'});`,
         `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
       ].join('');
       const handle = startBoundedProcessV4({
@@ -640,7 +654,7 @@ test('bounded attach cleanup kills the local tree even when immutable-ID removal
     const pidPath = join(root, 'descendant.pid');
     const source = [
       "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+      `const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:${String(process.platform === 'win32')},stdio:'ignore'});`,
       `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
     ].join('');
     const handle = startBoundedProcessV4({
@@ -696,7 +710,7 @@ test('network absence classification accepts only the exact immutable ID not-fou
 });
 
 test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-container-transaction-'));
+  const root = await makeTrustedFixtureRoot('ao-container-transaction-');
   const previousCwd = process.cwd();
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const statePath = join(root, 'state.json');
@@ -764,7 +778,7 @@ test('broker container transaction recovers partial and delayed create effects a
 });
 
 test('fresh process reconciles a durable owned container transaction before new create authority', { timeout: 30_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-container-restart-'));
+  const root = await makeTrustedFixtureRoot('ao-container-restart-');
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const statePath = join(root, 'state.json');
   const countPath = join(root, 'count');
