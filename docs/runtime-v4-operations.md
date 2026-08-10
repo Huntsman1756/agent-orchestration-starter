@@ -18,6 +18,14 @@ Use `assessRuntimeActivationV4` to produce a strict machine-readable assessment 
 
 Install once per machine and activate each repository by reference. Installation, activation, driver migration and future provider changes are documented in [`host-installation-v4.md`](host-installation-v4.md). Activation records intended authority but does not manufacture host certification.
 
+Third-party runtimes are qualified as exact host-driver candidates, never trusted by
+product name or by the presence of a container. Use
+[`external-runtime-qualification-v4.md`](external-runtime-qualification-v4.md) for the
+portable evidence procedure. The pinned OpenHands comparison in
+[`research/openhands-sandbox-evaluation-2026-08-10.md`](research/openhands-sandbox-evaluation-2026-08-10.md)
+shows how omitted controls and non-comparable tests remain explicit instead of silently
+becoming `hard` evidence.
+
 If any item is absent, startup or execution returns a typed failure. There is no direct-write fallback.
 
 ## Configuration boundaries
