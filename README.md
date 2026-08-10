@@ -109,6 +109,14 @@ Esta superficie no ejecuta modelos o proveedores, no crea worktrees, no decide r
 
 La API pública equivalente se importa desde `agent-orchestration-starter/pilot-v3`; no es necesario depender de rutas internas del paquete.
 
+## Automated Runtime V4 status
+
+The public `agent-orchestration-starter/runtime-v4` API now includes strict contracts, capability gates, isolated executor/reviewer building blocks, deterministic validation, hook-free local finalization, bounded telemetry, and the daemon-owned orchestration port. Project Codex configuration is fail-closed: the primary context is read-only and the five-tool MCP server is required.
+
+This is not yet a production-ready one-command runner. The current branch deliberately stops before exposing saved ChatGPT/Codex authentication or an API key to repository-controlled processes. Production IPC composition for repair/finalize/abort and installation of the immutable project-local runtime bundle also remain incomplete. Until those are implemented and certified on the target host, `runtime mcp-stdio` exits with `CAPABILITY_UNVERIFIED` instead of falling back to direct edits.
+
+See `docs/runtime-v4-operations.md` for the verified surface, deployment gates, typed failures, and no-push guarantee.
+
 ## Límites conocidos
 
 `writeIsolation` forma parte del contrato. Codex y OpenCode ofrecen `hard`; Hermes ofrece `degraded` porque hereda la superficie de herramientas del padre. Una política `hard` rechaza Hermes salvo aceptación exacta con `--accept-degraded-isolation hermes`. El manifiesto registra aislamiento requerido y efectivo.

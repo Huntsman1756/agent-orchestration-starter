@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/runtime-event-v4.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "type", "event_id", "run_id", "sequence", "previous_hash", "recorded_at", "contract_hash", "evidence_hashes", "event_hash"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "type": { "enum": ["RUN_PLANNED", "WORKTREE_CREATED", "CAPABILITY_CHECKED", "EXECUTION_STARTED", "EXECUTION_COMPLETED", "DIFF_POLICY_CHECKED", "VALIDATION_RECORDED", "REVIEW_STARTED", "REVIEW_COMPLETED", "ESCALATION_DECIDED", "FINALIZATION_STARTED", "COMMIT_CREATED", "RUN_FAILED", "RUN_ABORTED"] },
+    "event_id": { "type": "string", "pattern": "^evt_[A-Za-z0-9_-]{16,96}$" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "previous_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "recorded_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.+Z$" },
+    "contract_hash": { "$ref": "#/$defs/hash" },
+    "evidence_hashes": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } },
+    "duration_ms": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+    "counters": { "type": "object", "maxProperties": 32, "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } },
+    "findings": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/finding" } },
+    "binding_ref": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "sandbox_certification_hash": { "$ref": "#/$defs/hash" },
+    "event_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "finding": { "type": "object", "additionalProperties": false, "required": ["id", "severity", "evidence_hash"], "properties": { "id": { "type": "string", "minLength": 1, "maxLength": 128 }, "severity": { "enum": ["low", "medium", "high", "critical"] }, "evidence_hash": { "$ref": "#/$defs/hash" } } }
+  }
+}

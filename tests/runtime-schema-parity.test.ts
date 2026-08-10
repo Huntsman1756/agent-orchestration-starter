@@ -13,6 +13,7 @@ import {
   loadRuntimeWorkContractV4,
 } from '../src/runtime/load.js';
 import { loadFrontierExecutorResultV4 } from '../src/runtime/codex-runner.js';
+import { createRuntimeEventV4, loadRuntimeEventV4 } from '../src/runtime/telemetry.js';
 
 type Loader = (value: unknown) => unknown;
 
@@ -101,5 +102,15 @@ test('frontier executor result schema and loader reject unknown fields and unsaf
     (value) => ({ ...value, status: 'FAILED' }),
     (value) => ({ ...value, changed_paths: ['../outside'] }),
     (value) => ({ ...value, changed_paths: ['src/A.ts', 'src/A.ts'] }),
+  ]);
+});
+
+test('runtime telemetry public schema and loader reject unknown, raw, and malformed evidence', async () => {
+  const body = { schema_version: 4 as const, type: 'RUN_PLANNED' as const, event_id: 'evt_0000000000000001', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', sequence: 1, previous_hash: null, recorded_at: '2026-08-10T12:00:00.000Z', contract_hash: hash, evidence_hashes: [hash] };
+  const valid = createRuntimeEventV4(body);
+  await assertParity('runtime-event-v4.schema.json', valid, loadRuntimeEventV4, [
+    (value) => ({ ...value, prompt: 'raw' }),
+    (value) => ({ ...value, event_hash: 'bad' }),
+    (value) => ({ ...value, type: 'UNKNOWN' }),
   ]);
 });
