@@ -193,7 +193,10 @@ async function buildLinuxNativeHelper() {
   const target = `${process.platform}-${process.arch}`;
   if (!supportedTargets.has(target)) {
     if (forPackage || process.platform === 'linux') {
-      throw new Error(`Unsupported native package target: ${target}`);
+      throw new Error(
+        `Unsupported native package target: ${target}. Release tarballs are built only on certified linux-x64; `
+        + 'Windows and macOS cannot manufacture the Linux native broker artifact.',
+      );
     }
     return;
   }

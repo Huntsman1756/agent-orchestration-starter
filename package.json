@@ -1,24 +1,16 @@
 {
   "name": "agent-orchestration-starter",
-  "version": "0.1.0",
-  "description": "Provider-agnostic agent role compiler for Codex, OpenCode, and Hermes",
+  "version": "0.2.0",
+  "description": "Provider-neutral agent orchestration runtime and control plane",
   "license": "MIT",
   "type": "module",
   "files": [
     "contracts/**",
     "dist/**",
-    "docs/runtime-broker-quarantine-remediation.md",
-    "docs/activation-readiness-v4.md",
-    "docs/delegation-practice-packs-v4.md",
-    "docs/iterative-executor-v4.md",
-    "docs/model-guidance-v4.md",
-    "docs/modular-host-components-v4.md",
-    "docs/publication-v4.md",
-    "docs/runtime-v4-operations.md",
-    "docs/host-installation-v4.md",
-    "docs/autonomous-dispatcher-v4.md",
+    "docs/**",
     "examples/**",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "native/**",
     "orchestration.yaml",
@@ -27,7 +19,8 @@
     "routing-gate.yaml",
     "scripts/build-linux-native-helper.mjs",
     "scripts/build-host-bundle.mjs",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
   "bin": {
     "agent-orchestration": "dist/cli/main.js"
@@ -44,16 +37,31 @@
     "./runtime-v4": {
       "types": "./dist/runtime/index.d.ts",
       "import": "./dist/runtime/index.js"
+    },
+    "./runtime-v4/contracts": {
+      "types": "./dist/runtime/contract-api.d.ts",
+      "import": "./dist/runtime/contract-api.js"
+    },
+    "./runtime-v4/host": {
+      "types": "./dist/runtime/host-api.d.ts",
+      "import": "./dist/runtime/host-api.js"
+    },
+    "./runtime-v4/experimental": {
+      "types": "./dist/runtime/experimental.d.ts",
+      "import": "./dist/runtime/experimental.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run build:native && npm run build:host",
     "build:host": "node scripts/build-host-bundle.mjs",
     "build:native": "node scripts/build-linux-native-helper.mjs",
+    "build:sbom": "node scripts/generate-sbom.mjs",
     "prepack": "node scripts/build-linux-native-helper.mjs --clean-only && tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package && npm run build:host",
     "pretest": "npm run build:native && npm run build:host",
     "test": "tsx --test tests/*.test.ts",
     "test:autonomous": "tsx --test tests/runtime-autonomous-dispatcher.test.ts",
+    "test:hostile": "tsx --test tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts",
+    "example:reference-e2e": "tsx --test tests/runtime-reference-host-e2e.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "validate": "npm run test && npm run typecheck && npm run build",
     "prepublishOnly": "npm run validate"

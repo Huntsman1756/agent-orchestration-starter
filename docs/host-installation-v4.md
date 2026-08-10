@@ -13,6 +13,11 @@ Runtime V4 is installed once per trusted machine and activated by reference in a
 
 The stable policy names roles, capabilities, source sensitivity and permissions. Model/provider identifiers and their dated guidance stay in the replaceable profile. Host code is installed once per machine and must not contain repository routing rules. The privileged boundary is modular even when one release artifact distributes it; see [`modular-host-components-v4.md`](modular-host-components-v4.md).
 
+The checked-in [reference host fixture](../examples/reference-host-driver/README.md)
+is deliberately non-authoritative. It demonstrates the loader and durable
+lifecycle without credentials or network access; it does not satisfy a
+production activation gate.
+
 ## Build and install once
 
 `npm run build` emits `dist/host/agent-orchestration.mjs`, an ESM bundle containing JavaScript dependencies. Runtime schemas remain in `contracts/`; certified native helpers remain in `dist/native/`. The installer copies that closed set into a content-addressed installation, rejects symlinks and non-regular entries, and records every byte with SHA-256.
