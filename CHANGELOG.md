@@ -38,6 +38,9 @@ host qualification.
 
 ### Added
 
+- A bounded, seeded dispatcher state-machine model test covering pause, run,
+  admission, crash/recovery, drain and abort invariants with replayable
+  counterexamples.
 - A packaged delegation-practice runbook covering deterministic frontend/backend stack guidance, full-stack story decomposition, validation evidence and fail-closed escalation without provider-specific core policy.
 - Provider-neutral worker capability snapshots that bind plans to exact model, endpoint, harness, parser, tool, instruction/skill and qualification identities plus qualified story limits.
 - Hash-verified structured repair packets and normalized no-progress detection for bounded iterative execution.
@@ -59,6 +62,8 @@ host qualification.
 - Installation identity now includes aggregate host certification as well as installed bytes, and repository activation binds the exact `hostCompositionHash`.
 
 ### Fixed
+
+- Relaxed the Windows Docker termination timing assertion to match the bounded `taskkill` and process-absence cleanup contract instead of relying on a sub-second runner timing.
 
 - Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
 

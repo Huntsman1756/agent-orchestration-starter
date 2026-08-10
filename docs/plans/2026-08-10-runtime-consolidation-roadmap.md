@@ -18,6 +18,10 @@ other single project/provider.
 - Fast CI covers Ubuntu and Windows on Node 20/22/24. Manual certification is
   a separate workflow; Docker certification requires an immutable pullable
   image reference and fails if the integration suite cannot run.
+- A bounded dispatcher-only state-machine model test exercises seeded
+  `PAUSE`, `RUN`, `ADMIT`, `CRASH`, `RECOVER`, `DRAIN` and `ABORT` sequences.
+  It checks durable lifecycle, lease, idempotency, publication-order and
+  fail-closed authority invariants and reports seed plus commands for replay.
 - Security scope is centralized in `SECURITY.md` and the repository threat
   model. Releases have pinned actions, checksums, SBOM and provenance.
 - Dependabot, dependency review, CodeQL, CODEOWNERS and contribution guidance
@@ -25,21 +29,15 @@ other single project/provider.
 
 ## Next evidence phase
 
-The framework-building phase is intentionally paused after this consolidation.
-The next substantial change should be a bounded dispatcher model/state-machine
-suite that generates `PAUSE`, `RUN`, `ADMIT`, `CRASH`, `RECOVER`, `DRAIN` and
-`ABORT` sequences and checks safety invariants: no duplicate execution, no
-lease without an owner, no terminal-to-nonterminal transition, no admission
-while paused, no publication before acceptance, stable run identity for the
-same canonical request, and no authority expansion after crash/recovery.
-
-Only after that suite is deterministic should the runtime be dogfooded on its
-own repository with a real, exactly qualified binding. The first pilot should
-keep publication manual, use 20--30 representative tasks, and record first
-and final acceptance, independent-review rejection, repairs, escalations,
-duration, cost, false acceptance and post-acceptance defects. These results
-are evidence for future policy decisions, not permission for the model to
-promote routes or publish autonomously.
+The framework-building phase is intentionally paused after this consolidation
+and the first dispatcher model slice. The next substantial evidence step is
+dogfooding the runtime on its own repository with a real, exactly qualified
+binding. The first pilot should keep publication manual, use 20--30
+representative tasks, and record first and final acceptance, independent-review
+rejection, repairs, escalations, duration, cost, false acceptance and
+post-acceptance defects. These results are evidence for future policy
+decisions, not permission for the model to promote routes or publish
+autonomously.
 
 ## Intentionally deferred
 
@@ -52,14 +50,15 @@ subsystem in small changes, starting with runtime contracts/state and then the
 pilot surface. `noImplicitReturns` and `noFallthroughCasesInSwitch` can be
 enabled earlier after a baseline check.
 
-### Property/state-machine testing
+### Subsequent property/state-machine layers
 
-The directed suite remains the release gate. The next test layer should use a
-bounded generator or state-machine fuzzer for dispatcher sequences, canonical
-JSON, IPC frames, hash-bound installation/activation and crash/recovery. Each
-generated counterexample must be reduced to a deterministic fixture before it
-enters the normal suite. Do not replace safety assertions with statistical
-confidence.
+The first bounded dispatcher model is implemented in
+`tests/runtime-autonomous-dispatcher-model.test.ts`. The directed suite and
+this dispatcher model remain the release gates. Later property layers for
+canonical JSON, IPC frames, hash-bound installation/activation and broader
+crash/recovery remain deferred. Each generated counterexample must be reduced
+to a deterministic fixture before it enters the normal suite. Do not replace
+safety assertions with statistical confidence.
 
 ### Production reference host
 
