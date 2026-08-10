@@ -49,7 +49,10 @@ async function waitForExecutionContainer(executionId: string): Promise<{ id: str
     const entries = output.split('\n').filter(Boolean);
     if (entries.length === 1) {
       const [id, name] = entries[0]!.split(' ');
-      if (/^[a-f0-9]{64}$/.test(id ?? '') && name) return { id: id!, name };
+      if (/^[a-f0-9]{64}$/.test(id ?? '') && name
+        && await docker('inspect', '--format', '{{.State.Running}}', id!).catch(() => 'false') === 'true') {
+        return { id: id!, name };
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -725,12 +728,13 @@ dockerIntegration('network cleanup propagates permission denial and a later cert
       /PROCESS_SANDBOX_UNAVAILABLE/,
       'permission denial must surface instead of being treated as absence',
     );
-    const retained = await docker(
-      'network', 'ls', '--no-trunc', '--filter=label=agent-orchestration.network-kind=internal', '--format', '{{.ID}}',
-    );
-    const candidates = retained.split('\n').filter((id) => /^[a-f0-9]{64}$/.test(id));
-    assert.equal(candidates.length >= 1, true, 'the exact network remains retryable after cleanup denial');
-    retainedNetworkId = candidates.at(-1)!;
+    const commands = (await readFile(join(wrapperRoot, 'commands.log'), 'utf8')).split('\n');
+    const internalCreate = commands.findIndex((line) => line.startsWith('network create ') && line.includes('--internal'));
+    const createdId = commands.slice(internalCreate + 1).find((line) => /^=> 0 "[a-f0-9]{64}\\n"/.test(line));
+    const retainedMatch = createdId?.match(/^=> 0 "([a-f0-9]{64})\\n"/);
+    assert.notEqual(internalCreate, -1, 'the wrapper must observe its own internal network creation');
+    assert.ok(retainedMatch, 'the exact wrapper-owned network remains retryable after cleanup denial');
+    retainedNetworkId = retainedMatch[1]!;
 
     await assert.rejects(
       () => runDockerSandboxHostileCertificationV4(wrapperConfig, identity),
