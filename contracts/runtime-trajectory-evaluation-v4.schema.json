@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/runtime-trajectory-evaluation-v4.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "outcome", "rules", "graph_hash", "trace_hash", "evaluation_hash"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
+    "outcome": { "enum": ["PASS", "FAIL"] },
+    "rules": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/rule" } },
+    "graph_hash": { "$ref": "#/$defs/nullableHash" },
+    "trace_hash": { "$ref": "#/$defs/nullableHash" },
+    "evaluation_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableHash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "rule": { "type": "object", "additionalProperties": false, "required": ["rule_id", "outcome", "evidence_hashes"], "properties": { "rule_id": { "enum": ["TELEMETRY_CHAIN", "TERMINAL_LAST", "EXECUTION_BALANCED", "VALIDATION_BEFORE_REVIEW", "ITERATION_GRAPH"] }, "outcome": { "enum": ["PASS", "FAIL"] }, "evidence_hashes": { "type": "array", "maxItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } } } }
+  }
+}

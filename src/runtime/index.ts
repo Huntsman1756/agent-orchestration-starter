@@ -7,6 +7,8 @@ export * from './model-guidance.js';
 export * from './publication.js';
 export * from './github-publication.js';
 export * from './iterative-executor.js';
+export * from './capability-contract.js';
+export * from './trajectory.js';
 export * from './bindings.js';
 export * from './capabilities.js';
 export * from './routing.js';
