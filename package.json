@@ -13,6 +13,7 @@
     "docs/publication-v4.md",
     "docs/runtime-v4-operations.md",
     "docs/host-installation-v4.md",
+    "docs/autonomous-dispatcher-v4.md",
     "examples/**",
     "CHANGELOG.md",
     "LICENSE",
@@ -49,6 +50,7 @@
     "prepack": "node scripts/build-linux-native-helper.mjs --clean-only && tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package && npm run build:host",
     "pretest": "npm run build:native && npm run build:host",
     "test": "tsx --test tests/*.test.ts",
+    "test:autonomous": "tsx --test tests/runtime-autonomous-dispatcher.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "validate": "npm run test && npm run typecheck && npm run build",
     "prepublishOnly": "npm run validate"
