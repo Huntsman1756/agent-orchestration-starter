@@ -16,6 +16,10 @@
 - Run state now records candidate acceptance and explicit abort durably. Terminal completion releases the repository lock.
 - Runtime deployment documentation now distinguishes one-time machine composition from per-repository policy/profile activation.
 
+### Fixed
+
+- Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
+
 ### Migration
 
 - Existing generated project-local runtime paths remain supported but are not a certified production deployment.
