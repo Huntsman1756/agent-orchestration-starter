@@ -23,6 +23,7 @@ test('package exports identify stable, boundary-specific, and experimental runti
   assert.deepEqual(Object.keys(packageJson.exports ?? {}), [
     './fingerprint',
     './pilot-v3',
+    './dogfood-v1',
     './runtime-v4',
     './runtime-v4/contracts',
     './runtime-v4/host',

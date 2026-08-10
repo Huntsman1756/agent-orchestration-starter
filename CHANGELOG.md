@@ -41,6 +41,10 @@ host qualification.
 - A bounded, seeded dispatcher state-machine model test covering pause, run,
   admission, crash/recovery, drain and abort invariants with replayable
   counterexamples.
+- A hash-bound `dogfood-v1` manifest and run-record contract that freezes exact
+  bindings, a 20–30 case paired/interleaved corpus, independent review,
+  report-only authority, required operational metrics and hard pilot stop
+  conditions.
 - A packaged delegation-practice runbook covering deterministic frontend/backend stack guidance, full-stack story decomposition, validation evidence and fail-closed escalation without provider-specific core policy.
 - Provider-neutral worker capability snapshots that bind plans to exact model, endpoint, harness, parser, tool, instruction/skill and qualification identities plus qualified story limits.
 - Hash-verified structured repair packets and normalized no-progress detection for bounded iterative execution.

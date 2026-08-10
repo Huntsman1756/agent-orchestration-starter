@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.dev/contracts/dogfood-manifest-v1.schema.json",
+  "title": "Provider-neutral dogfood manifest V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experiment_id",
+    "manifest_hash",
+    "created_at",
+    "repository",
+    "baseline",
+    "corpus_policy",
+    "cases",
+    "route_bindings",
+    "reviewer",
+    "run_policy",
+    "scheduling",
+    "schedule_hash",
+    "schedule",
+    "authority",
+    "required_metrics",
+    "stop_conditions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "experiment_id": { "$ref": "#/$defs/identifier" },
+    "manifest_hash": { "$ref": "#/$defs/hash" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository_id", "base_branch"],
+      "properties": {
+        "repository_id": { "$ref": "#/$defs/identifier" },
+        "base_branch": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "baseline": { "$ref": "#/$defs/baseline" },
+    "corpus_policy": { "$ref": "#/$defs/corpusPolicy" },
+    "cases": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 30,
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "route_bindings": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/routeBinding" }
+    },
+    "reviewer": { "$ref": "#/$defs/reviewer" },
+    "run_policy": { "$ref": "#/$defs/runPolicy" },
+    "scheduling": { "$ref": "#/$defs/scheduling" },
+    "schedule_hash": { "$ref": "#/$defs/hash" },
+    "schedule": {
+      "type": "array",
+      "maxItems": 60,
+      "items": { "$ref": "#/$defs/scheduleEntry" }
+    },
+    "authority": { "$ref": "#/$defs/authority" },
+    "required_metrics": {
+      "type": "array",
+      "minItems": 17,
+      "maxItems": 17,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/metric" }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/stopCondition" }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "commitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "nonnegativeInteger": { "type": "integer", "minimum": 0 },
+    "strategy": { "enum": ["orchestrated", "frontier_execution"] },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_commit_sha", "policy_hash", "profile_hash", "worker_capability_hash", "guidance_bundle_hash", "harness_parser_hash", "host_driver_hash", "host_certification_hash", "installation_manifest_hash", "validation_surface_hash"],
+      "properties": {
+        "runtime_commit_sha": { "$ref": "#/$defs/commitSha" },
+        "policy_hash": { "$ref": "#/$defs/hash" },
+        "profile_hash": { "$ref": "#/$defs/hash" },
+        "worker_capability_hash": { "$ref": "#/$defs/hash" },
+        "guidance_bundle_hash": { "$ref": "#/$defs/hash" },
+        "harness_parser_hash": { "$ref": "#/$defs/hash" },
+        "host_driver_hash": { "$ref": "#/$defs/hash" },
+        "host_certification_hash": { "$ref": "#/$defs/hash" },
+        "installation_manifest_hash": { "$ref": "#/$defs/hash" },
+        "validation_surface_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "corpusPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provenance", "selection_rule_hash", "solution_diff_available_to_workers", "oracle_available_to_workers", "oracle_storage", "worker_projection"],
+      "properties": {
+        "provenance": { "enum": ["historical_commits", "new_real_tasks", "mixed"] },
+        "selection_rule_hash": { "$ref": "#/$defs/hash" },
+        "solution_diff_available_to_workers": { "const": false },
+        "oracle_available_to_workers": { "const": false },
+        "oracle_storage": { "const": "EVALUATOR_ONLY" },
+        "worker_projection": { "const": "CONTRACT_AND_FIXTURES_ONLY" }
+      }
+    },
+    "oracle": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference_commit_sha", "outcome_hash"],
+          "properties": {
+            "kind": { "const": "HISTORICAL_COMMIT" },
+            "reference_commit_sha": { "$ref": "#/$defs/commitSha" },
+            "outcome_hash": { "$ref": "#/$defs/hash" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference_commit_sha", "outcome_hash"],
+          "properties": {
+            "kind": { "const": "HUMAN_ACCEPTANCE" },
+            "reference_commit_sha": { "type": "null" },
+            "outcome_hash": { "$ref": "#/$defs/hash" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference_commit_sha", "outcome_hash"],
+          "properties": {
+            "kind": { "const": "NONE" },
+            "reference_commit_sha": { "type": "null" },
+            "outcome_hash": { "type": "null" }
+          }
+        }
+      ]
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_id", "task_id", "task_class", "pair_id", "base_sha", "contract_hash", "fixtures_hash", "case_fingerprint", "validation_surface_hash", "source_sensitivity", "risk_class", "oracle"],
+      "properties": {
+        "case_id": { "$ref": "#/$defs/identifier" },
+        "task_id": { "$ref": "#/$defs/identifier" },
+        "task_class": { "$ref": "#/$defs/identifier" },
+        "pair_id": { "$ref": "#/$defs/identifier" },
+        "base_sha": { "$ref": "#/$defs/commitSha" },
+        "contract_hash": { "$ref": "#/$defs/hash" },
+        "fixtures_hash": { "$ref": "#/$defs/hash" },
+        "case_fingerprint": { "$ref": "#/$defs/hash" },
+        "validation_surface_hash": { "$ref": "#/$defs/hash" },
+        "source_sensitivity": { "enum": ["PUBLIC", "PRIVATE", "RESTRICTED"] },
+        "risk_class": { "enum": ["low", "medium", "high", "restricted"] },
+        "oracle": { "$ref": "#/$defs/oracle" }
+      }
+    },
+    "routeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "binding_ref", "binding_hash", "qualification_hash"],
+      "properties": {
+        "strategy": { "$ref": "#/$defs/strategy" },
+        "binding_ref": { "$ref": "#/$defs/identifier" },
+        "binding_hash": { "$ref": "#/$defs/hash" },
+        "qualification_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_ref", "binding_hash", "qualification_hash", "review_policy_hash", "evidence_packet_schema_hash", "fresh_session_per_run", "same_packet_shape", "sees_executor_narrative", "sees_other_route_result", "scope"],
+      "properties": {
+        "binding_ref": { "$ref": "#/$defs/identifier" },
+        "binding_hash": { "$ref": "#/$defs/hash" },
+        "qualification_hash": { "$ref": "#/$defs/hash" },
+        "review_policy_hash": { "$ref": "#/$defs/hash" },
+        "evidence_packet_schema_hash": { "$ref": "#/$defs/hash" },
+        "fresh_session_per_run": { "const": true },
+        "same_packet_shape": { "const": true },
+        "sees_executor_narrative": { "const": false },
+        "sees_other_route_result": { "const": false },
+        "scope": { "const": "EVIDENCE_ONLY" }
+      }
+    },
+    "runPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["same_base_sha", "same_fixtures", "same_validation_surface", "fresh_worktree_per_run", "cross_run_workspace_reuse", "post_acceptance_window_seconds"],
+      "properties": {
+        "same_base_sha": { "const": true },
+        "same_fixtures": { "const": true },
+        "same_validation_surface": { "const": true },
+        "fresh_worktree_per_run": { "const": true },
+        "cross_run_workspace_reuse": { "const": false },
+        "post_acceptance_window_seconds": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "scheduling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assignment_seed", "algorithm_version", "max_consecutive_same_strategy"],
+      "properties": {
+        "assignment_seed": { "$ref": "#/$defs/identifier" },
+        "algorithm_version": { "const": "hash-interleave-v1" },
+        "max_consecutive_same_strategy": { "const": 2 }
+      }
+    },
+    "scheduleEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ordinal", "case_id", "strategy"],
+      "properties": {
+        "ordinal": { "$ref": "#/$defs/positiveInteger" },
+        "case_id": { "$ref": "#/$defs/identifier" },
+        "strategy": { "$ref": "#/$defs/strategy" }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routing_decision", "publication_mode", "runtime_may_reach", "auto_route_promotion", "auto_push", "auto_merge", "auto_deploy", "mutation_after_start"],
+      "properties": {
+        "routing_decision": { "const": "REPORT_ONLY" },
+        "publication_mode": { "const": "MANUAL_ONLY" },
+        "runtime_may_reach": { "const": "READY_FOR_PUBLICATION" },
+        "auto_route_promotion": { "const": false },
+        "auto_push": { "const": false },
+        "auto_merge": { "const": false },
+        "auto_deploy": { "const": false },
+        "mutation_after_start": { "const": "NEW_EXPERIMENT_REQUIRED" }
+      }
+    },
+    "metric": {
+      "enum": ["first_pass_accepted", "final_accepted", "reviewer_rejection", "repairs", "escalations", "attempts", "duration_ms", "observed_cost", "changed_files", "changed_lines", "validation_failures", "false_acceptance", "post_acceptance_defects", "human_intervention_rate", "total_cost_to_accepted_result", "evidence_reconstructible", "cross_run_contamination"]
+    },
+    "stopCondition": {
+      "enum": ["AUTHORITY_ESCAPE", "DURABLE_STATE_INCONSISTENCY", "CRITICAL_FALSE_ACCEPTANCE", "CROSS_RUN_CONTAMINATION", "UNRECONSTRUCTABLE_EVIDENCE"]
+    }
+  }
+}

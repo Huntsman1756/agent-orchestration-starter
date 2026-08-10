@@ -1,5 +1,6 @@
 export * from './canonical-json.js';
 export * from './contracts.js';
+export * from './dogfood-manifest.js';
 export * from './evaluate.js';
 export * from './event-store.js';
 export * from './load.js';

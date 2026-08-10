@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.dev/contracts/dogfood-run-record-v1.schema.json",
+  "title": "Provider-neutral dogfood run record V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_hash", "experiment_id", "manifest_hash", "run_id", "schedule_ordinal", "case_id", "task_id", "pair_id", "strategy", "binding_ref", "binding_hash", "qualification_hash", "base_sha", "contract_hash", "fixtures_hash", "case_fingerprint", "policy_hash", "profile_hash", "worker_capability_hash", "guidance_bundle_hash", "harness_parser_hash", "host_driver_hash", "host_certification_hash", "installation_manifest_hash", "validation_surface_hash", "started_at", "completed_at", "outcome", "first_pass_accepted", "final_accepted", "reviewer_rejected", "repairs", "escalations", "attempts", "duration_ms", "currency", "observed_cost_micro_units", "human_interventions", "human_intervention_seconds", "human_intervention_cost_micro_units", "total_cost_to_accepted_result_micro_units", "changed_files", "changed_lines", "validation_failures", "false_acceptance", "post_acceptance_window_closed", "post_acceptance_defects", "evidence_reconstructible", "evidence_hashes", "cross_run_contamination", "publication_state", "recorded_at"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "record_hash": { "$ref": "#/$defs/hash" },
+    "experiment_id": { "$ref": "#/$defs/identifier" },
+    "manifest_hash": { "$ref": "#/$defs/hash" },
+    "run_id": { "$ref": "#/$defs/identifier" },
+    "schedule_ordinal": { "$ref": "#/$defs/positiveInteger" },
+    "case_id": { "$ref": "#/$defs/identifier" },
+    "task_id": { "$ref": "#/$defs/identifier" },
+    "pair_id": { "$ref": "#/$defs/identifier" },
+    "strategy": { "enum": ["orchestrated", "frontier_execution"] },
+    "binding_ref": { "$ref": "#/$defs/identifier" },
+    "binding_hash": { "$ref": "#/$defs/hash" },
+    "qualification_hash": { "$ref": "#/$defs/hash" },
+    "base_sha": { "$ref": "#/$defs/commitSha" },
+    "contract_hash": { "$ref": "#/$defs/hash" },
+    "fixtures_hash": { "$ref": "#/$defs/hash" },
+    "case_fingerprint": { "$ref": "#/$defs/hash" },
+    "policy_hash": { "$ref": "#/$defs/hash" },
+    "profile_hash": { "$ref": "#/$defs/hash" },
+    "worker_capability_hash": { "$ref": "#/$defs/hash" },
+    "guidance_bundle_hash": { "$ref": "#/$defs/hash" },
+    "harness_parser_hash": { "$ref": "#/$defs/hash" },
+    "host_driver_hash": { "$ref": "#/$defs/hash" },
+    "host_certification_hash": { "$ref": "#/$defs/hash" },
+    "installation_manifest_hash": { "$ref": "#/$defs/hash" },
+    "validation_surface_hash": { "$ref": "#/$defs/hash" },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "completed_at": { "$ref": "#/$defs/timestamp" },
+    "outcome": { "enum": ["ACCEPTED", "REJECTED", "FAILED", "BLOCKED", "ABORTED"] },
+    "first_pass_accepted": { "type": "boolean" },
+    "final_accepted": { "type": "boolean" },
+    "reviewer_rejected": { "type": "boolean" },
+    "repairs": { "$ref": "#/$defs/nonnegativeInteger" },
+    "escalations": { "$ref": "#/$defs/nonnegativeInteger" },
+    "attempts": { "$ref": "#/$defs/positiveInteger" },
+    "duration_ms": { "$ref": "#/$defs/nonnegativeInteger" },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "observed_cost_micro_units": { "$ref": "#/$defs/nonnegativeInteger" },
+    "human_interventions": { "$ref": "#/$defs/nonnegativeInteger" },
+    "human_intervention_seconds": { "$ref": "#/$defs/nonnegativeInteger" },
+    "human_intervention_cost_micro_units": { "$ref": "#/$defs/nonnegativeInteger" },
+    "total_cost_to_accepted_result_micro_units": { "$ref": "#/$defs/nonnegativeInteger" },
+    "changed_files": { "$ref": "#/$defs/nonnegativeInteger" },
+    "changed_lines": { "$ref": "#/$defs/nonnegativeInteger" },
+    "validation_failures": { "$ref": "#/$defs/nonnegativeInteger" },
+    "false_acceptance": { "type": "boolean" },
+    "post_acceptance_window_closed": { "const": true },
+    "post_acceptance_defects": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["defect_hash", "severity"],
+        "properties": {
+          "defect_hash": { "$ref": "#/$defs/hash" },
+          "severity": { "enum": ["low", "medium", "high", "critical"] }
+        }
+      }
+    },
+    "evidence_reconstructible": { "type": "boolean" },
+    "evidence_hashes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/hash" }
+    },
+    "cross_run_contamination": { "type": "boolean" },
+    "publication_state": { "enum": ["MANUAL_PENDING", "NOT_REQUESTED"] },
+    "recorded_at": { "$ref": "#/$defs/timestamp" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "commitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "nonnegativeInteger": { "type": "integer", "minimum": 0 }
+  }
+}

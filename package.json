@@ -34,6 +34,10 @@
       "types": "./dist/pilot/index.d.ts",
       "import": "./dist/pilot/index.js"
     },
+    "./dogfood-v1": {
+      "types": "./dist/pilot/dogfood-manifest.d.ts",
+      "import": "./dist/pilot/dogfood-manifest.js"
+    },
     "./runtime-v4": {
       "types": "./dist/runtime/index.d.ts",
       "import": "./dist/runtime/index.js"

@@ -209,6 +209,7 @@ notes.
 - [Portable runtime inspection](docs/portable-runtime-inspection-v4.md)
 - [Optional A2A projection](docs/a2a-adapter-v1.md)
 - [Activation readiness](docs/activation-readiness-v4.md)
+- [Controlled dogfooding protocol V1](docs/dogfooding-v1.md)
 - [Architecture review](docs/research/architecture-review.md)
 - [Consolidation roadmap](docs/plans/2026-08-10-runtime-consolidation-roadmap.md)
 

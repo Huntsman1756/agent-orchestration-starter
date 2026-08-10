@@ -31,13 +31,16 @@ other single project/provider.
 
 The framework-building phase is intentionally paused after this consolidation
 and the first dispatcher model slice. The next substantial evidence step is
-dogfooding the runtime on its own repository with a real, exactly qualified
-binding. The first pilot should keep publication manual, use 20--30
-representative tasks, and record first and final acceptance, independent-review
-rejection, repairs, escalations, duration, cost, false acceptance and
-post-acceptance defects. These results are evidence for future policy
-decisions, not permission for the model to promote routes or publish
-autonomously.
+dogfooding the runtime on a real repository with a real, exactly qualified
+binding. The frozen protocol and contracts are in `docs/dogfooding-v1.md` and
+the `dogfood-v1` package export. The first pilot should keep publication
+manual, use 20--30 representative tasks, compare only paired
+`orchestrated`/`frontier_execution` runs in a deterministic interleaved order,
+and record first and final acceptance, independent-review rejection, repairs,
+escalations, duration, cost, false acceptance, post-acceptance defects, human
+intervention and total cost to an accepted result. These results are evidence
+for future policy decisions, not permission for the model to promote routes or
+publish autonomously.
 
 ## Intentionally deferred
 
