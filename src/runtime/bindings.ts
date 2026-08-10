@@ -24,6 +24,9 @@ function deepFreeze<T>(value: T): T {
 export function resolveBinding(input: BindingResolutionInputV4): ResolvedBindingV4 {
   const role: RuntimeRoleV4 = input.route === 'FRONTIER' ? 'frontierExecutor' : 'executor';
   const binding = input.profile.bindings[role];
+  if (binding.permissions !== 'contract-write') {
+    throw new Error(`INVALID_CONTRACT: ${role} must have contract-write permission`);
+  }
   if (!binding.allowedSourceSensitivity.includes(input.sourceSensitivity)) {
     throw new Error(`SOURCE_SENSITIVITY_UNSUPPORTED: ${role} cannot process ${input.sourceSensitivity}`);
   }

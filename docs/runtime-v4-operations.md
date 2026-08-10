@@ -14,6 +14,8 @@ Production activation remains blocked until all of these are supplied and certif
 - fresh three-run capability qualification for each exact harness/provider/model/broker/policy identity;
 - Docker sandbox certification on the deployment host.
 
+Use `assessRuntimeActivationV4` to produce a strict machine-readable assessment for `ANALYSIS_ONLY`, `ISOLATED_EXECUTION`, or `AUTONOMOUS_PUBLICATION`. It reports route collapse and missing evidence without weakening private-source policy. See [`activation-readiness-v4.md`](activation-readiness-v4.md).
+
 If any item is absent, startup or execution returns a typed failure. There is no direct-write fallback.
 
 ## Configuration boundaries

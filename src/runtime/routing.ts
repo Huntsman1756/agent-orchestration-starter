@@ -4,6 +4,7 @@ import { loadRuntimeWorkContractV4 } from './load.js';
 import type { RuntimeProfileV4, RuntimeTaskRequestV4, RuntimeWorkContractV4, EffectiveRouteV4, RequestedRouteV4 } from './contracts.js';
 import type { FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import type { RegisteredRepositoryV4 } from './repository-registry.js';
+import { analyzeRuntimeRouteCoverageV4, type RuntimeRouteCoverageV4 } from './readiness.js';
 
 const requestedRank = { AUTO: 0, ECONOMY: 1, FRONTIER: 2 } as const;
 
@@ -50,12 +51,27 @@ function sandboxProfileHashes(input: DeriveWorkContractInputV4): Record<string, 
   return hashes;
 }
 
+function assertRouteCoverage(route: EffectiveRouteV4, coverage: RuntimeRouteCoverageV4): void {
+  const selected = route === 'ECONOMY' ? coverage.economy : coverage.frontier;
+  if (selected.available) return;
+  if (selected.reason === 'SOURCE_SENSITIVITY_UNSUPPORTED') throw new Error(`SOURCE_SENSITIVITY_UNSUPPORTED: ${route.toLowerCase()} route cannot process repository source sensitivity`);
+  throw new Error(`INVALID_CONTRACT: ${route.toLowerCase()} execution route has incompatible role permissions`);
+}
+
 export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWorkContractV4 {
   if (input.request.repository_id !== input.registration.repository_id || input.request.repository_id !== input.policy.policy.repositoryId) {
     throw new Error(`REPOSITORY_NOT_ALLOWED: ${input.request.repository_id}`);
   }
   const routeReasons = policyRouteReasons(input);
-  const route = effectiveRoute(input.request.requested_route, routeReasons.length > 0);
+  let route = effectiveRoute(input.request.requested_route, routeReasons.length > 0);
+  const coverage = analyzeRuntimeRouteCoverageV4(input.profile, input.policy.policy.sourcePolicy.sourceSensitivity);
+  if (input.request.requested_route === 'AUTO' && routeReasons.length === 0) {
+    if (coverage.automaticRoute === 'FRONTIER') {
+      route = 'FRONTIER';
+      routeReasons.push('economy route is incompatible with the effective runtime contract; compatible frontier route selected');
+    }
+  }
+  assertRouteCoverage(route, coverage);
   if (routeReasons.length === 0) routeReasons.push('eligible for economy route');
   resolveBinding({ profile: input.profile, route, sourceSensitivity: input.policy.policy.sourcePolicy.sourceSensitivity });
 
