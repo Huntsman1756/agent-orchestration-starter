@@ -6,6 +6,7 @@ const identifier = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const commitSha = z.string().regex(/^[a-f0-9]{40}$/);
 const timestamp = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/);
+const currency = z.string().regex(/^[A-Z]{3}$/);
 const positiveInteger = z.number().int().positive().safe();
 const nonnegativeInteger = z.number().int().nonnegative().safe();
 const boundedArray = <T extends z.ZodType>(schema: T) => z.array(schema).max(128);
@@ -48,14 +49,17 @@ const stopCondition = z.enum(DOGFOOD_STOP_CONDITIONS_V1);
 const baselineSchema = z.object({
   runtime_commit_sha: commitSha,
   policy_hash: hash,
-  profile_hash: hash,
-  worker_capability_hash: hash,
-  guidance_bundle_hash: hash,
-  harness_parser_hash: hash,
   host_driver_hash: hash,
   host_certification_hash: hash,
   installation_manifest_hash: hash,
   validation_surface_hash: hash,
+}).strict();
+
+const costPolicySchema = z.object({
+  reporting_currency: currency,
+  human_cost_micro_units_per_second: nonnegativeInteger,
+  conversion_policy_hash: hash,
+  observed_cost_in_reporting_currency: z.literal(true),
 }).strict();
 
 const corpusPolicySchema = z.object({
@@ -103,6 +107,10 @@ const routeBindingSchema = z.object({
   binding_ref: identifier,
   binding_hash: hash,
   qualification_hash: hash,
+  profile_hash: hash,
+  worker_capability_hash: hash,
+  guidance_bundle_hash: hash,
+  harness_parser_hash: hash,
 }).strict();
 
 const reviewerSchema = z.object({
@@ -157,8 +165,10 @@ const dogfoodManifestShape = {
   created_at: timestamp,
   repository: z.object({ repository_id: identifier, base_branch: identifier }).strict(),
   baseline: baselineSchema,
+  cost_policy: costPolicySchema,
+  analysis_policy_hash: hash,
   corpus_policy: corpusPolicySchema,
-  cases: z.array(caseSchema).min(1).max(30),
+  cases: z.array(caseSchema).min(20).max(30),
   route_bindings: z.array(routeBindingSchema).length(2),
   reviewer: reviewerSchema,
   run_policy: runPolicySchema,
@@ -189,6 +199,7 @@ const dogfoodRunRecordShape = {
   binding_ref: identifier,
   binding_hash: hash,
   qualification_hash: hash,
+  cost_policy_hash: hash,
   base_sha: commitSha,
   contract_hash: hash,
   fixtures_hash: hash,
@@ -245,6 +256,13 @@ export interface DogfoodManifestVerificationV1 {
 export interface DogfoodRunRecordVerificationV1 {
   ok: boolean;
   errors: string[];
+}
+
+export interface DogfoodRunSetVerificationV1 {
+  ok: boolean;
+  errors: string[];
+  expected_records: number;
+  actual_records: number;
 }
 
 function omitHash<T extends Record<string, unknown>>(value: T, key: string): Omit<T, typeof key> {
@@ -350,6 +368,47 @@ function manifestErrors(manifest: DogfoodManifestV1): string[] {
   return errors;
 }
 
+function parseTimestamp(value: string): number | null {
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  const canonical = new Date(milliseconds).toISOString();
+  const expected = value.includes('.') ? value : value.replace('Z', '.000Z');
+  return canonical === expected ? milliseconds : null;
+}
+
+function timingErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): string[] {
+  const errors: string[] = [];
+  const started = parseTimestamp(record.started_at);
+  const completed = parseTimestamp(record.completed_at);
+  const recorded = parseTimestamp(record.recorded_at);
+  if (started === null) errors.push('started_at is not a valid UTC timestamp');
+  if (completed === null) errors.push('completed_at is not a valid UTC timestamp');
+  if (recorded === null) errors.push('recorded_at is not a valid UTC timestamp');
+  if (started === null || completed === null || recorded === null) return errors;
+  if (started > completed) errors.push('started_at must be at or before completed_at');
+  if (completed > recorded) errors.push('completed_at must be at or before recorded_at');
+  if (record.duration_ms !== completed - started) errors.push('duration_ms must equal completed_at minus started_at');
+  const windowMilliseconds = manifest.run_policy.post_acceptance_window_seconds * 1_000;
+  if (!Number.isSafeInteger(windowMilliseconds)) errors.push('post-acceptance window is outside the safe integer range');
+  else if (recorded - completed < windowMilliseconds) errors.push('post-acceptance window is not closed');
+  return errors;
+}
+
+function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): string[] {
+  const errors: string[] = [];
+  const policy = manifest.cost_policy;
+  const expectedPolicyHash = hashCanonical(policy);
+  if (record.cost_policy_hash !== expectedPolicyHash) errors.push('cost_policy_hash does not match the frozen cost policy');
+  if (record.currency !== policy.reporting_currency) errors.push('currency does not match the frozen reporting currency');
+  const expectedHumanCost = record.human_intervention_seconds * policy.human_cost_micro_units_per_second;
+  if (!Number.isSafeInteger(expectedHumanCost)) errors.push('human intervention cost is outside the safe integer range');
+  else if (record.human_intervention_cost_micro_units !== expectedHumanCost) errors.push('human_intervention_cost_micro_units does not match the frozen human rate');
+  const expectedTotal = record.observed_cost_micro_units + record.human_intervention_cost_micro_units;
+  if (!Number.isSafeInteger(expectedTotal)) errors.push('total cost is outside the safe integer range');
+  else if (record.total_cost_to_accepted_result_micro_units !== expectedTotal) errors.push('total_cost_to_accepted_result_micro_units does not match observed and human cost');
+  return errors;
+}
+
 export function loadDogfoodManifestV1(value: unknown): DogfoodManifestV1 {
   return dogfoodManifestV1Schema.parse(value);
 }
@@ -412,14 +471,51 @@ export function verifyDogfoodRunRecordV1(manifest: DogfoodManifestV1, record: Do
   if (!routeBinding || record.binding_ref !== routeBinding.binding_ref || record.binding_hash !== routeBinding.binding_hash || record.qualification_hash !== routeBinding.qualification_hash) errors.push('record binding does not match the frozen route binding');
   for (const [field, expected] of Object.entries({
     policy_hash: manifest.baseline.policy_hash,
-    profile_hash: manifest.baseline.profile_hash,
-    worker_capability_hash: manifest.baseline.worker_capability_hash,
-    guidance_bundle_hash: manifest.baseline.guidance_bundle_hash,
-    harness_parser_hash: manifest.baseline.harness_parser_hash,
     host_driver_hash: manifest.baseline.host_driver_hash,
     host_certification_hash: manifest.baseline.host_certification_hash,
     installation_manifest_hash: manifest.baseline.installation_manifest_hash,
   })) if (record[field as keyof DogfoodRunRecordV1] !== expected) errors.push(`record ${field} does not match frozen baseline`);
+  if (routeBinding) {
+    for (const [field, expected] of Object.entries({
+      profile_hash: routeBinding.profile_hash,
+      worker_capability_hash: routeBinding.worker_capability_hash,
+      guidance_bundle_hash: routeBinding.guidance_bundle_hash,
+      harness_parser_hash: routeBinding.harness_parser_hash,
+    })) if (record[field as keyof DogfoodRunRecordV1] !== expected) errors.push(`record ${field} does not match frozen route binding`);
+  }
+  errors.push(...timingErrors(manifest, record));
+  errors.push(...costErrors(manifest, record));
   if (record.publication_state !== 'MANUAL_PENDING' && record.publication_state !== 'NOT_REQUESTED') errors.push('record publication state is not manual');
   return { ok: errors.length === 0, errors };
+}
+
+export function verifyDogfoodRunSetV1(manifest: DogfoodManifestV1, records: readonly unknown[]): DogfoodRunSetVerificationV1 {
+  const errors: string[] = [];
+  const manifestVerification = verifyDogfoodManifestV1(manifest);
+  if (!manifestVerification.ok) errors.push(...manifestVerification.errors.map(error => `manifest: ${error}`));
+  const expectedOrdinals = new Set(manifest.schedule.map(entry => entry.ordinal));
+  if (records.length !== expectedOrdinals.size) errors.push(`run record set must contain exactly ${expectedOrdinals.size} records`);
+  const seenOrdinals = new Set<number>();
+  const seenRunIds = new Set<string>();
+  const parsedRecords: DogfoodRunRecordV1[] = [];
+  for (const [index, candidate] of records.entries()) {
+    const parsed = dogfoodRunRecordV1Schema.safeParse(candidate);
+    if (!parsed.success) {
+      errors.push(`record ${index + 1} is invalid: ${parsed.error.message}`);
+      continue;
+    }
+    const record = parsed.data;
+    parsedRecords.push(record);
+    const verification = verifyDogfoodRunRecordV1(manifest, record);
+    errors.push(...verification.errors.map(error => `record ${record.run_id}: ${error}`));
+    if (seenOrdinals.has(record.schedule_ordinal)) errors.push(`duplicate schedule ordinal: ${record.schedule_ordinal}`);
+    seenOrdinals.add(record.schedule_ordinal);
+    if (seenRunIds.has(record.run_id)) errors.push(`duplicate run_id: ${record.run_id}`);
+    seenRunIds.add(record.run_id);
+  }
+  for (const ordinal of expectedOrdinals) if (!seenOrdinals.has(ordinal)) errors.push(`missing schedule ordinal: ${ordinal}`);
+  const expectedPairs = new Set(manifest.schedule.map(entry => `${entry.case_id}:${entry.strategy}`));
+  const actualPairs = new Set(parsedRecords.map(record => `${record.case_id}:${record.strategy}`));
+  if (actualPairs.size !== parsedRecords.length || [...expectedPairs].some(pair => !actualPairs.has(pair))) errors.push('run record set must contain each case and route exactly once');
+  return { ok: errors.length === 0, errors, expected_records: expectedOrdinals.size, actual_records: records.length };
 }

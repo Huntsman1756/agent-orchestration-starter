@@ -30,7 +30,10 @@ preserve the evidence, fix it in a separate change, and start a new manifest.
 Create a `DogfoodManifestV1` with
 `freezeDogfoodManifestV1` from the `dogfood-v1` package export. Commit the
 result before executing any scheduled entry. The manifest hash is the identity
-of the experiment; it must be present on every run record.
+of the experiment; it must be present on every run record. Also commit the
+exact analysis-policy artifact and put its canonical JSON hash in
+`analysis_policy_hash`. The formulas in that artifact are part of the
+experiment and cannot be changed after the first run.
 
 The baseline must contain all of these exact identities:
 
@@ -38,14 +41,28 @@ The baseline must contain all of these exact identities:
 | --- | --- |
 | `runtime_commit_sha` | Full 40-character SHA of the repository base (`main`) |
 | `policy_hash` | Frozen repository policy and routing authority |
-| `profile_hash` | Project/model binding profile |
-| `worker_capability_hash` | Exact worker deployment, tools, limits and qualification |
-| `guidance_bundle_hash` | Orchestrator/executor/reviewer guidance and instruction bundle |
-| `harness_parser_hash` | Harness and parser implementation identity |
 | `host_driver_hash` | Privileged host-driver identity |
 | `host_certification_hash` | Exact host certification evidence |
 | `installation_manifest_hash` | Central installation identity |
 | `validation_surface_hash` | Commands and validation configuration |
+
+The execution identities that may differ between the two routes are frozen in
+each `route_bindings` entry: `profile_hash`, `worker_capability_hash`,
+`guidance_bundle_hash`, `harness_parser_hash`, `binding_hash` and
+`qualification_hash`. This prevents an orchestrated worker and a frontier
+worker from being represented by one misleading global capability hash.
+
+The manifest also freezes `cost_policy`:
+
+- `reporting_currency` is the only currency accepted in run records;
+- `human_cost_micro_units_per_second` is the immutable human-intervention rate;
+- `conversion_policy_hash` identifies the provider-cost conversion rules;
+- `observed_cost_in_reporting_currency: true` means route, repair and escalation
+  costs are already converted before recording them.
+
+The verifier recomputes human cost as
+`human_intervention_seconds × human_cost_micro_units_per_second` and total cost
+as `observed_cost_micro_units + human_intervention_cost_micro_units`.
 
 Changing any one of these starts a new experiment. Do not edit a frozen
 manifest in place and do not reinterpret a record under a later binding.
@@ -119,14 +136,24 @@ credentials or secrets. At minimum record:
 - human interventions and intervention time;
 - total cost to an accepted result.
 
-`total_cost_to_accepted_result_micro_units` must include the observed route
-cost, repairs, escalations and the declared human-intervention cost. Report
-token/provider cost separately from operational human cost so a cheap worker
-cannot appear cheaper merely because intervention is omitted.
+`total_cost_to_accepted_result_micro_units` must equal the verifier's frozen
+calculation: observed route cost (including repairs and escalations) plus the
+declared human-intervention cost. Report token/provider cost separately from
+operational human cost so a cheap worker cannot appear cheaper merely because
+intervention is omitted. A record with a manipulated currency, human rate or
+total is invalid.
 
 The manifest freezes `post_acceptance_window_seconds`. A final run record is
-valid only after that window is closed; defects are then classified against the
-same window for both routes.
+valid only when `started_at ≤ completed_at ≤ recorded_at`, `duration_ms` equals
+the timestamp difference, and `recorded_at` is at least
+`completed_at + post_acceptance_window_seconds`. Defects are then classified
+against the same window for both routes.
+
+Do not build the report by checking records one at a time. Call
+`verifyDogfoodRunSetV1(manifest, records)` and require exactly one valid record
+for every schedule ordinal, with both routes present for every case. A missing,
+duplicated or extra record invalidates the experiment rather than silently
+changing its denominator.
 
 The aggregate `human_intervention_rate` is the proportion of runs requiring at
 least one human action. The aggregate `total_cost_to_accepted_result` is the
@@ -156,7 +183,9 @@ new manifest hash.
 ## Analysis boundary
 
 After the corpus is complete, publish a report containing the paired matrix
-`task_class × strategy` and the operational metrics. The first question is:
+`task_class × strategy` and the operational metrics. Use the frozen
+`contracts/dogfood-analysis-policy-v1.json` identified by `analysis_policy_hash`.
+The first question is:
 
 > Does `orchestrated` preserve quality while reducing frontier usage or total
 > operating cost without introducing new operational failures?
@@ -169,3 +198,5 @@ design the next evidence phase separately.
 The manifest and record contracts are published as
 [`dogfood-manifest-v1.schema.json`](../contracts/dogfood-manifest-v1.schema.json)
 and [`dogfood-run-record-v1.schema.json`](../contracts/dogfood-run-record-v1.schema.json).
+The report formulas are frozen in
+[`dogfood-analysis-policy-v1.json`](../contracts/dogfood-analysis-policy-v1.json).

@@ -11,6 +11,8 @@
     "created_at",
     "repository",
     "baseline",
+    "cost_policy",
+    "analysis_policy_hash",
     "corpus_policy",
     "cases",
     "route_bindings",
@@ -38,6 +40,8 @@
       }
     },
     "baseline": { "$ref": "#/$defs/baseline" },
+    "cost_policy": { "$ref": "#/$defs/costPolicy" },
+    "analysis_policy_hash": { "$ref": "#/$defs/hash" },
     "corpus_policy": { "$ref": "#/$defs/corpusPolicy" },
     "cases": {
       "type": "array",
@@ -92,18 +96,25 @@
     "baseline": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["runtime_commit_sha", "policy_hash", "profile_hash", "worker_capability_hash", "guidance_bundle_hash", "harness_parser_hash", "host_driver_hash", "host_certification_hash", "installation_manifest_hash", "validation_surface_hash"],
+      "required": ["runtime_commit_sha", "policy_hash", "host_driver_hash", "host_certification_hash", "installation_manifest_hash", "validation_surface_hash"],
       "properties": {
         "runtime_commit_sha": { "$ref": "#/$defs/commitSha" },
         "policy_hash": { "$ref": "#/$defs/hash" },
-        "profile_hash": { "$ref": "#/$defs/hash" },
-        "worker_capability_hash": { "$ref": "#/$defs/hash" },
-        "guidance_bundle_hash": { "$ref": "#/$defs/hash" },
-        "harness_parser_hash": { "$ref": "#/$defs/hash" },
         "host_driver_hash": { "$ref": "#/$defs/hash" },
         "host_certification_hash": { "$ref": "#/$defs/hash" },
         "installation_manifest_hash": { "$ref": "#/$defs/hash" },
         "validation_surface_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "costPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reporting_currency", "human_cost_micro_units_per_second", "conversion_policy_hash", "observed_cost_in_reporting_currency"],
+      "properties": {
+        "reporting_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "human_cost_micro_units_per_second": { "$ref": "#/$defs/nonnegativeInteger" },
+        "conversion_policy_hash": { "$ref": "#/$defs/hash" },
+        "observed_cost_in_reporting_currency": { "const": true }
       }
     },
     "corpusPolicy": {
@@ -175,12 +186,16 @@
     "routeBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["strategy", "binding_ref", "binding_hash", "qualification_hash"],
+      "required": ["strategy", "binding_ref", "binding_hash", "qualification_hash", "profile_hash", "worker_capability_hash", "guidance_bundle_hash", "harness_parser_hash"],
       "properties": {
         "strategy": { "$ref": "#/$defs/strategy" },
         "binding_ref": { "$ref": "#/$defs/identifier" },
         "binding_hash": { "$ref": "#/$defs/hash" },
-        "qualification_hash": { "$ref": "#/$defs/hash" }
+        "qualification_hash": { "$ref": "#/$defs/hash" },
+        "profile_hash": { "$ref": "#/$defs/hash" },
+        "worker_capability_hash": { "$ref": "#/$defs/hash" },
+        "guidance_bundle_hash": { "$ref": "#/$defs/hash" },
+        "harness_parser_hash": { "$ref": "#/$defs/hash" }
       }
     },
     "reviewer": {
