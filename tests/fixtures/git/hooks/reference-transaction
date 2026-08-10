@@ -1,0 +1,3 @@
+#!/bin/sh
+printf invoked > "$HOSTILE_HOOK_SENTINEL"
+exit 93

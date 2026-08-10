@@ -19,6 +19,7 @@ export type BrokerCommandV4 =
   | Readonly<{ type: 'ATTEMPT_RECORDED'; command_id: string; run_id: string; attempt: RuntimeAttemptV4 }>
   | Readonly<{ type: 'PATHS_REINSPECTED'; command_id: string; run_id: string; inspection_epoch: number }>
   | Readonly<{ type: 'EXTERNAL_PROCESS_STARTED'; command_id: string; run_id: string; process: ExternalProcessIdentityV4 }>
+  | Readonly<{ type: 'COMMIT_CREATED'; command_id: string; run_id: string; task_ref: string; base_sha: string; git_tree_sha: string; evidence_tree_hash: string; commit_sha: string; contract_hash: string; diff_hash: string; validation_manifest_hash: string; review_attestation_hash: string }>
   | Readonly<{ type: 'RUN_FAILED'; command_id: string; run_id: string; failure: RuntimeFailureV4 }>;
 
 export interface BrokerRunStateV4 {
@@ -65,6 +66,11 @@ function hash(value: unknown, name: string): string {
   return value;
 }
 
+function gitSha(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !/^[a-f0-9]{40}$/.test(value)) corrupt(`${name} is invalid`);
+  return value;
+}
+
 export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, { type: 'RUN_CODING_TASK' }> {
   const command = objectValue(value, 'journal command');
   const type = command.type;
@@ -101,6 +107,11 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       exactKeys(processIdentity, ['pid', 'boot_nonce'], 'process');
       if (!Number.isSafeInteger(processIdentity.pid) || (processIdentity.pid as number) < 1) corrupt('process pid is invalid');
       return { type, command_id, run_id: runId(command.run_id), process: { pid: processIdentity.pid as number, boot_nonce: identifier(processIdentity.boot_nonce, 'boot_nonce') } };
+    }
+    if (type === 'COMMIT_CREATED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'task_ref', 'base_sha', 'git_tree_sha', 'evidence_tree_hash', 'commit_sha', 'contract_hash', 'diff_hash', 'validation_manifest_hash', 'review_attestation_hash'], 'COMMIT_CREATED');
+      if (typeof command.task_ref !== 'string' || !/^refs\/heads\/codex\/auto\/[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/.test(command.task_ref)) corrupt('task_ref is invalid');
+      return { type, command_id, run_id: runId(command.run_id), task_ref: command.task_ref, base_sha: gitSha(command.base_sha, 'base_sha'), git_tree_sha: gitSha(command.git_tree_sha, 'git_tree_sha'), evidence_tree_hash: hash(command.evidence_tree_hash, 'evidence_tree_hash'), commit_sha: gitSha(command.commit_sha, 'commit_sha'), contract_hash: hash(command.contract_hash, 'contract_hash'), diff_hash: hash(command.diff_hash, 'diff_hash'), validation_manifest_hash: hash(command.validation_manifest_hash, 'validation_manifest_hash'), review_attestation_hash: hash(command.review_attestation_hash, 'review_attestation_hash') };
     }
     if (type === 'RUN_FAILED') {
       exactKeys(command, ['type', 'command_id', 'run_id', 'failure'], 'RUN_FAILED');
@@ -187,6 +198,14 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
   } else if (command.type === 'EXTERNAL_PROCESS_STARTED') {
     if (run.result.state !== 'READY_FOR_EXECUTOR' || run.inspection_required || run.external_process !== null) corrupt(`executor launch is not allowed for ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'EXECUTION_STARTED' }, external_process: command.process };
+  } else if (command.type === 'COMMIT_CREATED') {
+    if (run.result.state !== 'REVIEW_ACCEPTED' || run.inspection_required || run.external_process !== null
+      || command.task_ref !== `refs/heads/${run.result.branch}` || command.base_sha !== run.contract.base_sha
+      || command.contract_hash !== run.contract.contract_hash || command.diff_hash !== run.result.diff_hash
+      || command.evidence_tree_hash !== run.result.tree_hash || command.review_attestation_hash !== run.result.review_attestation_hash) {
+      corrupt(`commit evidence does not match accepted run ${command.run_id}`);
+    }
+    nextRun = { ...run, result: { ...run.result, state: 'FINALIZED', head_sha: command.commit_sha, commit_sha: command.commit_sha }, external_process: null };
   } else {
     nextRun = { ...run, result: { ...run.result, state: 'FAILED', failure: command.failure }, external_process: null };
   }
