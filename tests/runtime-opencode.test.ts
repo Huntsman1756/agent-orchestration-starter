@@ -17,7 +17,7 @@ import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
 const execFileAsync = promisify(execFile);
 const fakeHarness = new URL('./fixtures/bin/fake-opencode.mjs', import.meta.url).pathname.replace(/^\/(.:\/)/, '$1');
 const identity = { profile_hash: 'a'.repeat(64), harness: 'opencode', harness_version: '1.18.15', agent_policy_hash: 'b'.repeat(64), broker_version: '0.1.0', probe_version: 1 } as const;
-const capability = await probeRuntimeBinding({ identity, probed_at: '2026-08-10T08:00:00.000Z', ttl_seconds: 3600, run_probe: async (iteration) => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, shell_used: false, transcript_hash: String(iteration + 1).repeat(64) }) });
+const capability = await probeRuntimeBinding({ identity, probed_at: '2026-08-10T08:00:00.000Z', ttl_seconds: 3600, run_probe: async (iteration) => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, capsule_only: true, credential_separation: true, tool_network_denied: true, shell_used: false, transcript_hash: String(iteration + 1).repeat(64) }) });
 
 test('runtime example keeps concrete provider and model choices outside stable policy', async () => {
   const profile = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/runtime.example.yaml', import.meta.url), 'utf8')));

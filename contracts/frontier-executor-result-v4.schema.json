@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/frontier-executor-result-v4.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "summary", "changed_paths"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "status": { "const": "COMPLETED" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/normalizedRepositoryPath" }
+    }
+  },
+  "$defs": {
+    "normalizedRepositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        { "not": { "type": "string", "pattern": "^/" } },
+        { "not": { "type": "string", "pattern": "\\\\" } },
+        { "not": { "type": "string", "pattern": "\\u0000" } },
+        { "not": { "type": "string", "pattern": ":" } },
+        { "not": { "type": "string", "pattern": "[*?\\[\\]{}]" } },
+        { "not": { "type": "string", "pattern": "[<>\"|]" } },
+        { "not": { "type": "string", "pattern": "(?:^|/)(?:\\.{1,2}|)(?:/|$)" } },
+        { "not": { "type": "string", "pattern": "(?:^|/)[^/]*[. ](?:/|$)" } },
+        { "not": { "type": "string", "pattern": "(?:^|/)(?:[Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])(?:\\.[^/]*)?(?:/|$)" } }
+      ]
+    }
+  }
+}

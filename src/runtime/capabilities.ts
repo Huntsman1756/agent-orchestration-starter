@@ -14,6 +14,9 @@ export interface CapabilityProbeEvidenceV4 {
   readonly exact_bounded_edit: boolean;
   readonly multi_step_file_tools: boolean;
   readonly repair_from_validation_evidence: boolean;
+  readonly capsule_only: boolean;
+  readonly credential_separation: boolean;
+  readonly tool_network_denied: boolean;
   readonly shell_used: boolean;
   readonly transcript_hash: string;
 }
@@ -57,7 +60,8 @@ export async function probeRuntimeBinding(input: CapabilityProbeInputV4): Promis
   for (let iteration = 0; iteration < 3; iteration += 1) {
     const evidence = await input.run_probe(iteration);
     if (!evidence.structured_result || !evidence.exact_bounded_edit || !evidence.multi_step_file_tools
-      || !evidence.repair_from_validation_evidence || evidence.shell_used || !validHash(evidence.transcript_hash)) {
+      || !evidence.repair_from_validation_evidence || !evidence.capsule_only || !evidence.credential_separation
+      || !evidence.tool_network_denied || evidence.shell_used || !validHash(evidence.transcript_hash)) {
       unverified('probe did not demonstrate every required capability');
     }
     runs.push(Object.freeze({ ...evidence }));
