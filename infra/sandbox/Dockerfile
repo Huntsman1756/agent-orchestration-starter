@@ -10,6 +10,10 @@ RUN npm install --global opencode-ai@1.18.15 @openai/codex@0.147.0 \
 RUN mkdir -p /capsule /broker \
     && chown -R node:node /capsule /broker
 
+COPY --chown=node:node dist/runtime/bounded-process.js /broker/bounded-process.js
+COPY --chown=node:node dist/runtime/canonical.js /broker/canonical.js
+COPY --chown=node:node dist/runtime/docker-container-transaction.js /broker/docker-container-transaction.js
+COPY --chown=node:node dist/runtime/docker-launcher.js /broker/docker-launcher.js
 COPY --chown=node:node dist/runtime/provider-egress-gateway.js /broker/provider-egress-gateway.js
 COPY --chown=node:node dist/runtime/process-sandbox.js /broker/process-sandbox.js
 COPY --chown=node:node tests/fixtures/sandbox/hostile-child.mjs /broker/certification/hostile-child.mjs

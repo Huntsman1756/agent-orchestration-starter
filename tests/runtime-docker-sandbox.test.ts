@@ -45,6 +45,20 @@ const config: DockerSandboxConfigV4 = {
   broker_state_directory: join(tmpdir(), 'ao-broker-state-not-mounted'),
 };
 
+test('sandbox image contains the complete local module closure for the provider gateway', async () => {
+  const dockerfile = await readFile(new URL('../infra/sandbox/Dockerfile', import.meta.url), 'utf8');
+  for (const module of [
+    'bounded-process.js',
+    'canonical.js',
+    'docker-container-transaction.js',
+    'docker-launcher.js',
+    'process-sandbox.js',
+    'provider-egress-gateway.js',
+  ]) {
+    assert.match(dockerfile, new RegExp(`COPY [^\\n]*dist/runtime/${module.replace('.', '\\.')}`), module);
+  }
+});
+
 function validationRequest(overrides: Partial<SandboxRunRequestV4> = {}): SandboxRunRequestV4 {
   return {
     execution_id: 'exec_contract_0001',
