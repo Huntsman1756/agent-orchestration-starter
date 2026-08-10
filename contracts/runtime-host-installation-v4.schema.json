@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.local/contracts/runtime-host-installation-v4.schema.json",
+  "title": "Runtime Host Installation V4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "installationId", "packageVersion", "root", "entrypoint", "hostDriver", "installedAt", "files", "installationHash"],
+  "properties": {
+    "schemaVersion": { "const": 4 },
+    "installationId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "packageVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "root": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "entrypoint": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "hostDriver": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } }
+      ]
+    },
+    "installedAt": { "type": "string", "format": "date-time" },
+    "files": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "size": { "type": "integer", "minimum": 0, "maximum": 268435456 } } } },
+    "installationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

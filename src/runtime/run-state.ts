@@ -2,10 +2,11 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
-import type { RuntimeAttemptV4, RuntimeResultV4, RuntimeTaskRequestV4, RuntimeWorkContractV4 } from './contracts.js';
+import type { RuntimeAttemptV4, RuntimeResultV4, RuntimeTaskRequestV4, RuntimeValidationResultV4, RuntimeWorkContractV4 } from './contracts.js';
 import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureV4 } from './failures.js';
 import { reopenJournalV4 } from './journal.js';
 import { loadRuntimeResultV4, loadRuntimeWorkContractV4 } from './load.js';
+import { isNormalizedRepositoryRelativePathV4 } from './contract-schemas.js';
 import type { RequestIndexV4 } from './request-idempotency.js';
 import { registerRequestV4 } from './request-idempotency.js';
 
@@ -19,13 +20,15 @@ export type BrokerCommandV4 =
   | Readonly<{ type: 'ATTEMPT_RECORDED'; command_id: string; run_id: string; attempt: RuntimeAttemptV4 }>
   | Readonly<{ type: 'PATHS_REINSPECTED'; command_id: string; run_id: string; inspection_epoch: number }>
   | Readonly<{ type: 'EXTERNAL_PROCESS_STARTED'; command_id: string; run_id: string; process: ExternalProcessIdentityV4 }>
+  | Readonly<{ type: 'CANDIDATE_ACCEPTED'; command_id: string; run_id: string; validation_results: readonly RuntimeValidationResultV4[]; diff_hash: string; tree_hash: string; changed_files: readonly string[]; review_attestation_hash: string }>
   | Readonly<{ type: 'COMMIT_CREATED'; command_id: string; run_id: string; task_ref: string; base_sha: string; git_tree_sha: string; evidence_tree_hash: string; commit_sha: string; contract_hash: string; diff_hash: string; validation_manifest_hash: string; review_attestation_hash: string }>
   | Readonly<{ type: 'BRANCH_PUSHED'; command_id: string; run_id: string; commit_sha: string; branch: string; remote: string; publication_policy_hash: string }>
   | Readonly<{ type: 'PULL_REQUEST_RECORDED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; base_branch: string; publication_policy_hash: string }>
   | Readonly<{ type: 'REQUIRED_CHECKS_PASSED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; publication_policy_hash: string }>
   | Readonly<{ type: 'RUN_MERGED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; merge_commit_sha: string; publication_policy_hash: string }>
   | Readonly<{ type: 'PUBLICATION_SKIPPED'; command_id: string; run_id: string; commit_sha: string; publication_policy_hash: string; reason: 'POLICY_DISABLED' | 'CONTRACT_PROHIBITED' }>
-  | Readonly<{ type: 'RUN_FAILED'; command_id: string; run_id: string; failure: RuntimeFailureV4 }>;
+  | Readonly<{ type: 'RUN_FAILED'; command_id: string; run_id: string; failure: RuntimeFailureV4 }>
+  | Readonly<{ type: 'RUN_ABORTED'; command_id: string; run_id: string; failure: RuntimeFailureV4 }>;
 
 export interface BrokerRunStateV4 {
   contract: RuntimeWorkContractV4;
@@ -87,6 +90,18 @@ function pullRequestUrl(value: unknown, pullRequestNumber: number): string {
   return value;
 }
 
+function failureContract(value: unknown): RuntimeFailureV4 {
+  const failure = objectValue(value, 'failure');
+  exactKeys(failure, ['code', 'message', 'retryable', 'evidence_hashes'], 'failure');
+  if (!RUNTIME_FAILURE_CODES_V4.includes(failure.code as typeof RUNTIME_FAILURE_CODES_V4[number])) corrupt('failure code is invalid');
+  if (typeof failure.message !== 'string' || failure.message.length < 1 || failure.message.length > 2_000) corrupt('failure message is invalid');
+  if (typeof failure.retryable !== 'boolean') corrupt('failure retryable is invalid');
+  if (!Array.isArray(failure.evidence_hashes) || failure.evidence_hashes.length > 64) corrupt('failure evidence_hashes is invalid');
+  const evidence = failure.evidence_hashes.map((item) => hash(item, 'evidence hash'));
+  if (new Set(evidence).size !== evidence.length) corrupt('failure evidence_hashes contains duplicates');
+  return { code: failure.code as RuntimeFailureV4['code'], message: failure.message, retryable: failure.retryable, evidence_hashes: evidence };
+}
+
 export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, { type: 'RUN_CODING_TASK' }> {
   const command = objectValue(value, 'journal command');
   const type = command.type;
@@ -124,6 +139,26 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       if (!Number.isSafeInteger(processIdentity.pid) || (processIdentity.pid as number) < 1) corrupt('process pid is invalid');
       return { type, command_id, run_id: runId(command.run_id), process: { pid: processIdentity.pid as number, boot_nonce: identifier(processIdentity.boot_nonce, 'boot_nonce') } };
     }
+    if (type === 'CANDIDATE_ACCEPTED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'validation_results', 'diff_hash', 'tree_hash', 'changed_files', 'review_attestation_hash'], 'CANDIDATE_ACCEPTED');
+      if (!Array.isArray(command.validation_results) || command.validation_results.length < 1 || command.validation_results.length > 64) corrupt('validation_results is invalid');
+      const validationIds = new Set<string>();
+      const validation_results = command.validation_results.map((item) => {
+        const result = objectValue(item, 'validation result');
+        exactKeys(result, ['validation_id', 'exit_code', 'result_hash'], 'validation result');
+        const validation_id = identifier(result.validation_id, 'validation_id');
+        if (validationIds.has(validation_id) || !Number.isSafeInteger(result.exit_code) || result.exit_code !== 0) corrupt('validation result is failed or duplicated');
+        validationIds.add(validation_id);
+        return { validation_id, exit_code: 0, result_hash: hash(result.result_hash, 'validation result_hash') };
+      });
+      if (!Array.isArray(command.changed_files) || command.changed_files.length < 1 || command.changed_files.length > 256) corrupt('changed_files is invalid');
+      const changed_files = command.changed_files.map((item) => {
+        if (typeof item !== 'string' || item.length > 512 || !isNormalizedRepositoryRelativePathV4(item)) corrupt('changed file path is invalid');
+        return item;
+      });
+      if (new Set(changed_files.map((item) => item.toLocaleLowerCase('en-US'))).size !== changed_files.length) corrupt('changed_files is ambiguous or duplicated');
+      return { type, command_id, run_id: runId(command.run_id), validation_results, diff_hash: hash(command.diff_hash, 'diff_hash'), tree_hash: hash(command.tree_hash, 'tree_hash'), changed_files, review_attestation_hash: hash(command.review_attestation_hash, 'review_attestation_hash') };
+    }
     if (type === 'COMMIT_CREATED') {
       exactKeys(command, ['type', 'command_id', 'run_id', 'task_ref', 'base_sha', 'git_tree_sha', 'evidence_tree_hash', 'commit_sha', 'contract_hash', 'diff_hash', 'validation_manifest_hash', 'review_attestation_hash'], 'COMMIT_CREATED');
       if (typeof command.task_ref !== 'string' || !/^refs\/heads\/codex\/auto\/[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/.test(command.task_ref)) corrupt('task_ref is invalid');
@@ -155,17 +190,11 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       if (command.reason !== 'POLICY_DISABLED' && command.reason !== 'CONTRACT_PROHIBITED') corrupt('publication skip reason is invalid');
       return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash'), reason: command.reason };
     }
-    if (type === 'RUN_FAILED') {
-      exactKeys(command, ['type', 'command_id', 'run_id', 'failure'], 'RUN_FAILED');
-      const failure = objectValue(command.failure, 'failure');
-      exactKeys(failure, ['code', 'message', 'retryable', 'evidence_hashes'], 'failure');
-      if (!RUNTIME_FAILURE_CODES_V4.includes(failure.code as typeof RUNTIME_FAILURE_CODES_V4[number])) corrupt('failure code is invalid');
-      if (typeof failure.message !== 'string' || failure.message.length < 1 || failure.message.length > 2_000) corrupt('failure message is invalid');
-      if (typeof failure.retryable !== 'boolean') corrupt('failure retryable is invalid');
-      if (!Array.isArray(failure.evidence_hashes) || failure.evidence_hashes.length > 64) corrupt('failure evidence_hashes is invalid');
-      const evidence = failure.evidence_hashes.map((item) => hash(item, 'evidence hash'));
-      if (new Set(evidence).size !== evidence.length) corrupt('failure evidence_hashes contains duplicates');
-      return { type, command_id, run_id: runId(command.run_id), failure: { code: failure.code as RuntimeFailureV4['code'], message: failure.message, retryable: failure.retryable, evidence_hashes: evidence } };
+    if (type === 'RUN_FAILED' || type === 'RUN_ABORTED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'failure'], type);
+      const failure = failureContract(command.failure);
+      if (type === 'RUN_ABORTED' && failure.code !== 'ABORTED') corrupt('RUN_ABORTED requires the ABORTED failure code');
+      return { type, command_id, run_id: runId(command.run_id), failure };
     }
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('BROKER_STATE_CORRUPT:')) throw error;
@@ -240,6 +269,26 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
   } else if (command.type === 'EXTERNAL_PROCESS_STARTED') {
     if (run.result.state !== 'READY_FOR_EXECUTOR' || run.inspection_required || run.external_process !== null) corrupt(`executor launch is not allowed for ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'EXECUTION_STARTED' }, external_process: command.process };
+  } else if (command.type === 'CANDIDATE_ACCEPTED') {
+    const allowedValidationIds = new Set(run.contract.allowed_validation_ids);
+    const allowedChangePaths = new Set(run.contract.allowed_changes.map((change) => change.path.toLocaleLowerCase('en-US')));
+    if (run.result.state !== 'READY_FOR_EXECUTOR' || run.result.attempts.length < 1 || run.inspection_required || run.external_process !== null
+      || command.validation_results.length !== run.contract.allowed_validation_ids.length
+      || command.validation_results.some((result, index) => result.validation_id !== run.contract.allowed_validation_ids[index] || !allowedValidationIds.has(result.validation_id))
+      || command.changed_files.some((path) => !allowedChangePaths.has(path.toLocaleLowerCase('en-US')))
+      || command.changed_files.length > run.contract.max_files_changed) corrupt(`accepted candidate evidence is not authorized for ${command.run_id}`);
+    nextRun = {
+      ...run,
+      result: {
+        ...run.result,
+        state: 'REVIEW_ACCEPTED',
+        validation_results: command.validation_results,
+        diff_hash: command.diff_hash,
+        tree_hash: command.tree_hash,
+        changed_files: command.changed_files,
+        review_attestation_hash: command.review_attestation_hash,
+      },
+    };
   } else if (command.type === 'COMMIT_CREATED') {
     if (run.result.state !== 'REVIEW_ACCEPTED' || run.inspection_required || run.external_process !== null
       || command.task_ref !== `refs/heads/${run.result.branch}` || command.base_sha !== run.contract.base_sha
@@ -268,7 +317,11 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
   } else if (command.type === 'PUBLICATION_SKIPPED') {
     if (run.result.state !== 'READY_FOR_PUBLICATION' || command.commit_sha !== run.result.commit_sha || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`publication skip does not match finalized run ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'FINALIZED', publication: { ...run.result.publication, state: 'SKIPPED' } } };
+  } else if (command.type === 'RUN_ABORTED') {
+    if (command.failure.code !== 'ABORTED' || ['FAILED', 'ABORTED', 'FINALIZED'].includes(run.result.state)) corrupt(`abort evidence is invalid for ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'ABORTED', failure: command.failure }, external_process: null };
   } else {
+    if (['FAILED', 'ABORTED', 'FINALIZED'].includes(run.result.state)) corrupt(`failure evidence is invalid for terminal run ${command.run_id}`);
     nextRun = { ...run, result: { ...run.result, state: 'FAILED', failure: command.failure }, external_process: null };
   }
   return freezeState({ ...state, runs: { ...state.runs, [command.run_id]: nextRun } });

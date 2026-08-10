@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.local/contracts/runtime-repository-activation-v4.schema.json",
+  "title": "Runtime Repository Activation V4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repositoryId", "repositoryRoot", "policyPath", "policyHash", "profilePath", "profileHash", "worktreeParent", "stateDirectory", "installationManifest", "installationHash", "target", "activatedAt", "activationHash"],
+  "properties": {
+    "schemaVersion": { "const": 4 },
+    "repositoryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "repositoryRoot": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "policyPath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "policyHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "profilePath": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "profileHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "worktreeParent": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "stateDirectory": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "installationManifest": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "installationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "target": { "enum": ["ANALYSIS_ONLY", "ISOLATED_EXECUTION", "AUTONOMOUS_PUBLICATION"] },
+    "activatedAt": { "type": "string", "format": "date-time" },
+    "activationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

@@ -23,6 +23,12 @@ test('renders required fail-closed project activation with one canonical runtime
   assert.doesNotMatch(generated.content, /env\s*=/);
 });
 
+test('renders a central immutable runtime binding without embedding credentials', () => {
+  const generated = renderCodexProjectConfig({ frontier_model: 'frontier-model', reasoning_effort: 'high', runtime_entrypoint: 'G:/host/runtime.mjs', activation_manifest: 'G:/repo/.agent-orchestration/activation-v4.json' });
+  assert.match(generated.content, /args = \["G:\/host\/runtime\.mjs", "runtime", "mcp-stdio", "--activation", "G:\/repo\/\.agent-orchestration\/activation-v4\.json"\]/u);
+  assert.doesNotMatch(generated.content, /token|api_key|env\s*=/iu);
+});
+
 test('render inventory manages activation but never overwrites an unmanaged conflict', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-codex-config-'));
   const first = await renderProject({ targetDir: directory, policy: policy(), harnesses: ['codex'] });
