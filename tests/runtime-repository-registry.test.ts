@@ -7,7 +7,7 @@ import test from 'node:test';
 import { loadRepositoryRegistration, type RepositoryRegistryV4 } from '../src/runtime/repository-registry.js';
 
 test('loads the broker-owned canonical registration for an allowed repository', () => {
-  const fixtureRoot = realpathSync(mkdtempSync(join(tmpdir(), 'runner-v4-registry-')));
+  const fixtureRoot = realpathSync.native(mkdtempSync(join(tmpdir(), 'runner-v4-registry-')));
   const registry: RepositoryRegistryV4 = {
     repositories: [{
       repository_id: 'fixture-repo',

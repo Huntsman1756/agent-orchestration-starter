@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.0 - 2026-08-10
+
+This is the first formal 0.x release after the Runtime V4 host-boundary
+consolidation. It remains pre-1.0 and does not imply a universal production
+host qualification.
+
+### Added
+
+- Package-integrity validation based on the real `npm pack` file list and all
+  local links in the published README/documentation set.
+- Explicit `runtime-v4/contracts`, `runtime-v4/host` and
+  `runtime-v4/experimental` package subpaths plus a guarded default API.
+- Repository threat model, security policy, contribution contract,
+  compatibility matrix, platform CI and a manually invoked hostile Docker
+  certification workflow.
+- Release workflow that validates the tag, emits an npm tarball, checksum,
+  SBOM and build provenance.
+- Portable test discovery and Windows path canonicalization that preserves
+  rejection of symbolic links/reparse points while accepting equivalent 8.3
+  path spellings on the supported platform matrix.
+
+### Migration
+
+- Consumers importing low-level Runtime V4 modules from the default
+  `runtime-v4` entry point must move those imports to `runtime-v4/contracts`,
+  `runtime-v4/host` or `runtime-v4/experimental` as appropriate.
+- The package version is now `0.2.0`; host/profile changes still require exact
+  fresh qualification and do not become production-certified by this release.
+
 ## Unreleased
 
 ### Added

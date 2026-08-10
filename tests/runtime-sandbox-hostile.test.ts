@@ -21,6 +21,9 @@ import {
 
 const imageId = process.env.AO_SANDBOX_IMAGE;
 const dockerConfigured = imageId?.startsWith('sha256:') ?? false;
+if (process.env.AO_REQUIRE_CERTIFICATION === '1' && !dockerConfigured) {
+  throw new Error('CERTIFICATION_REQUIRED: AO_SANDBOX_IMAGE must be an immutable sha256 image digest');
+}
 const dockerIntegration = dockerConfigured ? test : test.skip;
 const fixtureDirectory = dirname(fileURLToPath(new URL('./fixtures/sandbox/hostile-child.mjs', import.meta.url)));
 const execFileAsync = promisify(execFile);

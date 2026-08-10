@@ -4,6 +4,13 @@
 
 Runtime V4 is a fail-closed implementation framework with a portable host bootstrap, not a universal pre-certified unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, lifecycle persistence, telemetry, orchestration scheduling, immutable installation and repository activation have automated coverage. No code path deploys or changes routing automatically.
 
+The package default API is intentionally smaller than the implementation. Use
+`agent-orchestration-starter/runtime-v4/contracts` for contract loaders,
+`runtime-v4/host` for the privileged host boundary, and
+`runtime-v4/experimental` for lower-level evolving surfaces. Release `0.2.x`
+is pre-1.0; consult the [compatibility matrix](compatibility-matrix-v4.md)
+before reusing evidence across a host, model, harness or policy change.
+
 The iterative worker primitive now binds each plan to an exact `WorkerCapabilityV4`, including the model deployment, harness/parser, tool and instruction/skill bundles, qualification evidence and story-size limits. It verifies repair packets against persisted findings and escalates repeated normalized failures before exhausting retries. These controls remain host obligations at composition time: the qualified practice-pack resolver and capability issuer must derive the snapshot, while the thin root enforces context/step limits; a model profile cannot certify itself.
 
 Production activation remains blocked until all of these are supplied and certified for the target host:

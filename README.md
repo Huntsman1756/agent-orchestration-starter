@@ -1,84 +1,108 @@
 # Agent Orchestration Starter
 
-Plantilla, compilador y evaluador offline para elegir entre ejecución económica, orquestación mixta y ejecución *frontier* según evidencia. La política estable habla de roles y capacidades; proveedores y modelos viven en perfiles reemplazables.
+Provider-neutral agent orchestration runtime and control plane for bounded,
+evidence-driven repository work. A frontier-capable planner/reviewer can
+delegate small implementation stories to a cheaper qualified worker while the
+broker retains policy, sandbox, validation, review and publication authority.
 
-## Qué genera
+```text
+authorized task source
+        │
+        ▼
+planner/frontier ── typed contract + capability snapshot ──► economy/frontier worker
+        │                                                       │
+        └────────────── broker-owned validation ◄───────────────┘
+                              │
+                        independent review
+                              │
+               local commit → exact-SHA PR/merge (optional)
+```
 
-- Codex: `.codex/config.toml` y agentes en `.codex/agents/`.
-- OpenCode: agentes en `.opencode/agents/` con modelo y permisos explícitos.
-- Hermes: distribución en `hermes-profile/`, con padre *frontier* y modelo delegado económico.
-- Todos: `AGENTS.md`, manifiesto resuelto e inventario SHA-256 de archivos gestionados.
+The stable policy describes roles, capabilities, repository boundaries and
+acceptance criteria. Provider, model, harness, tool parser, guidance and
+skill bundles are replaceable profile data. A model response is never an
+authority to widen the contract, choose a route, approve its own output or
+publish a commit.
 
-El orquestador y el revisor son de solo lectura. Los ejecutores economy/frontier son los únicos agentes con escritura. Los fallos de autenticación, política, salida inválida, *grounding* o validación cierran el flujo; solo una indisponibilidad tipada permite recurrir a otro modelo.
+## Status
 
-## Estrategias
+This repository is pre-1.0. Runtime V4 is a fail-closed framework with a
+portable installer, not a universal unattended production service. The
+production host driver, credential gateway, native coordinator, provider
+gateway, sandbox and exact binding qualification are deployment obligations.
+The current native broker evidence is for Linux x64; Windows and macOS need
+separate host evidence. See the [compatibility matrix](docs/compatibility-matrix-v4.md).
 
-- `economy_only`: cambio mecánico, modelo económico y validación determinista.
-- `orchestrated`: planificación *frontier*, implementación económica, validación y revisión *frontier* con contexto limpio.
-- `frontier_execution`: ejecutor *frontier* para trabajo transversal, debugging ambiguo, arquitectura, seguridad o migraciones delicadas.
+## Quick start
 
-La ruta mixta no es universal. `routing-gate.yaml` exige al menos 30 pares comparables por `taskClass × ruta candidata × frontier_execution` y calcula las métricas únicamente sobre la intersección exacta de `taskId + caseFingerprint`. Así, seis pares de una clase nunca se convierten en `n=30` sumando otras clases o tareas no comparables. Una ruta tampoco puede reducir la aceptación final frente al baseline (`maxFinalAcceptanceDropRate: 0`), aunque iguale la aceptación inicial y sea más barata.
-
-## Inicio rápido
-
-Requiere Node.js 20 o posterior.
+Requires Node.js 20 or newer.
 
 ```powershell
-npm install
+npm ci
 npm run validate
 npm run build
 node dist/cli/main.js init `
-  --target G:\_Proyectos\mi-proyecto `
+  --target G:\_Proyectos\my-project `
   --policy orchestration.yaml `
-  --profile profiles/chatgpt-subscription.yaml `
-  --harnesses codex,opencode,hermes `
-  --accept-degraded-isolation hermes
+  --profile profiles/runtime.example.yaml `
+  --harnesses codex,opencode
 ```
 
-Antes de escribir, se puede inspeccionar el resultado con `--dry-run`. Para detectar deriva:
+Inspect first with `--dry-run`. Use `check` to detect local drift and `doctor`
+to verify selected harnesses. The CLI does not write credentials or global
+tool configuration.
 
 ```powershell
-node dist/cli/main.js check --target G:\_Proyectos\mi-proyecto --policy orchestration.yaml --profile profiles/chatgpt-subscription.yaml
-node dist/cli/main.js doctor --harnesses codex,opencode,hermes --policy orchestration.yaml --profile profiles/chatgpt-subscription.yaml --accept-degraded-isolation hermes
+node dist/cli/main.js check --target G:\_Proyectos\my-project --policy orchestration.yaml --profile profiles/runtime.example.yaml
+node dist/cli/main.js doctor --harnesses codex,opencode --policy orchestration.yaml --profile profiles/runtime.example.yaml
 ```
 
-La CLI no escribe credenciales ni configuración global. La autenticación se hace en cada herramienta. El perfil de suscripción incluido es una fotografía fechada: cuando cambien los modelos o identificadores, se sustituye el perfil, no la política ni los contratos.
+## Autonomous lifecycle
 
-### Linux native broker helper
+The intended autonomous loop is bounded and durable:
 
-The V4 Unix broker is supported in production on the currently certified `linux-x64` target only. `npm run build` invokes `npm run build:native`, which first removes the complete prior `dist/native` tree, compiles `native/linux/renameat2-helper.c` with the fixed compiler `/usr/bin/cc`, and verifies that the output contains exactly the current target helper plus its manifest. Normal Windows builds clean stale native output and skip compilation; `npm pack` fails closed on Windows and every other unsupported platform/architecture instead of reusing an old helper.
+1. A privileged task source admits an allowlisted candidate under a lease.
+2. A frontier planner turns it into a complete typed contract and sizes
+   stories for the active worker capability.
+3. The broker creates an isolated worktree/capsule and starts one story in a
+   fresh coding context.
+4. The qualified worker edits only contract-authorized paths and runs the
+   declared deterministic validations.
+5. The broker re-inspects paths, records evidence and sends a clean bounded
+   review packet to an independent reviewer.
+6. Failures become verified repair packets; repeated normalized failures
+   escalate or stop instead of looping forever.
+7. Finalization creates a local commit. Publication, if policy allows it, is a
+   broker-owned exact push, PR, required-check and head-bound merge sequence.
 
-Build the release artifact on the target Linux architecture; never compile the helper at broker runtime. The installed JavaScript module, every helper-parent component, the helper, and its manifest must be root-owned or owned by the same trusted installation UID and must not be group/world writable; the helper must remain executable. The build writes modes `0555` and `0444`, while package tools may safely normalize the owner-write bits to `0755` and `0644`. A missing, symlinked, relocated, modified, incorrectly owned, untrusted-writable, or non-executable artifact makes backend construction fail before broker state or socket effects.
+The [iterative executor](docs/iterative-executor-v4.md) is inspired by Ralph:
+one dependency-ready story per context, explicit budgets and retry from the
+last accepted tree. It is not a free-running shell loop. The model cannot mark
+its own story complete, read prior hidden reasoning, grant itself tools or
+publish changes.
 
-The helper accepts no arguments or environment configuration. Runtime executes the already-open, identity- and digest-verified helper through an inherited descriptor; the only other inherited capabilities are the proven state-directory and selected fixed quarantine-slot directory descriptors. It requires the socket to have exactly one link immediately before the no-replace move and rechecks the moved inode, restoring the original name without overwrite if link identity becomes ambiguous. Deployment must provide Linux `renameat2(..., RENAME_NOREPLACE)` support and `/proc/self/fd`. There is no pathname fallback. See `docs/runtime-broker-quarantine-remediation.md` for the offline-only retained-socket procedure.
+The outer [autonomous dispatcher](docs/autonomous-dispatcher-v4.md) starts in
+`PAUSED`, requires a durable transition to `RUNNING`, recovers leases and
+rechecks the exact merge SHA after publication. Circuit recovery also requires
+an explicit paused/reactivation sequence.
 
-## Cambiar de proveedor
+## Routing and evidence
 
-Copia `profiles/open-compatible.yaml`, cambia los tres modelos y declara las capacidades reales. `provider` es la identidad lógica. Si una herramienta usa otro identificador, añade un alias sin alterar el contrato:
+The supported strategies are:
 
-```yaml
-provider: openai
-harnessProviders:
-  hermes: openai-codex
-```
+- `economy_only`: localized mechanical work with a qualified economical worker;
+- `orchestrated`: frontier planning/review around a bounded economical worker;
+- `frontier_execution`: frontier worker for security, architecture, ambiguity,
+  migrations or other high-risk work.
 
-El ejecutor económico debe ser explícito; nunca hereda accidentalmente el modelo del orquestador. El compilador crea además un `frontier-executor` writable a partir de la asignación *frontier*. El revisor no puede reutilizar la combinación proveedor/modelo del ejecutor económico. Hermes requiere que orquestador y revisor sean el mismo padre *frontier*, porque su delegación no representa un tercer agente independiente.
-
-`profiles/nan-opencode.example.yaml` muestra la separación prevista para NAN: Sol permanece como orquestador, ejecutor *frontier* y revisor mediante Codex; `qwen3.6` y `gemma4` quedan como ejecutores OpenCode reemplazables. El ejemplo no contiene endpoint ni credenciales y no afirma que la API viva haya sido certificada. El runtime usa `maxEconomyParallelRequests`, por lo que cambiar otra vez de proveedor no exige modificar contratos estables.
-
-## Actualizaciones seguras
-
-`init` y `render` son idempotentes. Un archivo existente no gestionado produce conflicto. Un archivo gestionado pero modificado localmente también queda intacto. Para aceptar la sustitución de un único archivo, usa `--force ruta/relativa/exacta`; no existe un borrado o sobrescritura global silenciosa.
-
-El contrato de trabajo está en `examples/work-contract.yaml`. La revisión recibe un sobre independiente como `examples/review-envelope.yaml`: contrato original, diff completo, resultados deterministas y archivos pedidos bajo demanda; nunca la argumentación del planner o executor.
-
-## Benchmark y routing gate
-
-Cada línea JSONL v2 representa el coste total de una tarea intentada por una ruta. Si economy falla y frontier la rescata, `firstPassAccepted` sigue siendo `false`, `escalated` es `true` y `totalCostUsd` incluye ambas fases.
-
-El pairing exige la misma combinación `taskId + caseFingerprint`. Importa `computeCaseFingerprint` desde `agent-orchestration-starter/fingerprint` y pásale `{ workContract, baseSha, fixtures, policy }`; `baseSha` debe ser un SHA Git completo de 40 o 64 caracteres hexadecimales. El SHA-256 canónico cambia si cambia el contrato, la revisión base, cualquier fixture/input o la política relevante. Compartir `taskId` ya no basta para declarar dos runs comparables. `examples/case-fingerprint-input.json` produce el fingerprint utilizado por las observaciones de ejemplo.
-
-Los defectos posteriores separan incidencia de detalle: `postAcceptanceDefective` indica si la tarea aceptada tuvo alguna incidencia, mientras `postAcceptanceDefects[]` conserva cada defecto con severidad `low`, `medium`, `high` o `critical`. El gate limita tanto la incidencia agregada (`maxPostAcceptanceDefectIncidenceRate`) como los recuentos absolutos de severidad alta y crítica; el informe conserva además la cantidad total y el desglose por severidad.
+The routing gate is advisory and does not change routing automatically. V2
+requires at least 30 comparable pairs per `taskClass × candidate ×
+frontier_execution`, matched by `taskId + caseFingerprint`. It protects both
+first-pass and final acceptance; no cheaper candidate may reduce final
+acceptance under the conservative initial policy. Escalations, repairs and
+rescues remain part of real cost. See [routing gate](routing-gate.yaml), the
+[benchmark examples](examples/benchmark-observations.jsonl), and the V3
+[pilot design](docs/superpowers/plans/2026-08-08-telemetry-routing-schema-v3.md).
 
 ```powershell
 node dist/cli/main.js benchmark `
@@ -86,87 +110,106 @@ node dist/cli/main.js benchmark `
   --routing-policy routing-gate.yaml
 ```
 
-El resultado JSON devuelve `promote`, `reject` o `insufficient_evidence` por clase de tarea y candidato. Es una recomendación determinista y portable; esta versión no invoca proveedores ni modifica el routing automáticamente.
+The offline V3 pilot separates append-only observations from later evaluation,
+preserves incomplete usage as incomplete, and never invents missing evidence.
+It does not invoke a provider, merge code or promote a route.
 
-## Piloto experimental V3
+## Provider and model neutrality
 
-V3 mantiene separados el registro de lo ocurrido y la decisión posterior. Un manifiesto se congela antes del piloto; cada harness añade eventos V3 append-only con identidades, hashes, duraciones y usage explícitos; el reducer deriva observaciones canónicas; y el evaluator aplica los stages y umbrales ya congelados.
+The orchestrator selects roles and capabilities, not permanent vendor names.
+Each binding carries a versioned guidance pack, inference controls, tool/parser
+identity and qualification evidence. Changing a model or provider profile does
+not require changing repository contracts, but it does require fresh exact
+qualification of the new binding. A model name alone is never evidence.
 
-La CLI acotada consume únicamente esa evidencia resuelta:
+`profiles/runtime.example.yaml` is intentionally provider-neutral.
+`profiles/nan-opencode.example.yaml` and
+`profiles/runtime.chatgpt-subscription.example.yaml` are dated examples, not
+credentials or live-certification claims. An economical worker may be Qwen,
+Gemma, a future provider or a local model; the frontier planner sizes stories
+from the worker's declared capability and limits rather than assuming a fixed
+model.
 
-```powershell
-node dist/cli/main.js pilot-v3 evaluate `
-  --manifest examples/pilot-manifest-v3.yaml `
-  --events examples/pilot-events-v3.jsonl `
-  --gate examples/pilot-routing-gate-v3.yaml `
-  --evaluation-id evaluation-v3-001 `
-  --evaluation-version 1
-```
+The runtime rejects malformed native tool protocols and textual pseudo-calls
+such as `<tool_call>`; it does not convert them into executable authority.
+External agent runtimes and sandbox launchers must pass the
+[qualification procedure](docs/external-runtime-qualification-v4.md) before
+they can back a trusted component. Container use alone does not imply hard
+isolation.
 
-Para una versión posterior debe añadirse `--prior-report ruta/al/reporte.json`; la identidad y el hash del reporte anterior se verifican antes de aceptar la supersesión. La salida canónica contiene `observations` y `report`. Los costes observados y estimados conservan provenance y completitud separadas; nunca se mezclan para satisfacer un gate. Las decisiones Stage 1/2/3 solo permiten promoción acotada en los estratos respaldados por muestra y evidencia suficientes.
+## Runtime V4 and the host boundary
 
-Esta superficie no ejecuta modelos o proveedores, no crea worktrees, no decide routing global, no hace merge ni deploy y no consulta precios actuales. Tampoco reconstruye exit status, usage, timestamps, revisiones u operaciones ausentes: el reducer los conserva como evidencia incompleta o inválida y la evaluación falla cerrado. La CLI V2 `benchmark` permanece independiente y no convierte observaciones V2 a V3.
+Runtime V4 provides strict contracts, capability gates, isolated executor and
+reviewer building blocks, deterministic validation, bounded telemetry,
+durable broker state, a daemon/IPC composition factory, a content-addressed
+installer and hash-bound repository activation.
 
-La API pública equivalente se importa desde `agent-orchestration-starter/pilot-v3`; no es necesario depender de rutas internas del paquete.
+The privileged host is split into eight separately certified ports: task
+source, issue planner, practice-pack resolver, credential gateway, sandbox
+coordinator, capability issuer, GitHub publisher and post-merge verifier. The
+thin root verifies each module, dependency certificate, interface and
+aggregate composition before importing it. See [modular host components](docs/modular-host-components-v4.md)
+and [host installation](docs/host-installation-v4.md).
 
-## Automated Runtime V4 status
+The project deliberately does not ship saved ChatGPT/Codex authentication,
+provider API keys or a universal production host implementation. Missing or
+unqualified host evidence fails closed with `CAPABILITY_UNVERIFIED`; there is
+no direct-edit fallback. The same central installation can serve unrelated
+repositories, but each repository supplies its own policy, profile, activation
+and publication decision.
 
-The public `agent-orchestration-starter/runtime-v4` API now includes strict contracts, capability gates, isolated executor/reviewer building blocks, deterministic validation, hook-free local finalization, exact-SHA GitHub publication, bounded telemetry, and the daemon-owned orchestration port. Project Codex configuration is fail-closed: the primary context is read-only and the five-tool MCP server is required.
+The Linux native broker helper is built for the target architecture and is
+never compiled at runtime. Windows and macOS may run the portable JavaScript
+surfaces where their exact host/coordinator/sandbox evidence supports them;
+Linux evidence must not be reused implicitly.
 
-Every Runtime V4 model binding also carries a required, versioned guidance pack. Prompt shape and bounded inference controls travel with the replaceable model profile, while repository authority remains provider-neutral. Changing a model or its guidance changes the binding/profile hash and requires fresh capability qualification. See [`docs/model-guidance-v4.md`](docs/model-guidance-v4.md) and the dated [`profiles/runtime.chatgpt-subscription.example.yaml`](profiles/runtime.chatgpt-subscription.example.yaml).
+## Package API
 
-Runtime V4 now includes complete accepted/failed/aborted lifecycle persistence, a daemon/IPC composition factory, a self-contained host bundle, a content-addressed central installer and portable repository activation. Install the runtime once per trusted machine; each repository keeps only its policy, replaceable profile and hash-bound activation manifest. Production host authority is a thin root plus eight separately hash-pinned and qualified components: task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification. The aggregate composition is certified independently and bound into every repository activation. See [`docs/modular-host-components-v4.md`](docs/modular-host-components-v4.md) and [`docs/host-installation-v4.md`](docs/host-installation-v4.md).
+The default `agent-orchestration-starter/runtime-v4` entry point is deliberately
+small. Low-level boundaries are explicit:
 
-This is still not a universal production-ready one-command service. The repository deliberately does not invent production component implementations or expose saved ChatGPT/Codex authentication or API keys to repository-controlled processes. Without all eight components, their dependency/evidence chain, complete integration evidence, credential isolation, provider compatibility, exact model qualification and target-host Docker/native behavior, `runtime mcp-stdio` and execution remain fail-closed with `CAPABILITY_UNVERIFIED`; there is no direct-edit fallback. The same central installation can support unrelated repositories, but each repository must declare and activate its own authority boundary.
+- `agent-orchestration-starter/runtime-v4/contracts`
+- `agent-orchestration-starter/runtime-v4/host`
+- `agent-orchestration-starter/runtime-v4/experimental`
 
-Publication policy is repository-owned and model-neutral. The broker durably advances the accepted commit through exact push, PR, required checks and head-bound merge; `FINALIZED` is reached only after the merge is verified or publication is explicitly skipped by policy. Models never receive GitHub credentials or choose those settings. See [`docs/publication-v4.md`](docs/publication-v4.md).
+See the [public API contract](docs/runtime-public-api-v4.md). Internal emitted
+modules are not package API merely because they exist in `dist/`.
 
-For larger economy-route changes, Runtime V4 also exposes a bounded iterative executor inspired by Ralph: one dependency-ready story per fresh coding context, deterministic validation, independent review, and retry from the last accepted tree. Every plan is bound to the exact qualified worker deployment, tools and instruction/skill bundle; generic capabilities and budgets force the frontier planner to size work for whichever model is active. Verified repair packets carry actionable findings without prior reasoning, and repeated normalized failures escalate early. Unlike a free-running loop, the coding model cannot mark its own story complete, expand its authority or publish changes, and tree promotion plus event persistence is a broker-owned atomic operation. See [`docs/iterative-executor-v4.md`](docs/iterative-executor-v4.md). The operational frontend/backend/full-stack resolution procedure, examples and escalation rules are in [`docs/delegation-practice-packs-v4.md`](docs/delegation-practice-packs-v4.md).
+## Installation, publication and release
 
-Portable inspection adds explicit role/adapter capability matching, bounded story graphs, safe hash-bound trace export and deterministic trajectory evaluation. These surfaces contain no provider/model policy and cannot alter runtime gates or routing. See [`docs/portable-runtime-inspection-v4.md`](docs/portable-runtime-inspection-v4.md).
+Install Runtime V4 once on a trusted machine, then activate each repository
+against a content-hashed installation. The activation binds policy, profile,
+target and aggregate host composition. Profile-only changes need fresh
+binding qualification; host bytes, components, native helpers or composition
+changes need dependency-aware recertification and a new installation.
 
-External agent runtimes and sandbox launchers are evaluated through one provider-neutral
-qualification procedure before they can back a trusted sandbox/capability component. Container use alone
-does not imply `hard` isolation. See
-[`docs/external-runtime-qualification-v4.md`](docs/external-runtime-qualification-v4.md)
-and the pinned
-[`OpenHands sandbox evaluation`](docs/research/openhands-sandbox-evaluation-2026-08-10.md).
+Publication is optional and repository-owned. It never force-pushes, deletes
+branches, deploys or lets a model choose the PR/merge settings. A formal `0.x`
+release emits a validated npm tarball, checksum, SBOM and build provenance;
+the release workflow is tag-driven and its GitHub Actions are pinned by SHA.
+The native tarball is intentionally produced on certified Linux x64 only;
+local `npm pack` on Windows/macOS fails closed instead of emitting a package
+that falsely claims to contain a Linux broker helper.
 
-Cross-system interoperability can use the optional, version-pinned A2A v1 task projection. It exports bounded status evidence only and is intentionally not an HTTP server or a replacement for the broker state machine. See [`docs/a2a-adapter-v1.md`](docs/a2a-adapter-v1.md).
+## Security and contribution
 
-Before activation in another repository, `assessRuntimeActivationV4` reports portable route coverage and host readiness for analysis-only, isolated execution, or autonomous publication. It does not infer project-specific production rules. See [`docs/activation-readiness-v4.md`](docs/activation-readiness-v4.md).
+Read the [repository threat model](docs/threat-model-v4.md) and
+[security policy](SECURITY.md) before changing sandboxing, credentials, IPC,
+host installation, publication or model qualification. The [contribution
+contract](CONTRIBUTING.md) explains required validation, evidence and migration
+notes.
 
-The provider-neutral autonomous dispatcher is the outer supervisor for authorized task intake, durable leases, idempotent runtime submission, crash recovery, circuit breaking, and exact-merge post-verification. Fresh state starts fail-closed in `PAUSED`; `RUNNING` requires an explicit durable transition. Circuit recovery also requires `PAUSED` before a separate reactivation. It supports persistent `RUNNING`, `DRAINING`, and `PAUSED` modes and a cancelable serial service loop. GitHub/CI intake, task-to-contract planning and GitHub write publication are distinct privileged component ports; only the credential gateway may own their secrets. See [`docs/autonomous-dispatcher-v4.md`](docs/autonomous-dispatcher-v4.md).
+## Documentation map
 
-See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
+- [Runtime operations](docs/runtime-v4-operations.md)
+- [Control plane](docs/control-plane-v4.md)
+- [Frontend/backend practice packs](docs/delegation-practice-packs-v4.md)
+- [Model guidance](docs/model-guidance-v4.md)
+- [Publication](docs/publication-v4.md)
+- [Portable runtime inspection](docs/portable-runtime-inspection-v4.md)
+- [Optional A2A projection](docs/a2a-adapter-v1.md)
+- [Activation readiness](docs/activation-readiness-v4.md)
+- [Architecture review](docs/research/architecture-review.md)
+- [Consolidation roadmap](docs/plans/2026-08-10-runtime-consolidation-roadmap.md)
 
-## Límites conocidos
-
-`writeIsolation` forma parte del contrato. Codex y OpenCode ofrecen `hard`; Hermes ofrece `degraded` porque hereda la superficie de herramientas del padre. Una política `hard` rechaza Hermes salvo aceptación exacta con `--accept-degraded-isolation hermes`. El manifiesto registra aislamiento requerido y efectivo.
-
-## Cualificación de ejecutores con herramientas
-
-El núcleo no habilita por defecto ningún binding externo para
-`agentic_tool_execution`. Un perfil que declare esa capacidad debe incluir una
-cualificación verificable con tres ejecuciones limpias consecutivas usando el
-mismo perfil, harness, binding, baseline, política de shell y protocolo de
-herramientas. Sin esa evidencia, la resolución falla cerrada antes de ejecutar
-el repositorio.
-
-La salida textual de herramientas (por ejemplo, etiquetas como
-`<tool_call>`) es una salida inválida. El runtime no la convierte en una
-llamada sintética. La generación de parches es una capacidad distinta que
-puede probarse en un piloto independiente con aplicación y validación
-deterministas.
-
-La decisión y la evidencia histórica de los bindings externos no cualificados
-se conservan en
-[`docs/decisions/2026-08-09-external-agentic-binding-qualification.md`](docs/decisions/2026-08-09-external-agentic-binding-qualification.md).
-
-## Diseño e investigación
-
-- `docs/plans/2026-08-08-provider-agnostic-orchestration-design.md`
-- `docs/plans/2026-08-08-evidence-based-routing-design.md`
-- `docs/research/architecture-review.md`
-
-Licencia MIT.
+MIT license.

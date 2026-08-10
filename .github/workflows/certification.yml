@@ -1,0 +1,62 @@
+name: Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      sandbox-image:
+        description: 'Pullable immutable Docker image reference, for example ghcr.io/org/image@sha256:<64 hex characters>'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  platform-host:
+    name: platform host (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['20.x', '24.x']
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate platform host
+        run: npm run validate
+
+  docker-hostile:
+    name: Docker hostile sandbox certification
+    runs-on: ubuntu-latest
+    env:
+      AO_REQUIRE_CERTIFICATION: '1'
+      AO_SANDBOX_REFERENCE: ${{ inputs.sandbox-image }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate Docker image identity
+        shell: bash
+        run: |
+          printf '%s\n' "$AO_SANDBOX_REFERENCE" | grep -Eq '@sha256:[0-9a-f]{64}$'
+          docker pull "$AO_SANDBOX_REFERENCE"
+          AO_SANDBOX_IMAGE="${AO_SANDBOX_REFERENCE##*@}"
+          printf '%s\n' "$AO_SANDBOX_IMAGE" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          docker image inspect "$AO_SANDBOX_IMAGE" >/dev/null
+          printf 'AO_SANDBOX_IMAGE=%s\n' "$AO_SANDBOX_IMAGE" >> "$GITHUB_ENV"
+      - name: Run hostile and Docker certification
+        run: npm run test:hostile

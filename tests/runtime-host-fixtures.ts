@@ -34,11 +34,12 @@ export interface RuntimeHostFixtureV4 {
 
 export async function createRuntimeHostFixtureV4(input: {
   readonly componentModules?: Partial<Record<RuntimeHostComponentIdV4, string>>;
+  readonly driverSource?: string;
 } = {}): Promise<RuntimeHostFixtureV4> {
   const root = await mkdtemp(join(tmpdir(), 'runtime-host-driver-source-'));
   const componentsRoot = join(root, 'components');
   await mkdir(componentsRoot, { recursive: true });
-  const driver = 'export function createRuntimeHostDriverV4(context){if(Object.keys(context.components).length!==8)throw new Error("missing components");return {daemon:async()=>{},doctor:async()=>["ready"],mcpStdio:async()=>{},status:async(id)=>({run_id:id})}}\n';
+  const driver = input.driverSource ?? 'export function createRuntimeHostDriverV4(context){if(Object.keys(context.components).length!==8)throw new Error("missing components");return {daemon:async()=>{},doctor:async()=>["ready"],mcpStdio:async()=>{},status:async(id)=>({run_id:id})}}\n';
   const driverSource = join(root, 'driver.mjs');
   await writeFile(driverSource, driver);
   const certifications = new Map<RuntimeHostComponentIdV4, string>();
