@@ -6,7 +6,7 @@ Runtime V4 is a fail-closed implementation framework, not yet a production-ready
 
 Production activation remains blocked until all of these are supplied and certified for the target host:
 
-- a native authenticated broker composition for every MCP control, including repair, finalize, abort, and status;
+- a native host composition for the now-complete authenticated MCP/IPC control plane, including exact repair, finalize and abort handlers plus certified platform verifiers/coordinators;
 - an immutable project-local runtime bundle at `.agent-orchestration/runtime/dist/cli/main.js`;
 - a credential adapter that keeps saved ChatGPT/Codex authentication and provider API keys outside repository-controlled descendants;
 - a trusted GitHub credential lease plus certified empty Git hooks and global-config paths for the publication adapter;
@@ -31,6 +31,8 @@ agent-orchestration runtime status --run-id run_...
 ```
 
 The STDIO MCP adapter performs short authenticated control calls only. The durable daemon owns idempotency, model execution, validation, review, repair/escalation, finalization, journal recovery, and locks. Replaying a canonical `request_id` returns its original `run_id`.
+
+The IPC wire contract now carries all five MCP operations and binds replies back to authoritative daemon status. Mutating retries reuse deterministic command IDs. See [`control-plane-v4.md`](control-plane-v4.md). This protocol completion does not by itself certify a production host.
 
 ## Security and credentials
 

@@ -50,6 +50,21 @@ export interface BrokerIpcRequestV4 {
   command: BrokerCommandV4;
 }
 
+export interface BrokerIpcFindingV4 { readonly id: string; readonly evidence_hash: string; }
+export type BrokerIpcControlCommandV4 =
+  | Extract<BrokerCommandV4, { type: 'RUN_CODING_TASK' }>
+  | Readonly<{ type: 'STATUS_CODING_TASK'; command_id: string; run_id: string }>
+  | Readonly<{ type: 'REPAIR_CODING_TASK'; command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }>
+  | Readonly<{ type: 'FINALIZE_CODING_TASK'; command_id: string; run_id: string }>
+  | Readonly<{ type: 'ABORT_CODING_TASK'; command_id: string; run_id: string }>;
+interface BrokerIpcWireRequestV4 { readonly token: string; readonly command: BrokerIpcControlCommandV4; }
+
+export interface BrokerIpcControlPlaneV4 {
+  repair(input: { command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }): Promise<BrokerReplyV4>;
+  finalize(input: { command_id: string; run_id: string }): Promise<BrokerReplyV4>;
+  abort(input: { command_id: string; run_id: string }): Promise<BrokerReplyV4>;
+}
+
 export interface BrokerIpcResponseV4 {
   ok: boolean;
   reply?: BrokerReplyV4;
@@ -58,6 +73,7 @@ export interface BrokerIpcResponseV4 {
 
 export interface BrokerIpcDependenciesV4 {
   daemon: BrokerDaemonV4;
+  controlPlane?: BrokerIpcControlPlaneV4;
   stateDirectory: string;
   endpoint?: string;
   platform?: NodeJS.Platform;
@@ -197,6 +213,10 @@ export interface BrokerIpcServerIdentityVerifierV4 {
 
 export interface BrokerIpcClientV4 {
   submit(command: BrokerCommandV4): Promise<BrokerReplyV4>;
+  status(runId: string): Promise<BrokerReplyV4>;
+  repair(input: { run_id: string; findings: readonly BrokerIpcFindingV4[] }): Promise<BrokerReplyV4>;
+  finalize(runId: string): Promise<BrokerReplyV4>;
+  abort(runId: string): Promise<BrokerReplyV4>;
   close(): Promise<void>;
 }
 
@@ -1422,13 +1442,44 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[], name
   if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) invalid(`${name} has unknown or missing properties`);
 }
 
-function loadSubmittedCommand(value: unknown): Extract<BrokerCommandV4, { type: 'RUN_CODING_TASK' }> {
+function loadCommandId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(value)) invalid('command_id is invalid');
+  return value;
+}
+
+function loadRunId(value: unknown): string {
+  if (typeof value !== 'string' || !/^run_[A-Za-z0-9_-]{16,96}$/.test(value)) invalid('run_id is invalid');
+  return value;
+}
+
+function loadBrokerIpcControlCommandV4(value: unknown): BrokerIpcControlCommandV4 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('command must be an object');
   const command = value as Record<string, unknown>;
-  exactKeys(command, ['type', 'command_id', 'request'], 'command');
-  if (command.type !== 'RUN_CODING_TASK') invalid(`unknown command ${String(command.type)}`);
-  if (typeof command.command_id !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(command.command_id)) invalid('command_id is invalid');
-  return Object.freeze({ type: 'RUN_CODING_TASK', command_id: command.command_id, request: loadRuntimeTaskRequestV4(command.request) });
+  const commandId = loadCommandId(command.command_id);
+  if (command.type === 'RUN_CODING_TASK') {
+    exactKeys(command, ['type', 'command_id', 'request'], 'command');
+    return Object.freeze({ type: command.type, command_id: commandId, request: loadRuntimeTaskRequestV4(command.request) });
+  }
+  if (command.type === 'REPAIR_CODING_TASK') {
+    exactKeys(command, ['type', 'command_id', 'run_id', 'findings'], 'command');
+    if (!Array.isArray(command.findings) || command.findings.length < 1 || command.findings.length > 128) invalid('repair findings are invalid');
+    const ids = new Set<string>();
+    const findings = command.findings.map((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) invalid('repair finding is invalid');
+      const finding = item as Record<string, unknown>;
+      exactKeys(finding, ['id', 'evidence_hash'], 'finding');
+      if (typeof finding.id !== 'string' || finding.id.length < 1 || finding.id.length > 128 || ids.has(finding.id)) invalid('repair finding id is invalid');
+      if (typeof finding.evidence_hash !== 'string' || !/^[a-f0-9]{64}$/.test(finding.evidence_hash)) invalid('repair finding evidence is invalid');
+      ids.add(finding.id);
+      return Object.freeze({ id: finding.id, evidence_hash: finding.evidence_hash });
+    });
+    return Object.freeze({ type: command.type, command_id: commandId, run_id: loadRunId(command.run_id), findings: Object.freeze(findings) });
+  }
+  if (command.type === 'STATUS_CODING_TASK' || command.type === 'FINALIZE_CODING_TASK' || command.type === 'ABORT_CODING_TASK') {
+    exactKeys(command, ['type', 'command_id', 'run_id'], 'command');
+    return Object.freeze({ type: command.type, command_id: commandId, run_id: loadRunId(command.run_id) });
+  }
+  invalid(`unknown command ${String(command.type)}`);
 }
 
 function equalToken(expected: string, supplied: unknown): boolean {
@@ -1521,15 +1572,26 @@ export function loadBrokerIpcResponseV4(payload: string): BrokerIpcResponseV4 {
   }
 }
 
-async function verifyDaemonReplyV4(command: Extract<BrokerCommandV4, { type: 'RUN_CODING_TASK' }>, reply: BrokerReplyV4, daemon: BrokerDaemonV4): Promise<void> {
-  if (reply.request_id !== command.request.request_id) responseRejected();
+function replyFromStatusV4(status: ReturnType<typeof loadRuntimeResultV4>): BrokerReplyV4 {
+  return Object.freeze({
+    request_id: status.request_id,
+    run_id: status.run_id,
+    state: status.state,
+    status_token: hashCanonicalV4({ run_id: status.run_id, state: status.state, artifact_manifest_hash: status.artifact_manifest_hash }),
+  });
+}
+
+async function verifyDaemonReplyV4(command: BrokerIpcControlCommandV4, reply: BrokerReplyV4, daemon: BrokerDaemonV4): Promise<void> {
+  const expectedRunId = command.type === 'RUN_CODING_TASK' ? reply.run_id : command.run_id;
+  if (command.type !== 'RUN_CODING_TASK' && reply.run_id !== command.run_id) responseRejected();
+  if (command.type === 'RUN_CODING_TASK' && reply.request_id !== command.request.request_id) responseRejected();
   let status;
   try {
-    status = loadRuntimeResultV4(await callAdapter(() => daemon.status(reply.run_id)));
+    status = loadRuntimeResultV4(await callAdapter(() => daemon.status(expectedRunId)));
   } catch {
     responseRejected();
   }
-  if (status.request_id !== command.request.request_id || status.run_id !== reply.run_id || status.state !== reply.state) responseRejected();
+  if (status.request_id !== reply.request_id || status.run_id !== reply.run_id || status.state !== reply.state) responseRejected();
   const expectedStatusToken = hashCanonicalV4({
     run_id: status.run_id,
     state: status.state,
@@ -1798,8 +1860,17 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
       const request = decoded as Record<string, unknown>;
       exactKeys(request, ['token', 'command'], 'request');
       if (!equalToken(token, request.token)) throw new Error('AUTHENTICATION_FAILED: token mismatch');
-      const command = loadSubmittedCommand(request.command);
-      const response = loadBrokerIpcResponseV4(canonicalJsonV4({ ok: true, reply: await callAdapter(() => deps.daemon.submit(command)) }));
+      const command = loadBrokerIpcControlCommandV4(request.command);
+      let reply: BrokerReplyV4;
+      if (command.type === 'RUN_CODING_TASK') reply = await callAdapter(() => deps.daemon.submit(command));
+      else if (command.type === 'STATUS_CODING_TASK') reply = replyFromStatusV4(loadRuntimeResultV4(await callAdapter(() => deps.daemon.status(command.run_id))));
+      else {
+        if (deps.controlPlane === undefined) throw new Error('CAPABILITY_UNVERIFIED: broker control plane is unavailable');
+        if (command.type === 'REPAIR_CODING_TASK') reply = await callAdapter(() => deps.controlPlane!.repair(command));
+        else if (command.type === 'FINALIZE_CODING_TASK') reply = await callAdapter(() => deps.controlPlane!.finalize(command));
+        else reply = await callAdapter(() => deps.controlPlane!.abort(command));
+      }
+      const response = loadBrokerIpcResponseV4(canonicalJsonV4({ ok: true, reply }));
       if (!response.ok || response.reply === undefined) responseRejected();
       await verifyDaemonReplyV4(command, response.reply, deps.daemon);
       return response;
@@ -1981,13 +2052,12 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
   }
   const acceptedRuns = new Map<string, string>();
   let closed = false;
-  return {
-    submit: async (command) => {
+  const send = async (command: BrokerIpcControlCommandV4): Promise<BrokerReplyV4> => {
       if (closed) throw new Error('AUTHENTICATION_FAILED: IPC client is closed');
-      let submittedCommand: Extract<BrokerCommandV4, { type: 'RUN_CODING_TASK' }>;
-      try { submittedCommand = loadSubmittedCommand(command); }
+      let submittedCommand: BrokerIpcControlCommandV4;
+      try { submittedCommand = loadBrokerIpcControlCommandV4(command); }
       catch (error) { throw new Error(normalizedBoundaryMessage(error)); }
-      const request: BrokerIpcRequestV4 = { token: config.token, command: submittedCommand };
+      const request: BrokerIpcWireRequestV4 = { token: config.token, command: submittedCommand };
       const frame = encodeFrame(request);
       let endpoint = config.endpoint;
       const submitOverSocket = (socket: Socket): Promise<BrokerReplyV4> => new Promise<BrokerReplyV4>((resolvePromise, reject) => {
@@ -2019,11 +2089,13 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
               reject(new Error(normalizeBrokerResponseErrorV4(response.error)));
             }
             else {
-              const priorRunId = acceptedRuns.get(submittedCommand.request.request_id);
-              if (response.reply.request_id !== submittedCommand.request.request_id || (priorRunId !== undefined && priorRunId !== response.reply.run_id)) {
+              if (submittedCommand.type === 'RUN_CODING_TASK') {
+                const priorRunId = acceptedRuns.get(submittedCommand.request.request_id);
+                if (response.reply.request_id !== submittedCommand.request.request_id || (priorRunId !== undefined && priorRunId !== response.reply.run_id)) return fail(new Error('UNKNOWN_FAILURE: broker response rejected'));
+                acceptedRuns.set(submittedCommand.request.request_id, response.reply.run_id);
+              } else if (response.reply.run_id !== submittedCommand.run_id) {
                 return fail(new Error('UNKNOWN_FAILURE: broker response rejected'));
               }
-              acceptedRuns.set(submittedCommand.request.request_id, response.reply.run_id);
               resolvePromise(response.reply);
             }
           }
@@ -2046,7 +2118,14 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
       }
       try { return submitOverSocket((config.connect ?? createConnection)(endpoint)); }
       catch { throw new Error('UNKNOWN_FAILURE: broker request failed'); }
-    },
+  };
+  const commandId = (kind: string, payload: unknown) => `ipc-${kind}-${hashCanonicalV4(payload).slice(0, 32)}`;
+  return {
+    submit: async (command) => send(command as BrokerIpcControlCommandV4),
+    status: async (runId) => send({ type: 'STATUS_CODING_TASK', command_id: commandId('status', { run_id: runId }), run_id: runId }),
+    repair: async (input) => send({ type: 'REPAIR_CODING_TASK', command_id: commandId('repair', input), run_id: input.run_id, findings: input.findings }),
+    finalize: async (runId) => send({ type: 'FINALIZE_CODING_TASK', command_id: commandId('finalize', { run_id: runId }), run_id: runId }),
+    abort: async (runId) => send({ type: 'ABORT_CODING_TASK', command_id: commandId('abort', { run_id: runId }), run_id: runId }),
     close: async () => { closed = true; },
   };
 }
