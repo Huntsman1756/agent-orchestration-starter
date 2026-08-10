@@ -72,3 +72,25 @@ test('requires coding capability from the frontier assignment when frontier exec
 
   assert.throws(() => resolveRoles(policy, input), /frontier_execution.*coding/i);
 });
+
+test('fails closed when an executor declares agentic tools without qualification evidence', () => {
+  const input = profile();
+  input.assignments.executor.capabilities.push('agentic_tool_execution');
+
+  assert.throws(() => resolveRoles(policy, input), /agentic_tool_execution.*three clean qualification runs/i);
+});
+
+test('accepts only an executor with three clean qualified runs', () => {
+  const input = profile();
+  input.assignments.executor.capabilities.push('agentic_tool_execution');
+  input.assignments.executor.qualification = {
+    policyVersion: 'agentic-tool-qualification-v1',
+    status: 'VERIFIED',
+    cleanRuns: 3,
+    requiredCleanRuns: 3,
+    evidenceHash: 'a'.repeat(64),
+  };
+
+  const resolved = resolveRoles(policy, input);
+  assert.equal(resolved.roles.executor.qualification?.cleanRuns, 3);
+});
