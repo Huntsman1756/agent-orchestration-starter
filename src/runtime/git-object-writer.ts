@@ -82,6 +82,7 @@ async function executeGit(repositoryRoot: string, input: GitPlumbingInvocationV4
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
     child.once('error', reject);
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => { if (error.code !== 'EPIPE') reject(error); });
     child.once('close', (code) => resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), exit_code: code ?? -1 }));
     child.stdin.end(Buffer.from(input.stdin));
   });
