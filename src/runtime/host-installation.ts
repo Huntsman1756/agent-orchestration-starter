@@ -9,11 +9,18 @@ import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import { loadRuntimeProfileV4, loadRuntimeRepositoryPolicyV4 } from './load.js';
 import { renderCodexProjectConfig } from './codex-project-config.js';
 import type { RuntimeActivationTargetV4 } from './readiness.js';
+import {
+  bindRuntimeHostCompositionV4,
+  loadRuntimeHostComponentSourceManifestV4,
+  loadRuntimeHostCompositionBindingV4,
+  type RuntimeHostCompositionBindingV4,
+} from './host-components.js';
 
 const hashPattern = /^[a-f0-9]{64}$/u;
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const maxFiles = 4096;
 const maxBytes = 256 * 1024 * 1024;
+const maxHostComponentManifestBytes = 1024 * 1024;
 
 export interface RuntimeInstalledFileV4 { readonly path: string; readonly sha256: string; readonly size: number }
 export interface RuntimeHostInstallationManifestV4 {
@@ -23,6 +30,7 @@ export interface RuntimeHostInstallationManifestV4 {
   readonly root: string;
   readonly entrypoint: string;
   readonly hostDriver: { readonly path: string; readonly sha256: string } | null;
+  readonly hostComposition: RuntimeHostCompositionBindingV4 | null;
   readonly installedAt: string;
   readonly files: readonly RuntimeInstalledFileV4[];
   readonly installationHash: string;
@@ -40,6 +48,7 @@ export interface RuntimeRepositoryActivationV4 {
   readonly stateDirectory: string;
   readonly installationManifest: string;
   readonly installationHash: string;
+  readonly hostCompositionHash: string | null;
   readonly target: RuntimeActivationTargetV4;
   readonly activatedAt: string;
   readonly activationHash: string;
@@ -48,7 +57,7 @@ export interface RuntimeRepositoryActivationV4 {
 export function loadRuntimeRepositoryActivationV4(value: unknown): RuntimeRepositoryActivationV4 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('activation manifest is not an object');
   const item = value as Record<string, unknown>;
-  const expected = ['activatedAt','activationHash','installationHash','installationManifest','policyHash','policyPath','profileHash','profilePath','repositoryId','repositoryRoot','schemaVersion','stateDirectory','target','worktreeParent'];
+  const expected = ['activatedAt','activationHash','hostCompositionHash','installationHash','installationManifest','policyHash','policyPath','profileHash','profilePath','repositoryId','repositoryRoot','schemaVersion','stateDirectory','target','worktreeParent'];
   if (Object.keys(item).sort().join(',') !== expected.sort().join(',')) invalid('activation manifest has unknown or missing fields');
   for (const field of ['repositoryRoot','policyPath','profilePath','worktreeParent','stateDirectory','installationManifest'] as const) {
     if (typeof item[field] !== 'string' || !isAbsolute(item[field] as string)) invalid(`activation ${field} is invalid`);
@@ -56,12 +65,14 @@ export function loadRuntimeRepositoryActivationV4(value: unknown): RuntimeReposi
   if (item.schemaVersion !== 4 || typeof item.repositoryId !== 'string' || !idPattern.test(item.repositoryId)) invalid('activation identity is invalid');
   if (!['ANALYSIS_ONLY','ISOLATED_EXECUTION','AUTONOMOUS_PUBLICATION'].includes(String(item.target))) invalid('activation target is invalid');
   for (const field of ['policyHash','profileHash','installationHash','activationHash'] as const) if (!hashPattern.test(String(item[field]))) invalid(`activation ${field} is invalid`);
+  if (item.hostCompositionHash !== null && !hashPattern.test(String(item.hostCompositionHash))) invalid('activation hostCompositionHash is invalid');
   timestamp(String(item.activatedAt), 'activatedAt');
   const draft = {
     schemaVersion: 4 as const, repositoryId: String(item.repositoryId), repositoryRoot: String(item.repositoryRoot),
     policyPath: String(item.policyPath), policyHash: String(item.policyHash), profilePath: String(item.profilePath),
     profileHash: String(item.profileHash), worktreeParent: String(item.worktreeParent), stateDirectory: String(item.stateDirectory),
     installationManifest: String(item.installationManifest), installationHash: String(item.installationHash),
+    hostCompositionHash: item.hostCompositionHash === null ? null : String(item.hostCompositionHash),
     target: item.target as RuntimeActivationTargetV4, activatedAt: String(item.activatedAt),
   };
   if (hashCanonicalV4(draft) !== item.activationHash) invalid('activation hash is invalid');
@@ -81,6 +92,7 @@ export async function verifyRuntimeRepositoryActivationV4(path: string): Promise
   if (policy.repositoryId !== activation.repositoryId || hashCanonicalV4(policy) !== activation.policyHash || hashCanonicalV4(profile) !== activation.profileHash) invalid('activation policy or profile drifted');
   const installation = loadRuntimeHostInstallationV4(JSON.parse(await readFile(activation.installationManifest, 'utf8')));
   if (activation.installationManifest !== join(installation.root, 'installation-v4.json') || installation.installationHash !== activation.installationHash) invalid('activation installation binding drifted');
+  if (activation.hostCompositionHash !== (installation.hostComposition?.compositionCertificationHash ?? null)) invalid('activation host composition binding drifted');
   const hostRoot = dirname(dirname(installation.root));
   if (activation.stateDirectory !== join(hostRoot, 'state', activation.repositoryId)) invalid('activation state directory is outside the host root');
   await verifyRuntimeHostInstallationV4(installation);
@@ -137,7 +149,7 @@ async function sourceFiles(root: string): Promise<readonly RuntimeInstalledFileV
   return Object.freeze(files.sort((left, right) => left.path.localeCompare(right.path)));
 }
 
-export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot: string; hostDriver?: string; installedAt: string }): Promise<RuntimeHostInstallationManifestV4> {
+export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot: string; hostDriver?: string; hostComponentsManifest?: string; installedAt: string }): Promise<RuntimeHostInstallationManifestV4> {
   timestamp(input.installedAt, 'installedAt');
   const sourceRoot = await realpath(resolve(input.sourceRoot)).catch(() => invalid('sourceRoot cannot be canonicalized'));
   await mkdir(resolve(input.hostRoot), { recursive: true, mode: 0o700 });
@@ -147,31 +159,72 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
   if (typeof packageManifest.version !== 'string' || !idPattern.test(packageManifest.version)) invalid('package version is invalid');
   const sourceBundleFiles = await sourceFiles(sourceRoot);
   const configuredHostDriver = input.hostDriver;
+  const configuredHostComponents = input.hostComponentsManifest;
+  if ((configuredHostDriver === undefined) !== (configuredHostComponents === undefined)) invalid('host driver and component manifest must be supplied together');
   const hostDriverSource = configuredHostDriver === undefined ? null : await (async () => {
-    const path = await realpath(resolve(configuredHostDriver)).catch(() => invalid('host driver cannot be canonicalized'));
+    const configuredPath = resolve(configuredHostDriver);
+    const configuredMetadata = await lstat(configuredPath).catch(() => invalid('host driver cannot be canonicalized'));
+    if (!configuredMetadata.isFile() || configuredMetadata.isSymbolicLink()) invalid('host driver must be a regular non-symbolic file');
+    if (configuredMetadata.size > maxBytes) invalid('host driver exceeds installation limits');
+    const path = await realpath(configuredPath).catch(() => invalid('host driver cannot be canonicalized'));
+    if (path !== configuredPath) invalid('host driver source path contains a symbolic link or alias');
     const metadata = await lstat(path);
     if (!metadata.isFile() || metadata.isSymbolicLink()) invalid('host driver must be a regular non-symbolic file');
     return Object.freeze({ path, ...(await fileHash(path)) });
   })();
+  const hostComponentSources = configuredHostComponents === undefined ? null : await (async () => {
+    const configuredPath = resolve(configuredHostComponents);
+    const configuredMetadata = await lstat(configuredPath).catch(() => invalid('host component manifest cannot be canonicalized'));
+    if (!configuredMetadata.isFile() || configuredMetadata.isSymbolicLink()) invalid('host component manifest must be a regular non-symbolic file');
+    if (configuredMetadata.size > maxHostComponentManifestBytes) invalid('host component manifest exceeds installation limits');
+    const manifestPath = await realpath(configuredPath).catch(() => invalid('host component manifest cannot be canonicalized'));
+    if (manifestPath !== configuredPath) invalid('host component manifest path contains a symbolic link or alias');
+    const sourceManifest = loadRuntimeHostComponentSourceManifestV4(JSON.parse(await readFile(manifestPath, 'utf8')));
+    if (hostDriverSource === null || sourceManifest.driverSha256 !== hostDriverSource.sha256) invalid('host composition does not bind the selected root driver');
+    const manifestRoot = dirname(manifestPath);
+    const modules: Array<{ readonly id: string; readonly sourcePath: string; readonly installedPath: string; readonly sha256: string; readonly size: number }> = [];
+    let selectedBytes = sourceBundleFiles.reduce((total, file) => total + file.size, hostDriverSource.size);
+    for (const component of sourceManifest.components) {
+      const requestedPath = resolve(manifestRoot, ...component.modulePath.split('/'));
+      const configuredModuleMetadata = await lstat(requestedPath).catch(() => invalid(`host component ${component.id} is unavailable`));
+      if (!configuredModuleMetadata.isFile() || configuredModuleMetadata.isSymbolicLink()) invalid(`host component ${component.id} must be a regular non-symbolic file`);
+      selectedBytes += configuredModuleMetadata.size;
+      if (configuredModuleMetadata.size > maxBytes || selectedBytes > maxBytes) invalid('bundle exceeds installation limits');
+      const path = await realpath(requestedPath).catch(() => invalid(`host component ${component.id} cannot be canonicalized`));
+      if (path !== requestedPath || !within(manifestRoot, path)) invalid(`host component ${component.id} escaped its source root`);
+      const hashed = await fileHash(path);
+      if (hashed.sha256 !== component.moduleSha256) invalid(`host component ${component.id} artifact drifted from its certification`);
+      modules.push(Object.freeze({ id: component.id, sourcePath: path, installedPath: `host-components/${component.id}.mjs`, ...hashed }));
+    }
+    return Object.freeze({ sourceManifest, modules: Object.freeze(modules) });
+  })();
   const files = Object.freeze([
     ...sourceBundleFiles,
     ...(hostDriverSource === null ? [] : [Object.freeze({ path: 'host-driver.mjs', sha256: hostDriverSource.sha256, size: hostDriverSource.size })]),
+    ...(hostComponentSources === null ? [] : hostComponentSources.modules.map((module) => Object.freeze({ path: module.installedPath, sha256: module.sha256, size: module.size }))),
   ].sort((left, right) => left.path.localeCompare(right.path)));
-  const bundleHash = hashCanonicalV4(files);
+  if (files.length > maxFiles || files.reduce((total, file) => total + file.size, 0) > maxBytes) invalid('bundle exceeds installation limits');
+  const bundleHash = hashCanonicalV4({
+    files,
+    hostCompositionCertificationHash: hostComponentSources?.sourceManifest.compositionCertificationHash ?? null,
+  });
   const installationId = `${packageManifest.version}-${bundleHash.slice(0, 16)}`;
   const installationRoot = join(hostRoot, 'installations', installationId);
   const hostDriver = hostDriverSource === null ? null : Object.freeze({ path: join(installationRoot, 'host-driver.mjs'), sha256: hostDriverSource.sha256 });
+  const hostComposition = hostComponentSources === null || hostDriverSource === null
+    ? null
+    : bindRuntimeHostCompositionV4(hostComponentSources.sourceManifest, installationRoot, hostDriverSource.sha256);
   const draft = {
     schemaVersion: 4 as const, installationId, packageVersion: packageManifest.version,
     root: installationRoot, entrypoint: join(installationRoot, 'dist', 'host', 'agent-orchestration.mjs'),
-    hostDriver, installedAt: input.installedAt, files,
+    hostDriver, hostComposition, installedAt: input.installedAt, files,
   };
   const manifest = Object.freeze({ ...draft, installationHash: hashCanonicalV4(draft) });
   const manifestPath = join(installationRoot, 'installation-v4.json');
   const existing = await readFile(manifestPath, 'utf8').catch(() => null);
   if (existing !== null) {
     const loaded = loadRuntimeHostInstallationV4(JSON.parse(existing));
-    const stable = (value: RuntimeHostInstallationManifestV4) => ({ installationId: value.installationId, packageVersion: value.packageVersion, root: value.root, entrypoint: value.entrypoint, hostDriver: value.hostDriver, files: value.files });
+    const stable = (value: RuntimeHostInstallationManifestV4) => ({ installationId: value.installationId, packageVersion: value.packageVersion, root: value.root, entrypoint: value.entrypoint, hostDriver: value.hostDriver, hostComposition: value.hostComposition, files: value.files });
     if (canonicalJsonV4(stable(loaded)) !== canonicalJsonV4(stable(manifest))) invalid('installation id already exists with different bytes');
     await verifyRuntimeHostInstallationV4(loaded);
     return loaded;
@@ -180,11 +233,16 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
   await mkdir(dirname(temporary), { recursive: true, mode: 0o700 });
   await mkdir(temporary, { recursive: false, mode: 0o700 });
   try {
+    const componentSourceByInstalledPath = new Map<string, string>(hostComponentSources?.modules.map((module) => [module.installedPath, module.sourcePath]));
     for (const file of files) {
       const target = join(temporary, ...file.path.split('/'));
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      const source = file.path === 'host-driver.mjs' && hostDriverSource !== null ? hostDriverSource.path : join(sourceRoot, ...file.path.split('/'));
+      const source = file.path === 'host-driver.mjs' && hostDriverSource !== null
+        ? hostDriverSource.path
+        : componentSourceByInstalledPath.get(file.path) ?? join(sourceRoot, ...file.path.split('/'));
       await copyFile(source, target, fsConstants.COPYFILE_EXCL);
+      const copied = await fileHash(target);
+      if (copied.sha256 !== file.sha256 || copied.size !== file.size) invalid(`source changed while installing: ${file.path}`);
     }
     await writeFile(join(temporary, 'installation-v4.json'), `${canonicalJsonV4(manifest)}\n`, { flag: 'wx', mode: 0o600, flush: true });
     await mkdir(dirname(installationRoot), { recursive: true, mode: 0o700 });
@@ -197,7 +255,7 @@ export function loadRuntimeHostInstallationV4(value: unknown): RuntimeHostInstal
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('installation manifest is not an object');
   const item = value as Record<string, unknown>;
   const keys = Object.keys(item).sort().join(',');
-  if (keys !== ['entrypoint','files','hostDriver','installationHash','installationId','installedAt','packageVersion','root','schemaVersion'].sort().join(',')) invalid('installation manifest has unknown or missing fields');
+  if (keys !== ['entrypoint','files','hostComposition','hostDriver','installationHash','installationId','installedAt','packageVersion','root','schemaVersion'].sort().join(',')) invalid('installation manifest has unknown or missing fields');
   if (item.schemaVersion !== 4 || typeof item.installationId !== 'string' || !idPattern.test(item.installationId) || typeof item.packageVersion !== 'string' || !idPattern.test(item.packageVersion)) invalid('installation identity is invalid');
   if (typeof item.root !== 'string' || !isAbsolute(item.root) || basename(item.root) !== item.installationId || typeof item.entrypoint !== 'string' || item.entrypoint !== join(item.root, 'dist', 'host', 'agent-orchestration.mjs')) invalid('installation paths are invalid');
   if (typeof item.installedAt !== 'string') invalid('installedAt is invalid');
@@ -211,14 +269,29 @@ export function loadRuntimeHostInstallationV4(value: unknown): RuntimeHostInstal
   });
   if (new Set(files.map((file) => file.path)).size !== files.length || files.some((file, index) => index > 0 && files[index - 1]!.path.localeCompare(file.path) >= 0)) invalid('installation file list is duplicated or unsorted');
   if (!files.some((file) => file.path === 'dist/host/agent-orchestration.mjs') || !files.some((file) => file.path === 'package.json') || !files.some((file) => file.path === 'LICENSE')) invalid('installation file list is incomplete');
-  if (item.installationId !== `${item.packageVersion}-${hashCanonicalV4(files).slice(0, 16)}`) invalid('installation identity does not match its files');
   const hostDriver = item.hostDriver === null ? null : (() => {
     if (typeof item.hostDriver !== 'object' || Array.isArray(item.hostDriver)) invalid('host driver binding is invalid');
     const driver = item.hostDriver as Record<string, unknown>;
     if (Object.keys(driver).sort().join(',') !== 'path,sha256' || driver.path !== join(String(item.root), 'host-driver.mjs') || !hashPattern.test(String(driver.sha256)) || !files.some((file) => file.path === 'host-driver.mjs' && file.sha256 === driver.sha256)) invalid('host driver binding is invalid');
     return Object.freeze({ path: driver.path, sha256: String(driver.sha256) });
   })();
-  const draft = { schemaVersion: 4 as const, installationId: item.installationId, packageVersion: item.packageVersion, root: item.root, entrypoint: item.entrypoint, hostDriver, installedAt: item.installedAt, files: Object.freeze(files) };
+  if ((hostDriver === null) !== (item.hostComposition === null)) invalid('host driver and composition binding must be present together');
+  const hostComposition = hostDriver === null
+    ? null
+    : loadRuntimeHostCompositionBindingV4(item.hostComposition, String(item.root), hostDriver.sha256);
+  const componentFiles = files.filter((file) => file.path.startsWith('host-components/'));
+  if (hostComposition === null) {
+    if (files.some((file) => file.path === 'host-driver.mjs') || componentFiles.length > 0) invalid('installation contains unbound host code');
+  } else if (hostComposition.components.length !== componentFiles.length || hostComposition.components.some((component) => {
+    const relativePath = portable(relative(String(item.root), component.path));
+    return !componentFiles.some((file) => file.path === relativePath && file.sha256 === component.sha256);
+  })) invalid('host component files do not match the certified composition');
+  const identityHash = hashCanonicalV4({
+    files,
+    hostCompositionCertificationHash: hostComposition?.compositionCertificationHash ?? null,
+  });
+  if (item.installationId !== `${item.packageVersion}-${identityHash.slice(0, 16)}`) invalid('installation identity does not match its files and host composition');
+  const draft = { schemaVersion: 4 as const, installationId: item.installationId, packageVersion: item.packageVersion, root: item.root, entrypoint: item.entrypoint, hostDriver, hostComposition, installedAt: item.installedAt, files: Object.freeze(files) };
   if (!hashPattern.test(String(item.installationHash)) || hashCanonicalV4(draft) !== item.installationHash) invalid('installation hash is invalid');
   return Object.freeze({ ...draft, installationHash: String(item.installationHash) }) as RuntimeHostInstallationManifestV4;
 }
@@ -269,6 +342,7 @@ export async function activateRuntimeRepositoryV4(input: { repositoryRoot: strin
     schemaVersion: 4 as const, repositoryId: policy.repositoryId, repositoryRoot, policyPath,
     policyHash: hashCanonicalV4(policy), profilePath, profileHash: hashCanonicalV4(profile), worktreeParent,
     stateDirectory, installationManifest: manifestPath, installationHash: installation.installationHash,
+    hostCompositionHash: installation.hostComposition?.compositionCertificationHash ?? null,
     target: input.target, activatedAt: input.activatedAt,
   };
   let activation = Object.freeze({ ...draft, activationHash: hashCanonicalV4(draft) });
@@ -282,7 +356,7 @@ export async function activateRuntimeRepositoryV4(input: { repositoryRoot: strin
   const existing = await readFile(activationPath, 'utf8').catch(() => null);
   if (existing !== null) {
     const loaded = loadRuntimeRepositoryActivationV4(JSON.parse(existing));
-    const stable = (value: RuntimeRepositoryActivationV4) => ({ repositoryId: value.repositoryId, repositoryRoot: value.repositoryRoot, policyPath: value.policyPath, policyHash: value.policyHash, profilePath: value.profilePath, profileHash: value.profileHash, worktreeParent: value.worktreeParent, stateDirectory: value.stateDirectory, installationManifest: value.installationManifest, installationHash: value.installationHash, target: value.target });
+    const stable = (value: RuntimeRepositoryActivationV4) => ({ repositoryId: value.repositoryId, repositoryRoot: value.repositoryRoot, policyPath: value.policyPath, policyHash: value.policyHash, profilePath: value.profilePath, profileHash: value.profileHash, worktreeParent: value.worktreeParent, stateDirectory: value.stateDirectory, installationManifest: value.installationManifest, installationHash: value.installationHash, hostCompositionHash: value.hostCompositionHash, target: value.target });
     if (canonicalJsonV4(stable(loaded)) !== canonicalJsonV4(stable(activation))) invalid('repository already has a different activation manifest');
     activation = loaded;
   }

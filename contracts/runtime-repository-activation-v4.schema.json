@@ -4,7 +4,7 @@
   "title": "Runtime Repository Activation V4",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "repositoryId", "repositoryRoot", "policyPath", "policyHash", "profilePath", "profileHash", "worktreeParent", "stateDirectory", "installationManifest", "installationHash", "target", "activatedAt", "activationHash"],
+  "required": ["schemaVersion", "repositoryId", "repositoryRoot", "policyPath", "policyHash", "profilePath", "profileHash", "worktreeParent", "stateDirectory", "installationManifest", "installationHash", "hostCompositionHash", "target", "activatedAt", "activationHash"],
   "properties": {
     "schemaVersion": { "const": 4 },
     "repositoryId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
@@ -17,6 +17,7 @@
     "stateDirectory": { "type": "string", "minLength": 1, "maxLength": 4096 },
     "installationManifest": { "type": "string", "minLength": 1, "maxLength": 4096 },
     "installationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "hostCompositionHash": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[a-f0-9]{64}$" }] },
     "target": { "enum": ["ANALYSIS_ONLY", "ISOLATED_EXECUTION", "AUTONOMOUS_PUBLICATION"] },
     "activatedAt": { "type": "string", "format": "date-time" },
     "activationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }

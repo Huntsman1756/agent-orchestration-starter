@@ -34,15 +34,17 @@ This is not a state migration: installations that already have a valid state fil
 
 ## Required host adapters
 
-This module intentionally does not ship a universal GitHub task adapter. The trusted host installation must implement:
+This module intentionally does not ship universal GitHub adapters. The trusted host installation must implement these responsibilities behind the separately certified component ports:
 
-1. `AutonomousTaskSourceV4`: list only allowlisted sources/repositories, expose immutable revisions, claim with a server-side lease, and perform idempotent close/reopen/fail mutations.
-2. A task planner before admission: convert issue/CI/scheduled metadata into a complete `RuntimeTaskRequestV4` bounded by repository policy. Free-form issue text is not authority.
-3. `AutonomousRuntimePortV4`: call the authenticated Runtime V4 daemon; never provide a direct-write fallback.
-4. `AutonomousPostMergeVerifierV4`: check the exact merge SHA on the protected branch using repository-owned deterministic commands and return content-addressed evidence.
-5. One certified service owner or a native cross-process coordinator for each state directory. The in-process busy guard prevents overlapping calls in one process; it is not a distributed lock.
+1. `credential_gateway`: issue separate purpose/operation-bounded internal leases for GitHub and model-provider access; never return a real credential to repository or model processes.
+2. `task_source` / `AutonomousTaskSourceV4`: list only allowlisted sources/repositories, expose immutable revisions, claim with a server-side lease, and perform idempotent close/reopen/fail mutations. It has no push or merge port.
+3. `issue_planner`: convert issue/CI/scheduled metadata into a complete `RuntimeTaskRequestV4` bounded by repository policy. Free-form issue text is not authority.
+4. `AutonomousRuntimePortV4`: call the authenticated Runtime V4 daemon; never provide a direct-write fallback.
+5. `github_publisher`: perform only exact-SHA broker-owned push/PR/check/merge operations through the credential gateway.
+6. `post_merge_verifier` / `AutonomousPostMergeVerifierV4`: check the exact merge SHA on the protected branch using repository-owned deterministic commands and return content-addressed evidence.
+7. One certified service owner or a native cross-process coordinator for each state directory. The in-process busy guard prevents overlapping calls in one process; it is not a distributed lock.
 
-GitHub tokens, provider credentials, and production secrets stay in those privileged adapters and are never passed to models or persisted by the dispatcher. Windows, Linux, and macOS hosts require separate certification of the exact driver, coordinator, sandbox, filesystem semantics, and policy binding.
+GitHub tokens, provider credentials, and production secrets stay behind `credential_gateway` and are never passed to models or persisted by the dispatcher. Windows, Linux, and macOS hosts require separate certification of the exact root, components, coordinator, sandbox, filesystem semantics and policy binding. See [`modular-host-components-v4.md`](modular-host-components-v4.md).
 
 ## Authorization and recovery rules
 
@@ -65,4 +67,4 @@ npm run validate
 
 The fixture proves authorization, source leasing, idempotent crash recovery before and after daemon submission, cursor durability, exact-merge completion, regression reopen, terminal failure reporting, pause/drain operation, circuit reset, and cancelable serial looping. It uses no network, provider, model, Docker, GitHub token, or project-specific behavior.
 
-For a real pilot, pin the installation commit and host-driver hash, disable deployment and production data mutation, start in `PAUSED`, verify status, switch to `RUNNING` for one low-risk synthetic issue, then use `DRAINING` before maintenance. Do not call the deployment production-ready until the exact source adapter, host, OS, model/harness/driver/policy binding, credential isolation, and post-merge verifier have current qualification evidence.
+For a real pilot, pin the installation commit and aggregate host-composition hash, disable deployment and production data mutation, start in `PAUSED`, verify status, switch to `RUNNING` for one low-risk synthetic issue, then use `DRAINING` before maintenance. Do not call the deployment production-ready until the exact source adapter, host, OS, model/harness/component/policy binding, credential isolation and post-merge verifier have current qualification evidence.

@@ -67,13 +67,12 @@ test as a pass.
 
 ## Adoption rule
 
-An external runtime can be integrated behind the trusted host-driver boundary. The
-adapter must translate a broker-owned request into a closed launch profile; it must not
+An external runtime can be integrated behind the separately certified sandbox,
+capability and practice-pack component ports. The adapter must translate a broker-owned request into a closed launch profile; it must not
 let repository content, a model, or an external runtime select mounts, credentials,
 network mode, publication authority, validation commands or routing. The existing
 daemon, work contract, deterministic validation, independent review and broker-owned
 publication remain authoritative.
 
-Qualification evidence belongs to the central machine installation. A repository
-activation references that evidence but cannot create, relax or override it.
-
+Qualification evidence belongs to the central machine installation and its aggregate
+composition certificate. A repository activation references that evidence but cannot create, relax or override it. See [`modular-host-components-v4.md`](modular-host-components-v4.md).
