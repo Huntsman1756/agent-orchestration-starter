@@ -1,6 +1,7 @@
 import type { GeneratedFile } from './index.js';
 import { contractInstructions, policyManifest } from './shared.js';
 import type { ResolvedPolicy, ResolvedRole, RoleName, WriteIsolation } from '../core/types.js';
+import { renderCodexProjectConfig } from '../runtime/codex-project-config.js';
 
 type AgentRole = RoleName | 'frontier-executor';
 
@@ -42,19 +43,7 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
 export function compileCodex(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'hard'): GeneratedFile[] {
   const orchestrator = policy.roles.orchestrator;
   return [
-    {
-      path: '.codex/config.toml',
-      content: [
-        `model = ${tomlString(orchestrator.model)}`,
-        `model_reasoning_effort = ${tomlString(orchestrator.reasoningEffort)}`,
-        'sandbox_mode = "read-only"',
-        '',
-        '[agents]',
-        'enabled = true',
-        'max_concurrent_threads_per_session = 4',
-        '',
-      ].join('\n'),
-    },
+    renderCodexProjectConfig({ frontier_model: orchestrator.model, reasoning_effort: orchestrator.reasoningEffort }),
     agentFile('orchestrator', policy),
     agentFile('executor', policy),
     agentFile('frontier-executor', policy),

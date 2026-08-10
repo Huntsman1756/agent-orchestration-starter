@@ -193,3 +193,28 @@ maxCriticalSeverityPostAcceptanceDefects: 0
   assert.equal(report.decisions[0].decision, 'promote');
   assert.equal(report.decisions[0].candidateRoute, 'economy_only');
 });
+
+test('runtime lifecycle commands dispatch exact bounded operations and fail closed without composition', async () => {
+  const calls: string[] = [];
+  const output: string[] = [];
+  const io = {
+    stdout: (line: string) => output.push(line),
+    runtimeDaemon: async () => { calls.push('daemon'); },
+    runtimeMcpStdio: async () => { calls.push('mcp'); },
+    runtimeDoctor: async (input: { repository_policy: string; profile: string }) => { calls.push(`doctor:${input.repository_policy}:${input.profile}`); return ['ready']; },
+    runtimeStatus: async (runId: string) => { calls.push(`status:${runId}`); return { run_id: runId, state: 'READY_FOR_EXECUTOR' }; },
+  };
+  const runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
+  assert.equal(await runCli(['runtime', 'daemon'], io), 0);
+  assert.equal(await runCli(['runtime', 'mcp-stdio'], io), 0);
+  assert.equal(await runCli(['runtime', 'doctor', '--repository-policy', 'policy.yaml', '--profile', 'profile.yaml'], io), 0);
+  assert.equal(await runCli(['runtime', 'status', '--run-id', runId], io), 0);
+  assert.deepEqual(calls, ['daemon', 'mcp', 'doctor:policy.yaml:profile.yaml', `status:${runId}`]);
+  assert.match(output.join('\n'), /ready/);
+  assert.match(output.join('\n'), /READY_FOR_EXECUTOR/);
+
+  const errors: string[] = [];
+  assert.equal(await runCli(['runtime', 'mcp-stdio'], { stderr: (line) => errors.push(line) }), 2);
+  assert.match(errors.join('\n'), /CAPABILITY_UNVERIFIED/);
+  assert.equal(await runCli(['runtime', 'status', '--run-id', 'main'], { stderr: (line) => errors.push(line) }), 2);
+});

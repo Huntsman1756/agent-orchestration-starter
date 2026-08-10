@@ -28,6 +28,10 @@ export interface CliIo {
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
   checkBinary?: (binary: string) => boolean;
+  runtimeDaemon?: () => Promise<void>;
+  runtimeMcpStdio?: () => Promise<void>;
+  runtimeDoctor?: (input: { repository_policy: string; profile: string }) => Promise<readonly string[]>;
+  runtimeStatus?: (runId: string) => Promise<unknown>;
 }
 
 function option(argv: string[], name: string): string | undefined {
@@ -178,6 +182,35 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
   const stderr = io.stderr ?? console.error;
   try {
     const command = argv[0];
+    if (command === 'runtime') {
+      const subcommand = argv[1];
+      if (subcommand === 'daemon' && argv.length === 2) {
+        if (io.runtimeDaemon === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime daemon composition is unavailable');
+        await io.runtimeDaemon();
+        return 0;
+      }
+      if (subcommand === 'mcp-stdio' && argv.length === 2) {
+        if (io.runtimeMcpStdio === undefined) throw new Error('CAPABILITY_UNVERIFIED: authenticated MCP composition is unavailable');
+        await io.runtimeMcpStdio();
+        return 0;
+      }
+      if (subcommand === 'doctor') {
+        const repositoryPolicy = option(argv, '--repository-policy');
+        const profile = option(argv, '--profile');
+        if (repositoryPolicy === undefined || profile === undefined || argv.length !== 6) throw new Error('INVALID_CONTRACT: runtime doctor requires exact --repository-policy and --profile options');
+        if (io.runtimeDoctor === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime doctor composition is unavailable');
+        for (const line of await io.runtimeDoctor({ repository_policy: repositoryPolicy, profile })) stdout(line);
+        return 0;
+      }
+      if (subcommand === 'status') {
+        const runId = option(argv, '--run-id');
+        if (runId === undefined || !/^run_[A-Za-z0-9_-]{16,96}$/.test(runId) || argv.length !== 4) throw new Error('INVALID_CONTRACT: runtime status requires one exact --run-id');
+        if (io.runtimeStatus === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime status composition is unavailable');
+        stdout(JSON.stringify(await io.runtimeStatus(runId)));
+        return 0;
+      }
+      throw new Error('INVALID_CONTRACT: unsupported runtime command');
+    }
     if (command === 'pilot-v3') {
       if (argv[1] !== 'evaluate') throw pilotArgumentError('pilot-v3 requires the evaluate subcommand');
       return await runPilotV3Evaluate(argv.slice(2), stdout);
@@ -212,7 +245,7 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       return missing ? 1 : 0;
     }
     if (!['init', 'render', 'check'].includes(command ?? '')) {
-      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark|pilot-v3> [options]');
+      stderr('Usage: agent-orchestration <init|render|check|doctor|benchmark|pilot-v3|runtime> [options]');
       return 2;
     }
     const targetDir = option(argv, '--target') ?? process.cwd();
