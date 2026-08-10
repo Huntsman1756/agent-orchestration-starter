@@ -1456,6 +1456,8 @@ const PUBLIC_FAILURE_MESSAGES_V4: Readonly<Record<RuntimeFailureCodeV4, string>>
   EVIDENCE_HASH_MISMATCH: 'evidence hash does not match',
   FINALIZATION_ISOLATION_FAILED: 'finalization isolation failed',
   FINALIZATION_FAILED: 'finalization failed',
+  PUBLICATION_POLICY_DENIED: 'publication policy denied the operation',
+  PUBLICATION_FAILED: 'publication failed',
   ABORTED: 'operation was aborted',
   UNKNOWN_FAILURE: 'broker request failed',
 });

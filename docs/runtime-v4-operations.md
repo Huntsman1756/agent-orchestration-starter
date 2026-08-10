@@ -2,13 +2,14 @@
 
 ## Current readiness
 
-Runtime V4 is a fail-closed implementation framework, not yet a production-ready unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, MCP surface, telemetry, and orchestration scheduling have automated coverage. No code path pushes, merges, deploys, or changes routing automatically.
+Runtime V4 is a fail-closed implementation framework, not yet a production-ready unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, telemetry, and orchestration scheduling have automated coverage. No code path deploys or changes routing automatically.
 
 Production activation remains blocked until all of these are supplied and certified for the target host:
 
 - a native authenticated broker composition for every MCP control, including repair, finalize, abort, and status;
 - an immutable project-local runtime bundle at `.agent-orchestration/runtime/dist/cli/main.js`;
 - a credential adapter that keeps saved ChatGPT/Codex authentication and provider API keys outside repository-controlled descendants;
+- a trusted GitHub credential lease plus certified empty Git hooks and global-config paths for the publication adapter;
 - a provider gateway compatible with each selected harness protocol (the current gateway only permits `/v1/chat/completions` with an API key);
 - fresh three-run capability qualification for each exact harness/provider/model/broker/policy identity;
 - Docker sandbox certification on the deployment host.
@@ -35,7 +36,7 @@ The STDIO MCP adapter performs short authenticated control calls only. The durab
 
 Executor/reviewer containers receive only the fixed non-secret `PROVIDER_GATEWAY_TOKEN=broker-gateway`. Real credentials must remain in the broker-owned gateway and must never be mounted into a worktree, capsule, validation process, hook, filter, or repository command. Do not point `CODEX_HOME`, `auth.json`, `OPENAI_API_KEY`, or another provider secret at a project-controlled process.
 
-Validation is networkless and credential-free. Review uses a fresh read-only evidence capsule without the worktree. Finalization uses Git plumbing with filters and replacement objects disabled, an empty global config, an empty hooks directory, deterministic identity/time, and compare-and-update of only `refs/heads/codex/auto/<run-id>`.
+Validation is networkless and credential-free. Review uses a fresh read-only evidence capsule without the worktree. Finalization uses Git plumbing with filters and replacement objects disabled, an empty global config, an empty hooks directory, deterministic identity/time, and compare-and-update of only `refs/heads/codex/auto/<run-id>`. Publication remains in the broker: models never receive GitHub credentials or choose a remote, base, merge method, check gate or timeout.
 
 ## Artifacts and telemetry
 
@@ -43,10 +44,10 @@ Artifacts are content-addressed and bounded. Runtime V4 telemetry is append-only
 
 Retained failed-run worktrees and artifacts require a future explicit cleanup command. Do not delete them automatically because they may be the only failure evidence.
 
-## No-push guarantee
+## Broker-owned publication
 
-Successful finalization creates a deterministic local commit and updates only the task branch. Runtime V4 does not push, open a pull request, merge, deploy, or publish. Those operations require a separately authorized and reviewed version.
+Successful finalization creates a deterministic local commit and updates only the task branch. When the hashed repository policy enables publication, `publishFinalizedRunV4` pushes that exact SHA, creates or reuses its exact GitHub pull request, waits for required checks, merges with a head-SHA guard and records verified `RUN_MERGED` evidence. The operation is idempotent after a remote merge. It never force-pushes, runs repository hooks, lets the model choose publication settings, deletes branches, deploys or changes routing. See `docs/publication-v4.md`.
 
 ## Typed failures
 
-Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.
+Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, `PUBLICATION_POLICY_DENIED`, `PUBLICATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.
