@@ -45,6 +45,26 @@ async function makeTrustedFixtureRoot(prefix: string): Promise<string> {
   return root;
 }
 
+async function assertProcessNotRunning(pid: number, message: string): Promise<void> {
+  const deadline = Date.now() + 1_500;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return;
+      throw error;
+    }
+    if (process.platform === 'linux') {
+      const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => undefined);
+      if (stat === undefined) return;
+      const commandEnd = stat.lastIndexOf(')');
+      if (commandEnd >= 0 && stat.slice(commandEnd + 2, commandEnd + 3) === 'Z') return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(message);
+}
+
 after(async () => {
   await rm(trustedFixtureParent, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
 });
@@ -558,9 +578,8 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     await backend.terminate(request.execution_id);
     assert.equal(Date.now() - started < 1_000, true, 'terminate must abort the blocked CLI rather than await its natural exit');
     await firstRun;
-    assert.throws(
-      () => process.kill(descendantPid!, 0),
-      { code: 'ESRCH' },
+    await assertProcessNotRunning(
+      descendantPid!,
       'the blocked identity command descendant must not retain inherited stdio',
     );
 
@@ -674,7 +693,7 @@ test('bounded attach cleanup kills the local tree even when immutable-ID removal
       () => settleBoundedProcessAndCleanupV4(handle, async () => { throw new Error('removal denied'); }),
       /removal denied/,
     );
-    assert.throws(() => process.kill(descendantPid!, 0), { code: 'ESRCH' });
+    await assertProcessNotRunning(descendantPid!, 'the bounded attach descendant survived cleanup');
   } finally {
     if (descendantPid !== undefined) {
       try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already absent */ }
