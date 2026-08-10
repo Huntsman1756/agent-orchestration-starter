@@ -196,18 +196,21 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
   });
   await entered;
 
-  const second = acquireRepositoryLockV4({
-    directory,
-    repositoryId: 'fixture-repo',
-    pid: 300,
-    bootNonce: 'second-nonce',
-    ownerIdentity: { boot_id: 'new-boot', process_start_id: 'second-start' },
-    reclamationCoordinator,
-    ownerStatus: async (lockOwner) => lockOwner.pid === 100 ? 'dead' : 'live',
-  });
+  const secondRejected = assert.rejects(
+    acquireRepositoryLockV4({
+      directory,
+      repositoryId: 'fixture-repo',
+      pid: 300,
+      bootNonce: 'second-nonce',
+      ownerIdentity: { boot_id: 'new-boot', process_start_id: 'second-start' },
+      reclamationCoordinator,
+      ownerStatus: async (lockOwner) => lockOwner.pid === 100 ? 'dead' : 'live',
+    }),
+    /REPOSITORY_BUSY/,
+  );
   releaseFirst();
   const winner = await first;
-  await assert.rejects(second, /REPOSITORY_BUSY/);
+  await secondRejected;
 
   const third = acquireRepositoryLockV4({ directory, repositoryId: 'fixture-repo', reclamationCoordinator, ownerStatus: async () => 'live', pid: 400, ownerIdentity: { boot_id: 'new-boot', process_start_id: 'third-start' } });
   await assert.rejects(third, /REPOSITORY_BUSY/);
