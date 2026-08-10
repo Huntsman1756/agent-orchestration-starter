@@ -15,13 +15,31 @@ other single project/provider.
   execution, reinspection, validation, independent-review evidence,
   commit-shaped finalization and publication dry-run without network or
   secrets.
-- Fast CI covers Ubuntu and Windows on Node 20/24. Manual certification is a
-  separate workflow; Docker certification requires an immutable pullable image
-  reference and fails if the integration suite cannot run.
+- Fast CI covers Ubuntu and Windows on Node 20/22/24. Manual certification is
+  a separate workflow; Docker certification requires an immutable pullable
+  image reference and fails if the integration suite cannot run.
 - Security scope is centralized in `SECURITY.md` and the repository threat
   model. Releases have pinned actions, checksums, SBOM and provenance.
 - Dependabot, dependency review, CodeQL, CODEOWNERS and contribution guidance
   are present for repository operations.
+
+## Next evidence phase
+
+The framework-building phase is intentionally paused after this consolidation.
+The next substantial change should be a bounded dispatcher model/state-machine
+suite that generates `PAUSE`, `RUN`, `ADMIT`, `CRASH`, `RECOVER`, `DRAIN` and
+`ABORT` sequences and checks safety invariants: no duplicate execution, no
+lease without an owner, no terminal-to-nonterminal transition, no admission
+while paused, no publication before acceptance, stable run identity for the
+same canonical request, and no authority expansion after crash/recovery.
+
+Only after that suite is deterministic should the runtime be dogfooded on its
+own repository with a real, exactly qualified binding. The first pilot should
+keep publication manual, use 20--30 representative tasks, and record first
+and final acceptance, independent-review rejection, repairs, escalations,
+duration, cost, false acceptance and post-acceptance defects. These results
+are evidence for future policy decisions, not permission for the model to
+promote routes or publish autonomously.
 
 ## Intentionally deferred
 
