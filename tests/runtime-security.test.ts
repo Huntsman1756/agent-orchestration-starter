@@ -18,7 +18,11 @@ test('telemetry rejects nested credentials without influencing the existing fail
 });
 
 test('runtime-v4 public barrel exposes the stable orchestration and evidence surface', async () => {
-  for (const name of ['createRuntimeOrchestratorV4', 'appendRuntimeEventV4', 'createUnavailableV3TelemetryPortV4', 'verifyReviewAttestation', 'finalizeRun']) assert.equal(typeof runtime[name as keyof typeof runtime], 'function', name);
+  for (const name of [
+    'createRuntimeOrchestratorV4', 'appendRuntimeEventV4', 'createUnavailableV3TelemetryPortV4', 'verifyReviewAttestation', 'finalizeRun',
+    'loadRuntimeHostComponentSourceManifestV4', 'runtimeHostComponentCertificationHashV4', 'runtimeHostCompositionCertificationHashV4',
+    'loadRuntimeHostComponentsV4',
+  ]) assert.equal(typeof runtime[name as keyof typeof runtime], 'function', name);
   const manifest = JSON.parse(await import('node:fs/promises').then(({ readFile }) => readFile('package.json', 'utf8')));
   assert.deepEqual(manifest.exports['./runtime-v4'], { types: './dist/runtime/index.d.ts', import: './dist/runtime/index.js' });
 });

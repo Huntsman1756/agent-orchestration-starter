@@ -4,7 +4,7 @@ This runbook defines how a frontier planner delegates frontend, backend and cros
 
 ## Status and trust boundary
 
-Runtime V4 enforces the selected worker identity, required capability IDs, story budgets, validation IDs, repair evidence and escalation. It does not currently infer a framework or select practice packs by itself. That resolution belongs to the trusted host driver and must complete before the plan is accepted.
+Runtime V4 enforces the selected worker identity, required capability IDs, story budgets, validation IDs, repair evidence and escalation. It does not infer a framework or ship practice packs by itself. That resolution belongs to the separately certified `practice_pack_resolver` host component and must complete before the plan is accepted.
 
 A coding model cannot select, download, modify or self-certify a practice pack. The trusted host owns pack discovery, hashing, allowlisting and qualification. Repository content may constrain work but cannot grant new filesystem, network, credential, publication or deployment authority.
 
@@ -22,7 +22,7 @@ Instruction precedence is deterministic: runtime security and authority invarian
 
 ## Deterministic resolution
 
-For each run, the trusted host driver should:
+For each run, the trusted practice-pack resolver and thin composition root should:
 
 1. Inspect only allowlisted stack evidence at the exact base SHA: manifests, lockfiles, compiler configuration, framework configuration and repository policy.
 2. Load only repository-approved instruction sources from the frozen base tree.
@@ -157,4 +157,4 @@ Before unattended use, verify that the driver:
 - routes unsupported or high-risk work to a qualified frontier path;
 - keeps credentials, GitHub publication and deployment authority outside every model context.
 
-Until the trusted host driver implements this resolver, practice-pack selection is an operational integration requirement, not an automatic Runtime V4 feature.
+Runtime V4 now requires a separately certified `practice_pack_resolver` port and binds it into the host-component dependency chain. The repository still does not ship a universal resolver or practice-pack catalog: selection becomes automatic only when the deployed host provides that exact qualified component. Missing or stale resolution remains a fail-closed operational integration gap, never a reason for the coding model to choose its own skills.

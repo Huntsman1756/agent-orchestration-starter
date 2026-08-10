@@ -4,23 +4,23 @@
 
 Runtime V4 is a fail-closed implementation framework with a portable host bootstrap, not a universal pre-certified unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, lifecycle persistence, telemetry, orchestration scheduling, immutable installation and repository activation have automated coverage. No code path deploys or changes routing automatically.
 
-The iterative worker primitive now binds each plan to an exact `WorkerCapabilityV4`, including the model deployment, harness/parser, tool and instruction/skill bundles, qualification evidence and story-size limits. It verifies repair packets against persisted findings and escalates repeated normalized failures before exhausting retries. These controls remain host-driver obligations at composition time: the trusted driver must derive the snapshot and enforce context/step limits; a model profile cannot certify itself.
+The iterative worker primitive now binds each plan to an exact `WorkerCapabilityV4`, including the model deployment, harness/parser, tool and instruction/skill bundles, qualification evidence and story-size limits. It verifies repair packets against persisted findings and escalates repeated normalized failures before exhausting retries. These controls remain host obligations at composition time: the qualified practice-pack resolver and capability issuer must derive the snapshot, while the thin root enforces context/step limits; a model profile cannot certify itself.
 
 Production activation remains blocked until all of these are supplied and certified for the target host:
 
-- a trusted host driver which uses the supplied native composition factory and provides exact pipeline, repair, finalize and abort operations plus certified platform verifiers/coordinators;
+- a thin trusted root plus the eight separately certified host components defined in [`modular-host-components-v4.md`](modular-host-components-v4.md), using the supplied native composition factory and certified platform verifiers/coordinators;
 - installation and verification of the supplied immutable central runtime bundle;
-- a credential adapter that keeps saved ChatGPT/Codex authentication and provider API keys outside repository-controlled descendants;
-- a trusted GitHub credential lease plus certified empty Git hooks and global-config paths for the publication adapter;
+- a credential gateway that issues separate bounded provider and GitHub internal-gateway leases while keeping saved ChatGPT/Codex authentication, API keys and GitHub credentials outside repository-controlled descendants;
+- a trusted GitHub publication lease plus certified empty Git hooks and global-config paths for the publication adapter;
 - a provider gateway compatible with each selected harness protocol (the current gateway only permits `/v1/chat/completions` with an API key);
 - fresh three-run capability qualification for each exact harness/provider/model/broker/policy identity;
 - Docker sandbox certification on the deployment host.
 
 Use `assessRuntimeActivationV4` to produce a strict machine-readable assessment for `ANALYSIS_ONLY`, `ISOLATED_EXECUTION`, or `AUTONOMOUS_PUBLICATION`. It reports route collapse and missing evidence without weakening private-source policy. See [`activation-readiness-v4.md`](activation-readiness-v4.md).
 
-Install once per machine and activate each repository by reference. Installation, activation, driver migration and future provider changes are documented in [`host-installation-v4.md`](host-installation-v4.md). Activation records intended authority but does not manufacture host certification.
+Install once per machine and activate each repository by reference. Installation, activation, component migration and future provider changes are documented in [`host-installation-v4.md`](host-installation-v4.md). Activation binds the exact aggregate host-composition certificate and intended authority but does not manufacture qualification evidence.
 
-Third-party runtimes are qualified as exact host-driver candidates, never trusted by
+Third-party runtimes are qualified as exact host-component candidates, never trusted by
 product name or by the presence of a container. Use
 [`external-runtime-qualification-v4.md`](external-runtime-qualification-v4.md) for the
 portable evidence procedure. The pinned OpenHands comparison in
@@ -44,7 +44,7 @@ agent-orchestration runtime doctor --repository-policy policies/repository-polic
 agent-orchestration runtime status --run-id run_...
 ```
 
-The STDIO MCP adapter performs short authenticated control calls only. `createRuntimeHostCompositionV4` binds it to the durable daemon and exact host operations. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.
+The STDIO MCP adapter performs short authenticated control calls only. `createRuntimeHostCompositionV4` binds it to the durable daemon and exact host operations. Before the root can do that, the loader independently verifies task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification ports. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.
 
 The IPC wire contract now carries all five MCP operations and binds replies back to authoritative daemon status. Mutating retries reuse deterministic command IDs. See [`control-plane-v4.md`](control-plane-v4.md). This protocol completion does not by itself certify a production host.
 

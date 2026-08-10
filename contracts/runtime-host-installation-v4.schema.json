@@ -4,7 +4,7 @@
   "title": "Runtime Host Installation V4",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "installationId", "packageVersion", "root", "entrypoint", "hostDriver", "installedAt", "files", "installationHash"],
+  "required": ["schemaVersion", "installationId", "packageVersion", "root", "entrypoint", "hostDriver", "hostComposition", "installedAt", "files", "installationHash"],
   "properties": {
     "schemaVersion": { "const": 4 },
     "installationId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
@@ -14,11 +14,72 @@
     "hostDriver": {
       "oneOf": [
         { "type": "null" },
-        { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } }
+        { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "$ref": "#/$defs/hash" } } }
+      ]
+    },
+    "hostComposition": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/composition" }
       ]
     },
     "installedAt": { "type": "string", "format": "date-time" },
-    "files": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "type": "object", "additionalProperties": false, "required": ["path", "sha256", "size"], "properties": { "path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "size": { "type": "integer", "minimum": 0, "maximum": 268435456 } } } },
-    "installationHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+    "files": { "type": "array", "minItems": 1, "maxItems": 4096, "items": { "$ref": "#/$defs/file" } },
+    "installationHash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "hostDriver": { "type": "null" } }, "required": ["hostDriver"] },
+      "then": { "properties": { "hostComposition": { "type": "null" } } },
+      "else": { "properties": { "hostComposition": { "$ref": "#/$defs/composition" } } }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "componentId": { "enum": ["credential_gateway", "task_source", "issue_planner", "practice_pack_resolver", "sandbox_coordinator", "capability_issuer", "github_publisher", "post_merge_verifier"] },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "certificationHash"],
+      "properties": {
+        "id": { "$ref": "#/$defs/componentId" },
+        "certificationHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "implementationRevision", "path", "sha256", "interfaceHash", "qualificationEvidenceHash", "dependencies", "certificationHash"],
+      "properties": {
+        "id": { "$ref": "#/$defs/componentId" },
+        "implementationRevision": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64}|sha256:[a-f0-9]{64})$" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "interfaceHash": { "$ref": "#/$defs/hash" },
+        "qualificationEvidenceHash": { "$ref": "#/$defs/hash" },
+        "dependencies": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/dependency" } },
+        "certificationHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "composition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["integrationEvidenceHash", "components", "compositionCertificationHash"],
+      "properties": {
+        "integrationEvidenceHash": { "$ref": "#/$defs/hash" },
+        "components": { "type": "array", "minItems": 8, "maxItems": 8, "items": { "$ref": "#/$defs/component" } },
+        "compositionCertificationHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "size": { "type": "integer", "minimum": 0, "maximum": 268435456 }
+      }
+    }
   }
 }

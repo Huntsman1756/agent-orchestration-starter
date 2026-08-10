@@ -199,8 +199,8 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
     if (command === 'runtime') {
       const subcommand = argv[1];
       if (subcommand === 'install') {
-        const values = exactOptions(argv.slice(2), ['--source-root','--host-root','--host-driver','--installed-at'], ['--source-root','--host-root']);
-        const manifest = await installRuntimeHostV4({ sourceRoot: values.get('--source-root')!, hostRoot: values.get('--host-root')!, hostDriver: values.get('--host-driver'), installedAt: values.get('--installed-at') ?? new Date().toISOString() });
+        const values = exactOptions(argv.slice(2), ['--source-root','--host-root','--host-driver','--host-components','--installed-at'], ['--source-root','--host-root']);
+        const manifest = await installRuntimeHostV4({ sourceRoot: values.get('--source-root')!, hostRoot: values.get('--host-root')!, hostDriver: values.get('--host-driver'), hostComponentsManifest: values.get('--host-components'), installedAt: values.get('--installed-at') ?? new Date().toISOString() });
         stdout(JSON.stringify(manifest));
         return 0;
       }

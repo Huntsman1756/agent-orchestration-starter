@@ -7,11 +7,11 @@ Runtime V4 is installed once per trusted machine and activated by reference in a
 | Location | Owner | Contents |
 | --- | --- | --- |
 | central host root | machine operator | immutable runtime installations, repository registry and broker state |
-| trusted host-driver path | machine operator | native coordinator/verifier and provider/harness composition |
+| trusted host release path | machine operator | thin root, strict component manifest and eight independently certified host modules |
 | repository | repository owner | policy, replaceable model profile and `.agent-orchestration/activation-v4.json` |
 | `.codex/config.toml` | repository owner | read-only frontier context and one required MCP binding to the central runtime |
 
-The stable policy names roles, capabilities, source sensitivity and permissions. Model/provider identifiers and their dated guidance stay in the replaceable profile. The host driver is configured once per machine and must not contain repository routing rules.
+The stable policy names roles, capabilities, source sensitivity and permissions. Model/provider identifiers and their dated guidance stay in the replaceable profile. Host code is installed once per machine and must not contain repository routing rules. The privileged boundary is modular even when one release artifact distributes it; see [`modular-host-components-v4.md`](modular-host-components-v4.md).
 
 ## Build and install once
 
@@ -21,16 +21,19 @@ The stable policy names roles, capabilities, source sensitivity and permissions.
 node dist/host/agent-orchestration.mjs runtime install `
   --source-root G:\_Proyectos\agent-orchestration-starter `
   --host-root C:\ProgramData\agent-orchestration `
-  --host-driver C:\ProgramData\agent-orchestration-drivers\production-v4.mjs
+  --host-driver C:\ProgramData\agent-orchestration-drivers\production-v4\root.mjs `
+  --host-components C:\ProgramData\agent-orchestration-drivers\production-v4\host-components-v4.json
 ```
 
-`--host-driver` is optional for analysis-only installation. Isolated execution remains fail-closed without it. The resulting manifest is at `HOST_ROOT/installations/<version>-<content-hash>/installation-v4.json`. Repeating the exact installation is idempotent. Changing any installed byte or the driver makes verification fail:
+`--host-driver` and `--host-components` must be supplied together. Omitting both is allowed for analysis-only installation; supplying only one is rejected. Isolated execution remains fail-closed without the complete pair. The resulting manifest is at `HOST_ROOT/installations/<version>-<content-and-certification-hash>/installation-v4.json`. Repeating the exact installation is idempotent. Changing any installed byte, component certification, aggregate evidence or root makes a new installation identity; modifying an existing installation makes verification fail:
 
 ```powershell
 node <entrypoint> runtime verify-installation --manifest <installation-v4.json>
 ```
 
-The host driver is trusted broker code, not a model plugin. Supply it as a self-contained ESM file. The installer copies it into the immutable installation, and the original source path is no longer used. It exports exactly `createRuntimeHostDriverV4(context)` and returns four bounded operations: `daemon`, `mcpStdio`, `doctor`, and `status`. Its installed path and SHA-256 are pinned and verified before dynamic import. Updating a driver or provider adapter therefore creates a new installation identity and requires new host evidence; it never silently changes existing activations.
+The root and components are trusted broker code, not model plugins. Every component is a self-contained ESM file exporting only `createRuntimeHostComponentV4(context)` and one fixed narrow port. The root exports only `createRuntimeHostDriverV4(context)` and returns `daemon`, `mcpStdio`, `doctor`, and `status`. The runtime verifies all component bytes and dependency certifications before it imports the root. The root receives the verified component set and should contain composition only. Original source paths are never used after installation.
+
+The activation records `hostCompositionHash` in addition to the installation hash. This makes the exact aggregate certificate visible and prevents a repository activation from drifting to another root/component combination even when paths are reused.
 
 ## Activate each repository
 
@@ -53,13 +56,12 @@ Activation is registration, not certification. `ANALYSIS_ONLY`, `ISOLATED_EXECUT
 
 ## Provider and model changes
 
-- Change a model or provider by adding a new profile revision and guidance pack.
-- Requalify the exact harness/provider/model/driver/policy identity with three clean runs.
-- Keep repository policy unchanged unless authority or project risk rules changed.
-- Replace the central host driver only when a protocol, credential mechanism, coordinator or host adapter changes.
-- Create a new installation and reactivate deliberately; do not mutate a pinned installation.
+- Change a model or provider by adding a new profile revision and guidance pack; do not change stable repository policy unless authority or project risk rules changed.
+- Reactivate the repository and requalify the exact harness/provider/model/component/policy binding with three clean runs. A profile-only change does not require a new central installation when the existing component protocol and code remain valid.
+- If adapter, gateway, sandbox, root or other host bytes/configuration change, replace and recertify only the affected components plus declared dependents, renew complete composition evidence and create a new installation.
+- Never mutate a pinned installation or silently carry qualification evidence across a changed binding.
 
-Future adapters should implement the same driver boundary. They may compose `createRuntimeHostCompositionV4`, but must keep credentials in a broker-owned gateway, use certified platform verifiers/coordinators and persist accepted, failed and aborted lifecycle transitions before acknowledging controls.
+Future adapters should implement the same component ports. The thin root may compose `createRuntimeHostCompositionV4`, but credentials stay in the broker-owned gateway, platform verifiers/coordinators remain certified and accepted, failed and aborted lifecycle transitions are persisted before controls are acknowledged.
 
 An adapter for OpenHands, another agent framework or a different sandbox backend follows
 the same rule. Before installation, pin and qualify its source, image, launcher, host,
@@ -69,6 +71,6 @@ vendor's default sandbox status does not transfer into the activation manifest.
 
 ## Known deployment work
 
-The repository now supplies native composition factories, complete lifecycle persistence, an immutable installer, portable activation and a hash-pinned driver loader. It intentionally does not ship a universal production host driver: saved subscriptions, API credentials, Docker, native cross-process coordination and provider protocols differ by host. Each supported host/provider combination still needs certification and evidence; each target repository does not need custom orchestrator code.
+The repository now supplies native composition factories, complete lifecycle persistence, an immutable installer, portable activation and a component-aware loader. It intentionally does not ship universal production host components: saved subscriptions, API credentials, Docker, native cross-process coordination and provider protocols differ by host. Each supported host/provider combination still needs certification and evidence; each target repository does not need custom orchestrator code.
 
-Contract changes are additive under schema version 4. Breaking changes require a new schema version, migration notes, a new installation identity and explicit repository reactivation.
+The modular format replaces the unpublished pre-release single-driver host format while the package remains pre-1.0. Existing installation and activation manifests must be rebuilt and repositories explicitly reactivated; they must not be edited in place. After a stable host-format release, breaking changes require a new schema version and migration notes.

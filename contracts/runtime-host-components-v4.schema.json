@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.local/contracts/runtime-host-components-v4.schema.json",
+  "title": "Runtime Host Component Source Manifest V4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "driverSha256", "integrationEvidenceHash", "components", "compositionCertificationHash"],
+  "properties": {
+    "schemaVersion": { "const": 4 },
+    "driverSha256": { "$ref": "#/$defs/hash" },
+    "integrationEvidenceHash": { "$ref": "#/$defs/hash" },
+    "components": { "type": "array", "minItems": 8, "maxItems": 8, "items": { "$ref": "#/$defs/component" } },
+    "compositionCertificationHash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "componentId": { "enum": ["credential_gateway", "task_source", "issue_planner", "practice_pack_resolver", "sandbox_coordinator", "capability_issuer", "github_publisher", "post_merge_verifier"] },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "certificationHash"],
+      "properties": {
+        "id": { "$ref": "#/$defs/componentId" },
+        "certificationHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "implementationRevision", "modulePath", "moduleSha256", "interfaceHash", "qualificationEvidenceHash", "dependencies", "certificationHash"],
+      "properties": {
+        "id": { "$ref": "#/$defs/componentId" },
+        "implementationRevision": { "type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64}|sha256:[a-f0-9]{64})$" },
+        "modulePath": { "type": "string", "minLength": 5, "maxLength": 4096, "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\\.mjs$" },
+        "moduleSha256": { "$ref": "#/$defs/hash" },
+        "interfaceHash": { "$ref": "#/$defs/hash" },
+        "qualificationEvidenceHash": { "$ref": "#/$defs/hash" },
+        "dependencies": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/dependency" } },
+        "certificationHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}
