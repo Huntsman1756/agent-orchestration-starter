@@ -44,6 +44,14 @@ node dist/cli/main.js doctor --harnesses codex,opencode,hermes --policy orchestr
 
 La CLI no escribe credenciales ni configuración global. La autenticación se hace en cada herramienta. El perfil de suscripción incluido es una fotografía fechada: cuando cambien los modelos o identificadores, se sustituye el perfil, no la política ni los contratos.
 
+### Linux native broker helper
+
+The V4 Unix broker is supported in production on the currently certified `linux-x64` target only. `npm run build` invokes `npm run build:native`, which first removes the complete prior `dist/native` tree, compiles `native/linux/renameat2-helper.c` with the fixed compiler `/usr/bin/cc`, and verifies that the output contains exactly the current target helper plus its manifest. Normal Windows builds clean stale native output and skip compilation; `npm pack` fails closed on Windows and every other unsupported platform/architecture instead of reusing an old helper.
+
+Build the release artifact on the target Linux architecture; never compile the helper at broker runtime. The installed JavaScript module, every helper-parent component, the helper, and its manifest must be root-owned or owned by the same trusted installation UID and must not be group/world writable; the helper must remain executable. The build writes modes `0555` and `0444`, while package tools may safely normalize the owner-write bits to `0755` and `0644`. A missing, symlinked, relocated, modified, incorrectly owned, untrusted-writable, or non-executable artifact makes backend construction fail before broker state or socket effects.
+
+The helper accepts no arguments or environment configuration. Runtime executes the already-open, identity- and digest-verified helper through an inherited descriptor; the only other inherited capabilities are the proven state-directory and selected fixed quarantine-slot directory descriptors. It requires the socket to have exactly one link immediately before the no-replace move and rechecks the moved inode, restoring the original name without overwrite if link identity becomes ambiguous. Deployment must provide Linux `renameat2(..., RENAME_NOREPLACE)` support and `/proc/self/fd`. There is no pathname fallback. See `docs/runtime-broker-quarantine-remediation.md` for the offline-only retained-socket procedure.
+
 ## Cambiar de proveedor
 
 Copia `profiles/open-compatible.yaml`, cambia los tres modelos y declara las capacidades reales. `provider` es la identidad lógica. Si una herramienta usa otro identificador, añade un alias sin alterar el contrato:
@@ -55,6 +63,8 @@ harnessProviders:
 ```
 
 El ejecutor económico debe ser explícito; nunca hereda accidentalmente el modelo del orquestador. El compilador crea además un `frontier-executor` writable a partir de la asignación *frontier*. El revisor no puede reutilizar la combinación proveedor/modelo del ejecutor económico. Hermes requiere que orquestador y revisor sean el mismo padre *frontier*, porque su delegación no representa un tercer agente independiente.
+
+`profiles/nan-opencode.example.yaml` muestra la separación prevista para NAN: Sol permanece como orquestador, ejecutor *frontier* y revisor mediante Codex; `qwen3.6` y `gemma4` quedan como ejecutores OpenCode reemplazables. El ejemplo no contiene endpoint ni credenciales y no afirma que la API viva haya sido certificada. El runtime usa `maxEconomyParallelRequests`, por lo que cambiar otra vez de proveedor no exige modificar contratos estables.
 
 ## Actualizaciones seguras
 

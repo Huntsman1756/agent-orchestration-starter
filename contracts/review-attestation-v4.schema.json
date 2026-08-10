@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/review-attestation-v4.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["review_id", "reviewer_binding_ref", "reviewer_session_id", "run_id", "contract_hash", "base_sha", "reviewed_tree_hash", "reviewed_diff_hash", "validation_manifest_hash", "decision", "findings", "requested_context_hashes", "unresolved_finding_ids", "created_at", "attestation_hash"],
+  "properties": {
+    "review_id": { "$ref": "#/$defs/id" }, "reviewer_binding_ref": { "$ref": "#/$defs/id" }, "reviewer_session_id": { "$ref": "#/$defs/id" }, "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" }, "contract_hash": { "$ref": "#/$defs/hash" }, "base_sha": { "$ref": "#/$defs/sha" }, "reviewed_tree_hash": { "$ref": "#/$defs/hash" }, "reviewed_diff_hash": { "$ref": "#/$defs/hash" }, "validation_manifest_hash": { "$ref": "#/$defs/hash" }, "decision": { "enum": ["REQUEST_CONTEXT", "ACCEPT", "REJECT"] }, "findings": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/finding" } }, "requested_context_hashes": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } }, "unresolved_finding_ids": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } }, "created_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.+Z$" }, "attestation_hash": { "$ref": "#/$defs/hash" }
+  },
+  "allOf": [
+    { "if": { "properties": { "decision": { "const": "ACCEPT" } }, "required": ["decision"] }, "then": { "properties": { "requested_context_hashes": { "type": "array", "maxItems": 0 }, "unresolved_finding_ids": { "type": "array", "maxItems": 0 } } } }
+  ],
+  "$defs": { "id": { "type": "string", "minLength": 1, "maxLength": 128 }, "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }, "sha": { "type": "string", "pattern": "^[a-f0-9]{40,64}$" }, "finding": { "type": "object", "additionalProperties": false, "required": ["id", "severity", "message"], "properties": { "id": { "$ref": "#/$defs/id" }, "severity": { "$ref": "#/$defs/id" }, "message": { "type": "string", "minLength": 1, "maxLength": 2000 } } } }
+}

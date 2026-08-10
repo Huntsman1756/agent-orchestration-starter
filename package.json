@@ -5,10 +5,18 @@
   "license": "MIT",
   "type": "module",
   "files": [
-    "dist",
-    "contracts",
-    "README.md",
-    "LICENSE"
+    "contracts/**",
+    "dist/**",
+    "docs/runtime-broker-quarantine-remediation.md",
+    "examples/**",
+    "LICENSE",
+    "native/**",
+    "orchestration.yaml",
+    "policies/**",
+    "profiles/**",
+    "routing-gate.yaml",
+    "scripts/build-linux-native-helper.mjs",
+    "README.md"
   ],
   "bin": {
     "agent-orchestration": "dist/cli/main.js"
@@ -24,7 +32,10 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:native",
+    "build:native": "node scripts/build-linux-native-helper.mjs",
+    "prepack": "node scripts/build-linux-native-helper.mjs --clean-only && tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package",
+    "pretest": "npm run build:native",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "validate": "npm run test && npm run typecheck && npm run build",

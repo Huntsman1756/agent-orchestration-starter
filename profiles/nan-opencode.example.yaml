@@ -1,0 +1,46 @@
+schemaVersion: 4
+id: nan-opencode-example
+bindings:
+  orchestrator:
+    harness: codex
+    provider: openai
+    model: Sol
+    capability: planning
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+  executor:
+    harness: opencode
+    provider: nan
+    model: qwen3.6
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+  escalationExecutor:
+    harness: opencode
+    provider: nan
+    model: gemma4
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+  frontierExecutor:
+    harness: codex
+    provider: openai
+    model: Sol
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: contract-write
+  reviewer:
+    harness: codex
+    provider: openai
+    model: Sol
+    capability: review
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+runtime:
+  maxEconomyParallelRequests: 2
+  maxConcurrentRunsPerRepository: 1

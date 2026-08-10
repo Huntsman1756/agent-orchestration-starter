@@ -1,0 +1,26 @@
+schemaVersion: 4
+repositoryId: example-repository
+base:
+  allowedBranches: [main]
+worktrees:
+  parentRef: broker-managed-worktrees
+routing:
+  frontierOnly:
+    riskClasses: [security]
+    taskClasses: [sensitive-change]
+    paths: [infra]
+    sourceSensitivity: [PRIVATE]
+validation:
+  test:
+    argv: [npm, test]
+    workingDirectory: .
+    timeoutSeconds: 300
+    sandboxProfile: validation-untrusted
+sourcePolicy:
+  dataScope: SOURCE_CODE_ONLY
+  sourceSensitivity: PUBLIC
+sandbox:
+  requiredBackend: container
+  requiredProfiles: [executor-networked, frontier-networked, validation-untrusted, review-capsule]
+instructions:
+  approvedSources: [AGENTS.md]
