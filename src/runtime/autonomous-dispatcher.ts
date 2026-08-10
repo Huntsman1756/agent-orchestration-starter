@@ -175,7 +175,7 @@ function validateCandidate(candidate: AutonomousTaskCandidateV4, policy: Autonom
 }
 
 function initialState(): DispatchStateV4 {
-  return Object.freeze({ schema_version: 4, mode: 'RUNNING', cursor: null, circuit_open: false, consecutive_failures: 0, tasks: Object.freeze([]) });
+  return Object.freeze({ schema_version: 4, mode: 'PAUSED', cursor: null, circuit_open: false, consecutive_failures: 0, tasks: Object.freeze([]) });
 }
 
 function envelope(state: DispatchStateV4): StateEnvelopeV4 {
@@ -325,6 +325,7 @@ export function createAutonomousDispatcherV4(deps: AutonomousDispatcherDependenc
       try {
         const current = await readState(deps.state_directory);
         if (!current.state.circuit_open && current.state.consecutive_failures === 0) return publicStatus(current);
+        if (current.state.mode !== 'PAUSED') throw new Error('INVALID_STATE: circuit reset requires PAUSED mode');
         return publicStatus(await writeState(deps.state_directory, Object.freeze({
           ...current.state,
           circuit_open: false,

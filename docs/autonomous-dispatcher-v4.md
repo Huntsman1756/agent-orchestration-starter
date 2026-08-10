@@ -13,7 +13,7 @@ privileged source adapter -> autonomous dispatcher -> Runtime V4 daemon
 
 The public API is exported from `agent-orchestration-starter/runtime-v4`:
 
-- `createAutonomousDispatcherV4` creates the durable supervisor.
+- `createAutonomousDispatcherV4` creates the durable supervisor in `PAUSED` mode when no prior state exists.
 - `runCycle` performs one bounded, non-overlapping reconciliation pass.
 - `runAutonomousDispatcherLoopV4` repeats serial passes until an `AbortSignal` is set.
 - `setMode('RUNNING' | 'DRAINING' | 'PAUSED')` changes durable admission behavior.
@@ -25,6 +25,10 @@ The public API is exported from `agent-orchestration-starter/runtime-v4`:
 The dispatcher stores one canonical, hash-bound, atomically replaced and fsynced state file in an absolute broker-owned directory. It stores source identity, immutable revision, request hash, daemon request/run IDs, lease metadata, terminal status, and evidence hashes. The task objective and full request are reloaded from the privileged source adapter after a crash and must match the durable identity and request hash exactly.
 
 Source claims and daemon `request_id` idempotency form separate duplicate-execution barriers. A crash after claiming but before submission reloads the exact candidate; a crash after submission renews the lease and resumes the existing run. Cursor advancement happens only after the complete listed page has been handled.
+
+A fresh state is fail-closed: it starts in `PAUSED`, and even an immediately started service loop performs no source or runtime calls. Only an explicit, durably persisted `setMode('RUNNING')` grants admission. A restart preserves an already persisted operator-selected mode so a crash does not silently abandon active leases; pause the service explicitly before planned maintenance.
+
+This is not a state migration: installations that already have a valid state file retain its recorded mode. Before upgrading an existing `RUNNING` installation that must remain inactive, persist `PAUSED` with the old or new trusted control plane before starting the service loop.
 
 `RUNNING` processes active work and admits new work. `DRAINING` continues lease renewal, recovery, finalization, and post-merge verification but admits nothing new. `PAUSED` performs no source or runtime calls. An open circuit prevents new admission but deliberately does not abandon active leases.
 
@@ -47,7 +51,7 @@ GitHub tokens, provider credentials, and production secrets stay in those privil
 - Completion requires `FINALIZED`, a verified 40-character merge commit SHA, and a post-merge `PASS` evidence hash.
 - A post-merge regression reopens the source task and counts toward the circuit breaker.
 - Runtime `FAILED` or `ABORTED` states are reported once with typed evidence and remain terminal.
-- Resetting the circuit clears the global consecutive-failure counter; it does not erase task records.
+- Resetting the circuit is accepted only in `PAUSED` mode. It clears the global consecutive-failure counter but neither erases task records nor resumes admission; returning to `RUNNING` is a separate explicit action.
 
 ## Generic shakedown
 
