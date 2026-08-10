@@ -6,7 +6,7 @@
   "properties": {
     "schemaVersion": { "const": 4 }, "id": { "$ref": "#/$defs/id" },
     "bindings": { "type": "object", "additionalProperties": false, "required": ["orchestrator", "executor", "escalationExecutor", "frontierExecutor", "reviewer"], "properties": { "orchestrator": { "$ref": "#/$defs/binding" }, "executor": { "$ref": "#/$defs/binding" }, "escalationExecutor": { "$ref": "#/$defs/binding" }, "frontierExecutor": { "$ref": "#/$defs/binding" }, "reviewer": { "$ref": "#/$defs/binding" } } },
-    "runtime": { "type": "object", "additionalProperties": false, "required": ["maxArliParallelRequests", "maxConcurrentRunsPerRepository"], "properties": { "maxArliParallelRequests": { "type": "integer", "minimum": 1, "maximum": 64 }, "maxConcurrentRunsPerRepository": { "type": "integer", "minimum": 1, "maximum": 64 } } }
+    "runtime": { "type": "object", "additionalProperties": false, "required": ["maxEconomyParallelRequests", "maxConcurrentRunsPerRepository"], "properties": { "maxEconomyParallelRequests": { "type": "integer", "minimum": 1, "maximum": 64 }, "maxConcurrentRunsPerRepository": { "type": "integer", "minimum": 1, "maximum": 64 } } }
   },
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 128 },

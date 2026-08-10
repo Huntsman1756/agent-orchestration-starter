@@ -198,7 +198,7 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
   const inspected: InspectedChangeV4[] = [];
   for (const change of input.changes) {
     if (!isNormalizedRepositoryRelativePathV4(change.path)) outOfScope(`invalid path: ${change.path}`);
-    const folded = input.platform === 'win32' ? change.path.toLocaleLowerCase() : change.path;
+    const folded = change.path.toLowerCase();
     if (seen.has(folded)) outOfScope(`case-fold collision: ${change.path}`);
     seen.add(folded);
 

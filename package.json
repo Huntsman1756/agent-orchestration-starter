@@ -2,12 +2,14 @@
   "name": "agent-orchestration-starter",
   "version": "0.1.0",
   "description": "Provider-agnostic agent role compiler for Codex, OpenCode, and Hermes",
+  "license": "MIT",
   "type": "module",
   "files": [
     "contracts/**",
     "dist/**",
     "docs/runtime-broker-quarantine-remediation.md",
     "examples/**",
+    "LICENSE",
     "native/**",
     "orchestration.yaml",
     "policies/**",
@@ -23,6 +25,10 @@
     "./fingerprint": {
       "types": "./dist/routing/fingerprint.d.ts",
       "import": "./dist/routing/fingerprint.js"
+    },
+    "./pilot-v3": {
+      "types": "./dist/pilot/index.d.ts",
+      "import": "./dist/pilot/index.js"
     }
   },
   "scripts": {
@@ -32,7 +38,8 @@
     "pretest": "npm run build:native",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
-    "validate": "npm run test && npm run typecheck && npm run build"
+    "validate": "npm run test && npm run typecheck && npm run build",
+    "prepublishOnly": "npm run validate"
   },
   "engines": {
     "node": ">=20"

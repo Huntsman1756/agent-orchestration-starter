@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/pilot-evaluation-report-v3.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "evaluation_id", "evaluation_version", "pilot_id", "manifest_hash", "evaluated_at",
+    "supersedes_evaluation_id", "supersedes_evaluation_version", "expected_superseded_report_hash",
+    "observation_set_hash", "decision_input_hash", "quality_evidence_hash", "quality_evidence_count", "gate_policy_hash", "late_quality_evidence_count", "stage", "decision", "promoted_strata",
+    "not_validated_strata", "reasons", "metrics", "efficiency_branches", "strata", "exclusions",
+    "operational_totals", "denominators", "completeness", "interval_metadata", "warnings"
+  ],
+  "properties": {
+    "schema_version": { "const": 3 },
+    "evaluation_id": { "$ref": "#/$defs/id" },
+    "evaluation_version": { "$ref": "#/$defs/positiveInteger" },
+    "pilot_id": { "$ref": "#/$defs/id" },
+    "manifest_hash": { "$ref": "#/$defs/hash" },
+    "evaluated_at": { "$ref": "#/$defs/timestamp" },
+    "supersedes_evaluation_id": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "supersedes_evaluation_version": { "anyOf": [{ "$ref": "#/$defs/positiveInteger" }, { "type": "null" }] },
+    "expected_superseded_report_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "observation_set_hash": { "$ref": "#/$defs/hash" },
+    "decision_input_hash": { "$ref": "#/$defs/hash" },
+    "quality_evidence_hash": { "$ref": "#/$defs/hash" },
+    "quality_evidence_count": { "$ref": "#/$defs/nonnegativeInteger" },
+    "gate_policy_hash": { "$ref": "#/$defs/hash" },
+    "late_quality_evidence_count": { "$ref": "#/$defs/nonnegativeInteger" },
+    "stage": { "enum": [1, 2, 3] },
+    "decision": { "enum": ["CONTINUE", "PROMOTE_BOUNDED", "REJECT", "INCONCLUSIVE", "INSUFFICIENT_EVIDENCE"] },
+    "promoted_strata": { "$ref": "#/$defs/idArray" },
+    "not_validated_strata": { "$ref": "#/$defs/idArray" },
+    "reasons": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/id" } },
+    "metrics": { "$ref": "#/$defs/metrics" },
+    "efficiency_branches": { "$ref": "#/$defs/efficiencyBranches" },
+    "strata": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/stratumEvaluation" } },
+    "exclusions": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/exclusion" } },
+    "operational_totals": { "$ref": "#/$defs/operationalTotals" },
+    "denominators": { "$ref": "#/$defs/denominators" },
+    "completeness": { "$ref": "#/$defs/completeness" },
+    "interval_metadata": { "$ref": "#/$defs/intervalMetadata" },
+    "warnings": { "$ref": "#/$defs/idArray" }
+  },
+  "allOf": [
+    {
+      "oneOf": [
+        { "type": "object", "properties": { "supersedes_evaluation_id": { "type": "null" }, "supersedes_evaluation_version": { "type": "null" }, "expected_superseded_report_hash": { "type": "null" } } },
+        { "type": "object", "properties": { "supersedes_evaluation_id": { "$ref": "#/$defs/id" }, "supersedes_evaluation_version": { "$ref": "#/$defs/positiveInteger" }, "expected_superseded_report_hash": { "$ref": "#/$defs/hash" } } }
+      ]
+    },
+    { "if": { "properties": { "stage": { "const": 1 } }, "required": ["stage"] }, "then": { "type": "object", "properties": { "decision": { "enum": ["CONTINUE", "REJECT"] } } } },
+    { "if": { "properties": { "stage": { "const": 2 } }, "required": ["stage"] }, "then": { "type": "object", "properties": { "decision": { "enum": ["CONTINUE", "PROMOTE_BOUNDED", "REJECT", "INSUFFICIENT_EVIDENCE"] } } } },
+    { "if": { "properties": { "stage": { "const": 3 } }, "required": ["stage"] }, "then": { "type": "object", "properties": { "decision": { "enum": ["PROMOTE_BOUNDED", "REJECT", "INCONCLUSIVE"] } } } },
+    { "if": { "properties": { "decision": { "const": "PROMOTE_BOUNDED" } }, "required": ["decision"] }, "then": { "type": "object", "properties": { "stage": { "enum": [2, 3] }, "promoted_strata": { "type": "array", "minItems": 1, "maxItems": 128 } } }, "else": { "type": "object", "properties": { "promoted_strata": { "type": "array", "maxItems": 0 } } } }
+  ],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "nonnegativeInteger": { "type": "integer", "minimum": 0 },
+    "nonnegativeNumber": { "type": "number", "minimum": 0 },
+    "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "nullableRate": { "anyOf": [{ "$ref": "#/$defs/rate" }, { "type": "null" }] },
+    "idArray": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/id" } },
+    "signedInterval": {
+      "type": "object", "additionalProperties": false, "required": ["lower", "upper"],
+      "properties": { "lower": { "type": "number" }, "upper": { "type": "number" } }
+    },
+    "signedRateInterval": {
+      "type": "object", "additionalProperties": false, "required": ["lower", "upper"],
+      "properties": { "lower": { "type": "number", "minimum": -1, "maximum": 1 }, "upper": { "type": "number", "minimum": -1, "maximum": 1 } }
+    },
+    "rateInterval": {
+      "type": "object", "additionalProperties": false, "required": ["lower", "upper"],
+      "properties": { "lower": { "$ref": "#/$defs/rate" }, "upper": { "$ref": "#/$defs/rate" } }
+    },
+    "nonnegativeInterval": {
+      "type": "object", "additionalProperties": false, "required": ["lower", "upper"],
+      "properties": { "lower": { "$ref": "#/$defs/nonnegativeNumber" }, "upper": { "$ref": "#/$defs/nonnegativeNumber" } }
+    },
+    "resourceMetricSample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["numerator", "denominator", "value", "confidence_interval"],
+      "properties": {
+        "numerator": { "$ref": "#/$defs/nonnegativeNumber" },
+        "denominator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "value": { "anyOf": [{ "$ref": "#/$defs/nonnegativeNumber" }, { "type": "null" }] },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/nonnegativeInterval" }, { "type": "null" }] }
+      }
+    },
+    "rateMetricSample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["numerator", "denominator", "value", "confidence_interval"],
+      "properties": {
+        "numerator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "denominator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "value": { "anyOf": [{ "$ref": "#/$defs/rate" }, { "type": "null" }] },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/rateInterval" }, { "type": "null" }] }
+      }
+    },
+    "countMetricSample": {
+      "type": "object", "additionalProperties": false,
+      "required": ["numerator", "denominator", "value", "confidence_interval"],
+      "properties": {
+        "numerator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "denominator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "value": { "anyOf": [{ "$ref": "#/$defs/nonnegativeNumber" }, { "type": "null" }] },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/nonnegativeInterval" }, { "type": "null" }] }
+      }
+    },
+    "armMetric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["final_acceptance_rate", "escaped_material_defect_rate", "escaped_high_defects", "escaped_critical_defects", "wall_time_per_accepted_block", "observed_cost_per_accepted_block", "estimated_cost_per_accepted_block", "strong_tokens_observed_per_accepted_block", "strong_tokens_estimated_per_accepted_block", "all_role_tokens_observed_per_accepted_block", "all_role_tokens_estimated_per_accepted_block", "first_pass_accept_rate", "accept_after_one_repair_rate", "escalation_rate", "parent_rework_block_rate", "parent_rework_production_line_share"],
+      "properties": {
+        "final_acceptance_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "escaped_material_defect_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "escaped_high_defects": { "$ref": "#/$defs/countMetricSample" },
+        "escaped_critical_defects": { "$ref": "#/$defs/countMetricSample" },
+        "wall_time_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "observed_cost_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "estimated_cost_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "strong_tokens_observed_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "strong_tokens_estimated_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "all_role_tokens_observed_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "all_role_tokens_estimated_per_accepted_block": { "$ref": "#/$defs/resourceMetricSample" },
+        "first_pass_accept_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "accept_after_one_repair_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "escalation_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "parent_rework_block_rate": { "$ref": "#/$defs/rateMetricSample" },
+        "parent_rework_production_line_share": { "$ref": "#/$defs/rateMetricSample" }
+      }
+    },
+    "armMetrics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"],
+      "properties": {
+        "A_STRONG_BASELINE": { "$ref": "#/$defs/armMetric" },
+        "B_CHEAP_NO_EARLY_ESCALATION": { "$ref": "#/$defs/armMetric" },
+        "C_ADAPTIVE_EARLY_ESCALATION": { "$ref": "#/$defs/armMetric" }
+      }
+    },
+    "armCounts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"],
+      "properties": {
+        "A_STRONG_BASELINE": { "$ref": "#/$defs/nonnegativeInteger" },
+        "B_CHEAP_NO_EARLY_ESCALATION": { "$ref": "#/$defs/nonnegativeInteger" },
+        "C_ADAPTIVE_EARLY_ESCALATION": { "$ref": "#/$defs/nonnegativeInteger" }
+      }
+    },
+    "armCompleteness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"],
+      "properties": {
+        "A_STRONG_BASELINE": { "$ref": "#/$defs/nullableRate" },
+        "B_CHEAP_NO_EARLY_ESCALATION": { "$ref": "#/$defs/nullableRate" },
+        "C_ADAPTIVE_EARLY_ESCALATION": { "$ref": "#/$defs/nullableRate" }
+      }
+    },
+    "pairedQuality": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseline_successes", "candidate_successes", "both_success", "baseline_only_success", "candidate_only_success", "neither_success", "denominator", "difference", "confidence_interval"],
+      "properties": {
+        "baseline_successes": { "$ref": "#/$defs/nonnegativeInteger" },
+        "candidate_successes": { "$ref": "#/$defs/nonnegativeInteger" },
+        "both_success": { "$ref": "#/$defs/nonnegativeInteger" },
+        "baseline_only_success": { "$ref": "#/$defs/nonnegativeInteger" },
+        "candidate_only_success": { "$ref": "#/$defs/nonnegativeInteger" },
+        "neither_success": { "$ref": "#/$defs/nonnegativeInteger" },
+        "denominator": { "$ref": "#/$defs/nonnegativeInteger" },
+        "difference": { "type": ["number", "null"], "minimum": -1, "maximum": 1 },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/signedRateInterval" }, { "type": "null" }] }
+      },
+      "allOf": [{
+        "if": { "properties": { "denominator": { "const": 0 } }, "required": ["denominator"] },
+        "then": { "type": "object", "properties": { "difference": { "type": "null" }, "confidence_interval": { "type": "null" } } },
+        "else": { "type": "object", "properties": { "denominator": { "$ref": "#/$defs/positiveInteger" }, "difference": { "type": "number", "minimum": -1, "maximum": 1 }, "confidence_interval": { "$ref": "#/$defs/signedRateInterval" } } }
+      }]
+    },
+    "pairedMetric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["baseline_value", "candidate_value", "relative_improvement", "confidence_interval"],
+      "properties": {
+        "baseline_value": { "anyOf": [{ "$ref": "#/$defs/nonnegativeNumber" }, { "type": "null" }] },
+        "candidate_value": { "anyOf": [{ "$ref": "#/$defs/nonnegativeNumber" }, { "type": "null" }] },
+        "relative_improvement": { "type": ["number", "null"] },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/signedInterval" }, { "type": "null" }] }
+      }
+    },
+    "metrics": {
+      "type": "object", "additionalProperties": false, "required": ["by_arm", "paired_comparisons"],
+      "properties": {
+        "by_arm": { "$ref": "#/$defs/armMetrics" },
+        "paired_comparisons": {
+          "type": "object", "additionalProperties": false,
+          "required": ["final_acceptance", "final_quality", "parent_rework_block_rate", "parent_rework_production_line_share", "wall_time_per_accepted_block", "observed_cost_per_accepted_block", "estimated_cost_per_accepted_block", "strong_tokens_observed_per_accepted_block", "strong_tokens_estimated_per_accepted_block", "all_role_tokens_observed_per_accepted_block", "all_role_tokens_estimated_per_accepted_block"],
+          "properties": {
+            "final_acceptance": { "$ref": "#/$defs/pairedQuality" },
+            "final_quality": { "$ref": "#/$defs/pairedQuality" },
+            "parent_rework_block_rate": { "$ref": "#/$defs/pairedMetric" },
+            "parent_rework_production_line_share": { "$ref": "#/$defs/pairedMetric" },
+            "wall_time_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "observed_cost_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "estimated_cost_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "strong_tokens_observed_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "strong_tokens_estimated_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "all_role_tokens_observed_per_accepted_block": { "$ref": "#/$defs/pairedMetric" },
+            "all_role_tokens_estimated_per_accepted_block": { "$ref": "#/$defs/pairedMetric" }
+          }
+        }
+      }
+    },
+    "resourceMeasure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["known_sum", "complete", "total", "completeness_ratio", "complete_value"],
+      "properties": {
+        "known_sum": { "$ref": "#/$defs/nonnegativeNumber" },
+        "complete": { "$ref": "#/$defs/nonnegativeInteger" },
+        "total": { "$ref": "#/$defs/nonnegativeInteger" },
+        "completeness_ratio": { "$ref": "#/$defs/nullableRate" },
+        "complete_value": { "anyOf": [{ "$ref": "#/$defs/nonnegativeNumber" }, { "type": "null" }] }
+      }
+    },
+    "resourceTotals": {
+      "type": "object", "additionalProperties": false,
+      "required": ["wall_time_seconds", "cost_observed", "cost_estimated", "strong_tokens_observed", "strong_tokens_estimated", "all_role_tokens_observed", "all_role_tokens_estimated"],
+      "properties": {
+        "wall_time_seconds": { "$ref": "#/$defs/resourceMeasure" },
+        "cost_observed": { "$ref": "#/$defs/resourceMeasure" },
+        "cost_estimated": { "$ref": "#/$defs/resourceMeasure" },
+        "strong_tokens_observed": { "$ref": "#/$defs/resourceMeasure" },
+        "strong_tokens_estimated": { "$ref": "#/$defs/resourceMeasure" },
+        "all_role_tokens_observed": { "$ref": "#/$defs/resourceMeasure" },
+        "all_role_tokens_estimated": { "$ref": "#/$defs/resourceMeasure" }
+      }
+    },
+    "exclusionMember": {
+      "type": "object", "additionalProperties": false, "required": ["block_ids", "resources"],
+      "properties": { "block_ids": { "$ref": "#/$defs/idArray" }, "resources": { "$ref": "#/$defs/resourceTotals" } }
+    },
+    "exclusion": {
+      "type": "object", "additionalProperties": false,
+      "required": ["pair_or_triplet_id", "reason_codes", "members_by_arm", "operational_resources"],
+      "properties": {
+        "pair_or_triplet_id": { "$ref": "#/$defs/id" },
+        "reason_codes": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/id" } },
+        "members_by_arm": {
+          "type": "object", "additionalProperties": false,
+          "required": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"],
+          "properties": {
+            "A_STRONG_BASELINE": { "$ref": "#/$defs/exclusionMember" },
+            "B_CHEAP_NO_EARLY_ESCALATION": { "$ref": "#/$defs/exclusionMember" },
+            "C_ADAPTIVE_EARLY_ESCALATION": { "$ref": "#/$defs/exclusionMember" }
+          }
+        },
+        "operational_resources": { "$ref": "#/$defs/resourceTotals" }
+      }
+    },
+    "denominators": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifest_blocks", "comparative_blocks", "candidate_triplets", "admitted_triplets", "excluded_triplets", "comparable_blocks_by_arm", "accepted_blocks_by_arm", "quality_complete_blocks_by_arm"],
+      "properties": {
+        "manifest_blocks": { "$ref": "#/$defs/nonnegativeInteger" },
+        "comparative_blocks": { "$ref": "#/$defs/nonnegativeInteger" },
+        "candidate_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "admitted_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "excluded_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "comparable_blocks_by_arm": { "$ref": "#/$defs/armCounts" },
+        "accepted_blocks_by_arm": { "$ref": "#/$defs/armCounts" },
+        "quality_complete_blocks_by_arm": { "$ref": "#/$defs/armCounts" }
+      }
+    },
+    "strongTokenCompleteness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["input_by_arm", "output_by_arm", "cached_input_by_arm", "reasoning_by_arm", "total_by_arm"],
+      "properties": {
+        "input_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "output_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "cached_input_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "reasoning_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "total_by_arm": { "$ref": "#/$defs/armCompleteness" }
+      }
+    },
+    "completeness": {
+      "type": "object", "additionalProperties": false,
+      "required": ["observed_cost_by_arm", "estimated_cost_by_arm", "strong_tokens_observed", "strong_tokens_estimated", "wall_time_by_arm"],
+      "properties": {
+        "observed_cost_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "estimated_cost_by_arm": { "$ref": "#/$defs/armCompleteness" },
+        "strong_tokens_observed": { "$ref": "#/$defs/strongTokenCompleteness" },
+        "strong_tokens_estimated": { "$ref": "#/$defs/strongTokenCompleteness" },
+        "wall_time_by_arm": { "$ref": "#/$defs/armCompleteness" }
+      }
+    },
+    "efficiencyBranchRecordBase": {
+      "type": "object", "additionalProperties": false,
+      "required": ["branch", "status", "eligible_triplets", "completeness", "point_improvement", "confidence_interval", "reason_codes"],
+      "properties": {
+        "branch": { "enum": ["observed_cost", "observed_strong_tokens"] },
+        "status": { "enum": ["UNUSABLE", "FAIL_POINT", "AMBIGUOUS", "PASS"] },
+        "eligible_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "completeness": { "$ref": "#/$defs/nullableRate" },
+        "point_improvement": { "type": ["number", "null"] },
+        "confidence_interval": { "anyOf": [{ "$ref": "#/$defs/signedInterval" }, { "type": "null" }] },
+        "reason_codes": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/id" } }
+      }
+    },
+    "observedCostBranch": { "type": "object", "$ref": "#/$defs/efficiencyBranchRecordBase", "properties": { "branch": { "const": "observed_cost" } } },
+    "observedStrongBranch": { "type": "object", "$ref": "#/$defs/efficiencyBranchRecordBase", "properties": { "branch": { "const": "observed_strong_tokens" } } },
+    "efficiencyBranches": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [{ "$ref": "#/$defs/observedCostBranch" }, { "$ref": "#/$defs/observedStrongBranch" }],
+      "items": false
+    },
+    "stratumEvaluation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["matching_stratum", "candidate_triplets", "admitted_triplets", "status", "reason_codes", "paired_final_acceptance", "paired_final_quality", "efficiency_branches"],
+      "properties": {
+        "matching_stratum": { "$ref": "#/$defs/id" },
+        "candidate_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "admitted_triplets": { "$ref": "#/$defs/nonnegativeInteger" },
+        "status": { "enum": ["PROMOTED", "NOT_VALIDATED"] },
+        "reason_codes": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/id" } },
+        "paired_final_acceptance": { "$ref": "#/$defs/pairedQuality" },
+        "paired_final_quality": { "$ref": "#/$defs/pairedQuality" },
+        "efficiency_branches": { "$ref": "#/$defs/efficiencyBranches" }
+      }
+    },
+    "operationalTotals": {
+      "type": "object", "additionalProperties": false, "required": ["comparative_by_arm", "direct_to_strong"],
+      "properties": {
+        "comparative_by_arm": {
+          "type": "object", "additionalProperties": false,
+          "required": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"],
+          "properties": {
+            "A_STRONG_BASELINE": { "$ref": "#/$defs/resourceTotals" },
+            "B_CHEAP_NO_EARLY_ESCALATION": { "$ref": "#/$defs/resourceTotals" },
+            "C_ADAPTIVE_EARLY_ESCALATION": { "$ref": "#/$defs/resourceTotals" }
+          }
+        },
+        "direct_to_strong": { "$ref": "#/$defs/resourceTotals" }
+      }
+    },
+    "intervalMetadata": {
+      "type": "object", "additionalProperties": false,
+      "required": ["confidence_level", "interval_algorithm_version", "resampling_iterations", "resampling_seed"],
+      "properties": {
+        "confidence_level": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "interval_algorithm_version": { "const": "paired-bootstrap-sha256-counter-v1" },
+        "resampling_iterations": { "type": "integer", "minimum": 100, "maximum": 100000 },
+        "resampling_seed": { "$ref": "#/$defs/id" }
+      }
+    }
+  }
+}

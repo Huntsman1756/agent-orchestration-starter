@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/pilot-manifest-v3.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pilot_id", "pilot_schema_version", "manifest_hash", "created_at", "blocks", "assignment_seed", "assignment_algorithm_version", "arm_assignments", "binding_policy_version", "binding_registry", "routing_reviewer_binding_ref", "routing_reviewer_capability", "review_mode", "routing_policy_version", "review_policy_version", "state_machine_version", "reducer_version", "isolation_policy_version", "canonical_tree_algorithm_version", "volatile_paths_policy_hash", "stage_thresholds", "post_acceptance_window", "pricing_snapshot"],
+  "properties": {
+    "pilot_id": { "$ref": "#/$defs/id" },
+    "pilot_schema_version": { "const": 3 },
+    "manifest_hash": { "$ref": "#/$defs/hash" },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "blocks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["block_id", "task_id", "matching_stratum", "pair_or_triplet_id", "case_fingerprint", "contract_hash", "base_revision", "clean_tree_hash", "fixtures_hash", "complexity_class", "risk_class", "changed_line_band", "validation_surface", "cheap_eligible", "comparative_eligible", "routing_selection_reason", "selected_executor_capability_initial", "selected_executor_capability_final_expected", "exclusion_reason"],
+        "properties": {
+          "block_id": { "$ref": "#/$defs/id" },
+          "task_id": { "$ref": "#/$defs/id" },
+          "matching_stratum": { "$ref": "#/$defs/id" },
+          "pair_or_triplet_id": { "$ref": "#/$defs/id" },
+          "case_fingerprint": { "$ref": "#/$defs/hash" },
+          "contract_hash": { "$ref": "#/$defs/hash" },
+          "base_revision": { "$ref": "#/$defs/hash" },
+          "clean_tree_hash": { "$ref": "#/$defs/hash" },
+          "fixtures_hash": { "$ref": "#/$defs/hash" },
+          "complexity_class": { "enum": ["mechanical", "localized", "cross_file_bounded", "systemic"] },
+          "risk_class": { "enum": ["low", "medium", "high", "restricted"] },
+          "changed_line_band": { "$ref": "#/$defs/id" },
+          "validation_surface": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/id" } },
+          "cheap_eligible": { "type": "boolean" },
+          "comparative_eligible": { "type": "boolean" },
+          "routing_selection_reason": { "$ref": "#/$defs/id" },
+          "selected_executor_capability_initial": { "$ref": "#/$defs/capability" },
+          "selected_executor_capability_final_expected": { "$ref": "#/$defs/capability" },
+          "exclusion_reason": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] }
+        },
+        "allOf": [{
+          "if": { "properties": { "comparative_eligible": { "const": true } }, "required": ["comparative_eligible"] },
+          "then": { "properties": { "cheap_eligible": { "const": true }, "risk_class": { "enum": ["low", "medium", "high"] }, "exclusion_reason": { "type": "null" } } }
+        }]
+      }
+    },
+    "assignment_seed": { "$ref": "#/$defs/id" },
+    "assignment_algorithm_version": { "$ref": "#/$defs/id" },
+    "arm_assignments": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "type": "object", "additionalProperties": false, "required": ["block_id", "pilot_arm"], "properties": { "block_id": { "$ref": "#/$defs/id" }, "pilot_arm": { "$ref": "#/$defs/arm" } } } },
+    "binding_policy_version": { "$ref": "#/$defs/id" },
+    "binding_registry": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/binding" } },
+    "routing_reviewer_binding_ref": { "$ref": "#/$defs/id" },
+    "routing_reviewer_capability": { "$ref": "#/$defs/capability" },
+    "review_mode": { "const": "incremental_diff" },
+    "routing_policy_version": { "$ref": "#/$defs/id" },
+    "review_policy_version": { "$ref": "#/$defs/id" },
+    "state_machine_version": { "$ref": "#/$defs/id" },
+    "reducer_version": { "$ref": "#/$defs/id" },
+    "isolation_policy_version": { "$ref": "#/$defs/id" },
+    "canonical_tree_algorithm_version": { "$ref": "#/$defs/id" },
+    "volatile_paths_policy_hash": { "$ref": "#/$defs/hash" },
+    "stage_thresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage_1_blocks_per_arm", "stage_2_blocks_per_arm", "stage_3_max_blocks_per_arm", "material_improvement_rate", "economic_rejection_rate", "max_parent_rework_block_rate", "max_parent_rework_production_line_share", "max_escaped_material_defects", "max_escaped_high_defects", "max_escaped_critical_defects", "min_observed_cost_completeness", "min_observed_strong_token_completeness", "min_stratum_triplets_for_promotion", "confidence_level", "interval_algorithm_version", "resampling_iterations"],
+      "properties": {
+        "stage_1_blocks_per_arm": { "const": 10 },
+        "stage_2_blocks_per_arm": { "const": 20 },
+        "stage_3_max_blocks_per_arm": { "const": 30 },
+        "material_improvement_rate": { "$ref": "#/$defs/rate" },
+        "economic_rejection_rate": { "$ref": "#/$defs/rate" },
+        "max_parent_rework_block_rate": { "$ref": "#/$defs/rate" },
+        "max_parent_rework_production_line_share": { "$ref": "#/$defs/rate" },
+        "max_escaped_material_defects": { "$ref": "#/$defs/nonnegativeInteger" },
+        "max_escaped_high_defects": { "$ref": "#/$defs/nonnegativeInteger" },
+        "max_escaped_critical_defects": { "$ref": "#/$defs/nonnegativeInteger" },
+        "min_observed_cost_completeness": { "$ref": "#/$defs/positiveRate" },
+        "min_observed_strong_token_completeness": { "$ref": "#/$defs/positiveRate" },
+        "min_stratum_triplets_for_promotion": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "confidence_level": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+        "interval_algorithm_version": { "$ref": "#/$defs/id" },
+        "resampling_iterations": { "type": "integer", "minimum": 100, "maximum": 100000 }
+      }
+    },
+    "post_acceptance_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_seconds", "allowed_clock_skew_seconds", "closure_rule", "late_evidence_policy", "window_policy_version"],
+      "properties": {
+        "duration_seconds": { "$ref": "#/$defs/positiveInteger" },
+        "allowed_clock_skew_seconds": { "$ref": "#/$defs/nonnegativeInteger" },
+        "closure_rule": { "enum": ["elapsed_duration", "terminal_material_defect"] },
+        "late_evidence_policy": { "const": "warn_next_evaluation" },
+        "window_policy_version": { "$ref": "#/$defs/id" }
+      }
+    },
+    "pricing_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pricing_snapshot_id", "pricing_snapshot_hash", "currency", "unit_scale", "effective_at", "tariffs"],
+      "properties": {
+        "pricing_snapshot_id": { "$ref": "#/$defs/id" },
+        "pricing_snapshot_hash": { "$ref": "#/$defs/hash" },
+        "currency": { "$ref": "#/$defs/currency" },
+        "unit_scale": { "$ref": "#/$defs/positiveInteger" },
+        "effective_at": { "$ref": "#/$defs/timestamp" },
+        "tariffs": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "type": "object", "additionalProperties": false, "required": ["binding_ref", "input_token_micro_units_per_token", "output_token_micro_units_per_token", "cached_input_token_micro_units_per_token", "reasoning_token_micro_units_per_token", "authoritative_charge_supported"], "properties": { "binding_ref": { "$ref": "#/$defs/id" }, "input_token_micro_units_per_token": { "$ref": "#/$defs/nonnegativeInteger" }, "output_token_micro_units_per_token": { "$ref": "#/$defs/nonnegativeInteger" }, "cached_input_token_micro_units_per_token": { "$ref": "#/$defs/nullInteger" }, "reasoning_token_micro_units_per_token": { "$ref": "#/$defs/nullInteger" }, "authoritative_charge_supported": { "type": "boolean" } } } }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$" },
+    "capability": { "enum": ["cheap", "strong"] },
+    "arm": { "enum": ["A_STRONG_BASELINE", "B_CHEAP_NO_EARLY_ESCALATION", "C_ADAPTIVE_EARLY_ESCALATION"] },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+    "nonnegativeInteger": { "type": "integer", "minimum": 0 },
+    "positiveInteger": { "type": "integer", "minimum": 1 },
+    "nullInteger": { "anyOf": [{ "$ref": "#/$defs/nonnegativeInteger" }, { "type": "null" }] },
+    "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "positiveRate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+    "binding": { "type": "object", "additionalProperties": false, "required": ["binding_ref", "capability_class", "profile_hash"], "properties": { "binding_ref": { "$ref": "#/$defs/id" }, "capability_class": { "$ref": "#/$defs/capability" }, "profile_hash": { "$ref": "#/$defs/hash" } } }
+  }
+}
