@@ -5,7 +5,7 @@ import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
 import type { FinalizedRunV4 } from '../src/runtime/finalize.js';
 import { loadRuntimeRepositoryPolicyV4 } from '../src/runtime/load.js';
-import { publishFinalizedRunV4, type PublicationAdapterV4, type PullRequestV4, type RunMergedEventV4 } from '../src/runtime/publication.js';
+import { publishFinalizedRunV4, skipFinalizedRunPublicationV4, type PublicationAdapterV4, type PublicationProgressEventV4, type PullRequestV4 } from '../src/runtime/publication.js';
 import { validRepositoryPolicy, validWorkContract } from './runtime-contracts.test.js';
 
 const commitSha = '9'.repeat(40);
@@ -23,7 +23,7 @@ function fixture(existing: PullRequestV4 | null = null) {
   const open: PullRequestV4 = { number: 17, url: 'https://github.com/acme/repo/pull/17', state: 'OPEN', head_sha: commitSha, head_branch: branch, base_branch: 'main', merge_commit_sha: null };
   const merged: PullRequestV4 = { ...open, state: 'MERGED', merge_commit_sha: mergeSha };
   const calls: string[] = [];
-  const events: RunMergedEventV4[] = [];
+  const events: PublicationProgressEventV4[] = [];
   const adapter: PublicationAdapterV4 = {
     pushExact: async (input) => { calls.push(`push:${input.commit_sha}:${input.branch}:${input.remote}`); return { remote_sha: input.commit_sha }; },
     findPullRequest: async () => { calls.push('find'); return existing; },
@@ -36,7 +36,7 @@ function fixture(existing: PullRequestV4 | null = null) {
     contract, policy, finalized, expected_policy_hash: policyHash, title: 'Automated accepted change', body: 'Validated and independently reviewed.', adapter,
     acquire_run_lock: async () => ({ release: async () => { releases.push('run'); } }),
     acquire_repository_lock: async () => ({ release: async () => { releases.push('repository'); } }),
-    append_run_merged: async (event: RunMergedEventV4) => { events.push(event); },
+    append_publication_event: async (event: PublicationProgressEventV4) => { events.push(event); },
   } };
 }
 
@@ -46,7 +46,8 @@ test('pushes the accepted commit, creates an exact PR, waits for required checks
   assert.deepEqual(value.calls, [`push:${commitSha}:codex/auto/${value.contract.run_id}:origin`, 'find', 'create', 'checks', 'merge']);
   assert.equal(result.merge_commit_sha, mergeSha);
   assert.deepEqual(value.releases, ['repository', 'run']);
-  assert.deepEqual(value.events, [{ type: 'RUN_MERGED', command_id: `run-merged:${value.contract.run_id}`, run_id: value.contract.run_id, commit_sha: commitSha, pull_request: 17, pull_request_url: value.merged.url, merge_commit_sha: mergeSha, publication_policy_hash: value.policyHash }]);
+  assert.deepEqual(value.events.map((event) => event.type), ['BRANCH_PUSHED', 'PULL_REQUEST_RECORDED', 'REQUIRED_CHECKS_PASSED', 'RUN_MERGED']);
+  assert.deepEqual(value.events.at(-1), { type: 'RUN_MERGED', command_id: `run-merged:${value.contract.run_id}`, run_id: value.contract.run_id, commit_sha: commitSha, pull_request: 17, pull_request_url: value.merged.url, merge_commit_sha: mergeSha, publication_policy_hash: value.policyHash });
 });
 
 test('recovers idempotently from an already merged exact PR', async () => {
@@ -54,7 +55,7 @@ test('recovers idempotently from an already merged exact PR', async () => {
   const value = fixture(prior);
   await publishFinalizedRunV4(value.input);
   assert.deepEqual(value.calls, [`push:${commitSha}:codex/auto/${value.contract.run_id}:origin`, 'find']);
-  assert.equal(value.events.length, 1);
+  assert.deepEqual(value.events.map((event) => event.type), ['BRANCH_PUSHED', 'PULL_REQUEST_RECORDED', 'RUN_MERGED']);
 });
 
 test('fails closed on disabled or stale policy, prohibited publication, and stale PR identity', async () => {
@@ -75,4 +76,17 @@ test('releases both locks when publication fails', async () => {
   value.input.adapter.pushExact = async () => { throw new Error('PUBLICATION_FAILED: offline'); };
   await assert.rejects(publishFinalizedRunV4(value.input), /PUBLICATION_FAILED/);
   assert.deepEqual(value.releases, ['repository', 'run']);
+});
+
+test('records an explicit terminal skip only when policy or contract prohibits publication', async () => {
+  const disabled = fixture();
+  const policy = loadRuntimeRepositoryPolicyV4({ ...validRepositoryPolicy(), publication: { ...validRepositoryPolicy().publication, enabled: false } });
+  const policyHash = hashCanonicalV4(policy);
+  const body = { ...disabled.contract, policy_hash: policyHash } as Record<string, unknown>;
+  delete body.contract_hash;
+  const contract = { ...body, contract_hash: hashCanonicalV4(body) } as unknown as RuntimeWorkContractV4;
+  await skipFinalizedRunPublicationV4({ ...disabled.input, contract, finalized: { ...disabled.finalized, run_id: contract.run_id, task_ref: `refs/heads/codex/auto/${contract.run_id}` }, policy, expected_policy_hash: policyHash });
+  assert.equal(disabled.events.at(-1)?.type, 'PUBLICATION_SKIPPED');
+  const required = fixture();
+  await assert.rejects(skipFinalizedRunPublicationV4(required.input), /PUBLICATION_POLICY_DENIED/);
 });

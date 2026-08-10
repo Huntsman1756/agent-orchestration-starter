@@ -74,7 +74,7 @@ test('rejects every lifecycle transition that bypasses execution, reinspection, 
   }
 });
 
-test('COMMIT_CREATED marks only matching accepted evidence as FINALIZED', () => {
+test('publication is durable from the accepted commit through the verified merge', () => {
   const acceptedCommand = accepted();
   const reviewedCommand: Extract<BrokerCommandV4, { type: 'RUN_ACCEPTED' }> = { ...acceptedCommand, result: {
     ...validRuntimeResult(),
@@ -93,10 +93,21 @@ test('COMMIT_CREATED marks only matching accepted evidence as FINALIZED', () => 
     diff_hash: reviewedCommand.result.diff_hash, validation_manifest_hash: 'e'.repeat(64),
     review_attestation_hash: reviewedCommand.result.review_attestation_hash!,
   };
-  const finalized = reduceBrokerStateV4(reviewed, command);
-  assert.equal(finalized.runs[reviewedCommand.run_id].result.state, 'FINALIZED');
-  assert.equal(finalized.runs[reviewedCommand.run_id].result.commit_sha, command.commit_sha);
+  const committed = reduceBrokerStateV4(reviewed, command);
+  assert.equal(committed.runs[reviewedCommand.run_id].result.state, 'READY_FOR_PUBLICATION');
+  assert.equal(committed.runs[reviewedCommand.run_id].result.commit_sha, command.commit_sha);
+  const pushed = reduceBrokerStateV4(committed, { type: 'BRANCH_PUSHED', command_id: 'branch-pushed', run_id: command.run_id, commit_sha: command.commit_sha, branch: reviewedCommand.result.branch, remote: 'origin', publication_policy_hash: reviewedCommand.contract.policy_hash });
+  assert.equal(pushed.runs[command.run_id].result.state, 'PUBLICATION_PUSHED');
+  const prUrl = 'https://github.com/acme/repo/pull/17';
+  const opened = reduceBrokerStateV4(pushed, { type: 'PULL_REQUEST_RECORDED', command_id: 'pr-recorded', run_id: command.run_id, commit_sha: command.commit_sha, pull_request: 17, pull_request_url: prUrl, base_branch: 'main', publication_policy_hash: reviewedCommand.contract.policy_hash });
+  assert.equal(opened.runs[command.run_id].result.publication.pull_request, 17);
+  const checked = reduceBrokerStateV4(opened, { type: 'REQUIRED_CHECKS_PASSED', command_id: 'checks-passed', run_id: command.run_id, commit_sha: command.commit_sha, pull_request: 17, publication_policy_hash: reviewedCommand.contract.policy_hash });
+  const merged = reduceBrokerStateV4(checked, { type: 'RUN_MERGED', command_id: 'run-merged', run_id: command.run_id, commit_sha: command.commit_sha, pull_request: 17, pull_request_url: prUrl, merge_commit_sha: 'f'.repeat(40), publication_policy_hash: reviewedCommand.contract.policy_hash });
+  assert.equal(merged.runs[command.run_id].result.state, 'FINALIZED');
+  assert.equal(merged.runs[command.run_id].result.publication.state, 'MERGED');
+  assert.equal(merged.runs[command.run_id].result.head_sha, 'f'.repeat(40));
   assert.throws(() => reduceBrokerStateV4(reviewed, { ...command, evidence_tree_hash: '0'.repeat(64) }), /BROKER_STATE_CORRUPT/);
+  assert.throws(() => reduceBrokerStateV4(pushed, { type: 'RUN_MERGED', command_id: 'early-merge', run_id: command.run_id, commit_sha: command.commit_sha, pull_request: 17, pull_request_url: prUrl, merge_commit_sha: 'f'.repeat(40), publication_policy_hash: reviewedCommand.contract.policy_hash }), /BROKER_STATE_CORRUPT/);
 });
 
 test('rejects an atomic cache snapshot that disagrees with journal replay', async () => {

@@ -20,6 +20,11 @@ export type BrokerCommandV4 =
   | Readonly<{ type: 'PATHS_REINSPECTED'; command_id: string; run_id: string; inspection_epoch: number }>
   | Readonly<{ type: 'EXTERNAL_PROCESS_STARTED'; command_id: string; run_id: string; process: ExternalProcessIdentityV4 }>
   | Readonly<{ type: 'COMMIT_CREATED'; command_id: string; run_id: string; task_ref: string; base_sha: string; git_tree_sha: string; evidence_tree_hash: string; commit_sha: string; contract_hash: string; diff_hash: string; validation_manifest_hash: string; review_attestation_hash: string }>
+  | Readonly<{ type: 'BRANCH_PUSHED'; command_id: string; run_id: string; commit_sha: string; branch: string; remote: string; publication_policy_hash: string }>
+  | Readonly<{ type: 'PULL_REQUEST_RECORDED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; base_branch: string; publication_policy_hash: string }>
+  | Readonly<{ type: 'REQUIRED_CHECKS_PASSED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; publication_policy_hash: string }>
+  | Readonly<{ type: 'RUN_MERGED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; merge_commit_sha: string; publication_policy_hash: string }>
+  | Readonly<{ type: 'PUBLICATION_SKIPPED'; command_id: string; run_id: string; commit_sha: string; publication_policy_hash: string; reason: 'POLICY_DISABLED' | 'CONTRACT_PROHIBITED' }>
   | Readonly<{ type: 'RUN_FAILED'; command_id: string; run_id: string; failure: RuntimeFailureV4 }>;
 
 export interface BrokerRunStateV4 {
@@ -71,6 +76,17 @@ function gitSha(value: unknown, name: string): string {
   return value;
 }
 
+function pullRequest(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) corrupt('pull_request is invalid');
+  return value as number;
+}
+
+function pullRequestUrl(value: unknown, pullRequestNumber: number): string {
+  if (typeof value !== 'string' || value.length > 2_048 || !/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(value)
+    || !value.endsWith(`/pull/${pullRequestNumber}`)) corrupt('pull_request_url is invalid');
+  return value;
+}
+
 export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, { type: 'RUN_CODING_TASK' }> {
   const command = objectValue(value, 'journal command');
   const type = command.type;
@@ -113,6 +129,32 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       if (typeof command.task_ref !== 'string' || !/^refs\/heads\/codex\/auto\/[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/.test(command.task_ref)) corrupt('task_ref is invalid');
       return { type, command_id, run_id: runId(command.run_id), task_ref: command.task_ref, base_sha: gitSha(command.base_sha, 'base_sha'), git_tree_sha: gitSha(command.git_tree_sha, 'git_tree_sha'), evidence_tree_hash: hash(command.evidence_tree_hash, 'evidence_tree_hash'), commit_sha: gitSha(command.commit_sha, 'commit_sha'), contract_hash: hash(command.contract_hash, 'contract_hash'), diff_hash: hash(command.diff_hash, 'diff_hash'), validation_manifest_hash: hash(command.validation_manifest_hash, 'validation_manifest_hash'), review_attestation_hash: hash(command.review_attestation_hash, 'review_attestation_hash') };
     }
+    if (type === 'BRANCH_PUSHED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'commit_sha', 'branch', 'remote', 'publication_policy_hash'], 'BRANCH_PUSHED');
+      if (typeof command.branch !== 'string' || !/^codex\/auto\/run_[A-Za-z0-9_-]{16,96}$/.test(command.branch)) corrupt('publication branch is invalid');
+      if (typeof command.remote !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(command.remote)) corrupt('publication remote is invalid');
+      return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), branch: command.branch, remote: command.remote, publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash') };
+    }
+    if (type === 'PULL_REQUEST_RECORDED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'commit_sha', 'pull_request', 'pull_request_url', 'base_branch', 'publication_policy_hash'], 'PULL_REQUEST_RECORDED');
+      const number = pullRequest(command.pull_request);
+      if (typeof command.base_branch !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/.test(command.base_branch) || command.base_branch.includes('..')) corrupt('publication base_branch is invalid');
+      return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), pull_request: number, pull_request_url: pullRequestUrl(command.pull_request_url, number), base_branch: command.base_branch, publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash') };
+    }
+    if (type === 'REQUIRED_CHECKS_PASSED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'commit_sha', 'pull_request', 'publication_policy_hash'], 'REQUIRED_CHECKS_PASSED');
+      return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), pull_request: pullRequest(command.pull_request), publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash') };
+    }
+    if (type === 'RUN_MERGED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'commit_sha', 'pull_request', 'pull_request_url', 'merge_commit_sha', 'publication_policy_hash'], 'RUN_MERGED');
+      const number = pullRequest(command.pull_request);
+      return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), pull_request: number, pull_request_url: pullRequestUrl(command.pull_request_url, number), merge_commit_sha: gitSha(command.merge_commit_sha, 'merge_commit_sha'), publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash') };
+    }
+    if (type === 'PUBLICATION_SKIPPED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'commit_sha', 'publication_policy_hash', 'reason'], 'PUBLICATION_SKIPPED');
+      if (command.reason !== 'POLICY_DISABLED' && command.reason !== 'CONTRACT_PROHIBITED') corrupt('publication skip reason is invalid');
+      return { type, command_id, run_id: runId(command.run_id), commit_sha: gitSha(command.commit_sha, 'commit_sha'), publication_policy_hash: hash(command.publication_policy_hash, 'publication_policy_hash'), reason: command.reason };
+    }
     if (type === 'RUN_FAILED') {
       exactKeys(command, ['type', 'command_id', 'run_id', 'failure'], 'RUN_FAILED');
       const failure = objectValue(command.failure, 'failure');
@@ -138,7 +180,7 @@ function freezeState(state: BrokerStateV4): BrokerStateV4 {
     runs: Object.freeze(Object.fromEntries(Object.entries(state.runs).map(([runId, run]) => [runId, Object.freeze({
       ...run,
       contract: Object.freeze({ ...run.contract }),
-      result: Object.freeze({ ...run.result, attempts: Object.freeze([...run.result.attempts]), validation_results: Object.freeze([...run.result.validation_results]), changed_files: Object.freeze([...run.result.changed_files]) }),
+      result: Object.freeze({ ...run.result, attempts: Object.freeze([...run.result.attempts]), validation_results: Object.freeze([...run.result.validation_results]), changed_files: Object.freeze([...run.result.changed_files]), publication: Object.freeze({ ...run.result.publication }) }),
       external_process: run.external_process === null ? null : Object.freeze({ ...run.external_process }),
     })]))),
   });
@@ -205,7 +247,27 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
       || command.evidence_tree_hash !== run.result.tree_hash || command.review_attestation_hash !== run.result.review_attestation_hash) {
       corrupt(`commit evidence does not match accepted run ${command.run_id}`);
     }
-    nextRun = { ...run, result: { ...run.result, state: 'FINALIZED', head_sha: command.commit_sha, commit_sha: command.commit_sha }, external_process: null };
+    nextRun = { ...run, result: { ...run.result, state: 'READY_FOR_PUBLICATION', head_sha: command.commit_sha, commit_sha: command.commit_sha }, external_process: null };
+  } else if (command.type === 'BRANCH_PUSHED') {
+    if (run.result.state !== 'READY_FOR_PUBLICATION' || command.commit_sha !== run.result.commit_sha || command.branch !== run.result.branch
+      || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`pushed branch does not match finalized run ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'PUBLICATION_PUSHED', publication: { ...run.result.publication, state: 'PUSHED', remote: command.remote } } };
+  } else if (command.type === 'PULL_REQUEST_RECORDED') {
+    if (run.result.state !== 'PUBLICATION_PUSHED' || command.commit_sha !== run.result.commit_sha
+      || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`pull request does not match pushed run ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'PULL_REQUEST_OPEN', publication: { ...run.result.publication, state: 'PR_OPEN', base_branch: command.base_branch, pull_request: command.pull_request, pull_request_url: command.pull_request_url } } };
+  } else if (command.type === 'REQUIRED_CHECKS_PASSED') {
+    if (run.result.state !== 'PULL_REQUEST_OPEN' || command.commit_sha !== run.result.commit_sha || command.pull_request !== run.result.publication.pull_request
+      || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`required checks do not match pull request ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'REQUIRED_CHECKS_PASSED', publication: { ...run.result.publication, state: 'CHECKS_PASSED' } } };
+  } else if (command.type === 'RUN_MERGED') {
+    if (!new Set(['PULL_REQUEST_OPEN', 'REQUIRED_CHECKS_PASSED']).has(run.result.state) || command.commit_sha !== run.result.commit_sha
+      || command.pull_request !== run.result.publication.pull_request || command.pull_request_url !== run.result.publication.pull_request_url
+      || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`merge does not match pull request ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'FINALIZED', head_sha: command.merge_commit_sha, publication: { ...run.result.publication, state: 'MERGED', merge_commit_sha: command.merge_commit_sha } } };
+  } else if (command.type === 'PUBLICATION_SKIPPED') {
+    if (run.result.state !== 'READY_FOR_PUBLICATION' || command.commit_sha !== run.result.commit_sha || command.publication_policy_hash !== run.contract.policy_hash) corrupt(`publication skip does not match finalized run ${command.run_id}`);
+    nextRun = { ...run, result: { ...run.result, state: 'FINALIZED', publication: { ...run.result.publication, state: 'SKIPPED' } } };
   } else {
     nextRun = { ...run, result: { ...run.result, state: 'FAILED', failure: command.failure }, external_process: null };
   }

@@ -9,7 +9,9 @@ Runtime V4 exposes a broker-owned publication step after deterministic local fin
 5. merge with the policy-owned method and `--match-head-commit`;
 6. verify the merged PR and merge commit, then append `RUN_MERGED` evidence.
 
-The operation is retry-safe. If the process stops after GitHub merged the pull request but before local evidence was appended, the next attempt finds the same merged head/base pair, verifies it and appends the event without issuing another merge.
+Each remote boundary is journaled before the next one. Runtime state advances through `READY_FOR_PUBLICATION`, `PUBLICATION_PUSHED`, `PULL_REQUEST_OPEN`, `REQUIRED_CHECKS_PASSED`, and finally `FINALIZED`. The public result retains the remote name, base branch, pull request identity and verified merge SHA. When policy or the work contract explicitly disables publication, a `PUBLICATION_SKIPPED` command closes the local run without pretending it was merged.
+
+The operation is retry-safe. `BRANCH_PUSHED`, `PULL_REQUEST_RECORDED`, `REQUIRED_CHECKS_PASSED`, and `RUN_MERGED` use deterministic command identities. If the process stops after a remote effect, the next attempt verifies the same SHA/head/base and reuses the durable command instead of repeating state transitions. If GitHub already merged, it verifies and records the existing merge without issuing another merge.
 
 ## Authority boundary
 

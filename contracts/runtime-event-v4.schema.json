@@ -6,7 +6,7 @@
   "required": ["schema_version", "type", "event_id", "run_id", "sequence", "previous_hash", "recorded_at", "contract_hash", "evidence_hashes", "event_hash"],
   "properties": {
     "schema_version": { "const": 4 },
-    "type": { "enum": ["RUN_PLANNED", "WORKTREE_CREATED", "CAPABILITY_CHECKED", "EXECUTION_STARTED", "EXECUTION_COMPLETED", "DIFF_POLICY_CHECKED", "VALIDATION_RECORDED", "REVIEW_STARTED", "REVIEW_COMPLETED", "ESCALATION_DECIDED", "FINALIZATION_STARTED", "COMMIT_CREATED", "RUN_FAILED", "RUN_ABORTED"] },
+    "type": { "enum": ["RUN_PLANNED", "WORKTREE_CREATED", "CAPABILITY_CHECKED", "EXECUTION_STARTED", "EXECUTION_COMPLETED", "DIFF_POLICY_CHECKED", "VALIDATION_RECORDED", "REVIEW_STARTED", "REVIEW_COMPLETED", "ESCALATION_DECIDED", "FINALIZATION_STARTED", "COMMIT_CREATED", "BRANCH_PUSHED", "PULL_REQUEST_RECORDED", "REQUIRED_CHECKS_PASSED", "RUN_MERGED", "PUBLICATION_SKIPPED", "RUN_FAILED", "RUN_ABORTED"] },
     "event_id": { "type": "string", "pattern": "^evt_[A-Za-z0-9_-]{16,96}$" },
     "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
     "sequence": { "type": "integer", "minimum": 1 },

@@ -117,7 +117,7 @@ Every Runtime V4 model binding also carries a required, versioned guidance pack.
 
 This is not yet a production-ready one-command runner. The current branch deliberately stops before exposing saved ChatGPT/Codex authentication or an API key to repository-controlled processes. Production IPC composition for repair/finalize/abort and installation of the immutable project-local runtime bundle also remain incomplete. Until those are implemented and certified on the target host, `runtime mcp-stdio` exits with `CAPABILITY_UNVERIFIED` instead of falling back to direct edits.
 
-Publication policy is repository-owned and model-neutral. The broker can push the accepted commit, create or reuse its exact PR, wait for required checks and merge with a head-SHA guard; models never receive GitHub credentials or choose those settings. See [`docs/publication-v4.md`](docs/publication-v4.md).
+Publication policy is repository-owned and model-neutral. The broker durably advances the accepted commit through exact push, PR, required checks and head-bound merge; `FINALIZED` is reached only after the merge is verified or publication is explicitly skipped by policy. Models never receive GitHub credentials or choose those settings. See [`docs/publication-v4.md`](docs/publication-v4.md).
 
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
