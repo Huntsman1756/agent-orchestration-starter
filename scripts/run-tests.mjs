@@ -12,7 +12,8 @@ const testFiles = entries
 
 if (testFiles.length === 0) throw new Error('No TypeScript test files found');
 
-const child = spawn(process.execPath, ['--import', 'tsx/esm', '--test', ...testFiles], {
+const tsxCli = join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+const child = spawn(process.execPath, [tsxCli, '--test', ...testFiles], {
   cwd: root,
   stdio: 'inherit',
   windowsHide: true,
