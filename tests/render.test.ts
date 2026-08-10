@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { renderProject } from '../src/core/render.js';
+import { checkProject, renderProject } from '../src/core/render.js';
 import { resolvedPolicy } from './fixtures.js';
 
 async function target(): Promise<string> {
@@ -50,4 +50,31 @@ test('dry run reports planned files without writing them', async () => {
 
   assert.ok(report.created.includes('.opencode/agents/executor.md'));
   await assert.rejects(readFile(join(directory, '.opencode', 'agents', 'executor.md'), 'utf8'), /ENOENT/);
+});
+
+test('check reports an unmanaged generated file consistently when it matches desired content', async () => {
+  const directory = await target();
+  await renderProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['codex'] });
+  await unlink(join(directory, '.agent-orchestration', 'inventory.json'));
+
+  const report = await checkProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['codex'] });
+
+  assert.deepEqual(
+    report.issues.find((issue) => issue.path === '.codex/agents/executor.toml'),
+    { path: '.codex/agents/executor.toml', reason: 'unmanaged' },
+  );
+});
+
+test('check reports an unmanaged generated file consistently when it differs from desired content', async () => {
+  const directory = await target();
+  await renderProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['codex'] });
+  await unlink(join(directory, '.agent-orchestration', 'inventory.json'));
+  await writeFile(join(directory, '.codex', 'agents', 'executor.toml'), 'user-owned\n', 'utf8');
+
+  const report = await checkProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['codex'] });
+
+  assert.deepEqual(
+    report.issues.find((issue) => issue.path === '.codex/agents/executor.toml'),
+    { path: '.codex/agents/executor.toml', reason: 'unmanaged' },
+  );
 });

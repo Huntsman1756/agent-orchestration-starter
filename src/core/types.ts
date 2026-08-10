@@ -5,6 +5,24 @@ export type WriteIsolation = 'hard' | 'degraded';
 
 export type HarnessProviders = Partial<Record<HarnessName, string>>;
 
+export interface AgenticQualification {
+  policyVersion: string;
+  status: 'VERIFIED' | 'UNQUALIFIED';
+  cleanRuns: number;
+  requiredCleanRuns: 3;
+  evidenceHash: string;
+}
+
+export interface ProfileAssignment {
+  provider: string;
+  harnessProviders?: HarnessProviders;
+  model: string;
+  tier: 'frontier' | 'economy';
+  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  capabilities: string[];
+  qualification?: AgenticQualification;
+}
+
 export interface Policy {
   version: number;
   roles: Record<RoleName, {
@@ -20,24 +38,11 @@ export interface Policy {
 export interface ModelProfile {
   version: number;
   id: string;
-  assignments: Record<RoleName, {
-    provider: string;
-    harnessProviders?: HarnessProviders;
-    model: string;
-    tier: 'frontier' | 'economy';
-    reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-    capabilities: string[];
-  }>;
+  assignments: Record<RoleName, ProfileAssignment>;
 }
 
-export interface ResolvedRole {
-  provider: string;
-  harnessProviders?: HarnessProviders;
-  model: string;
+export interface ResolvedRole extends ProfileAssignment {
   modelRef: string;
-  tier: 'frontier' | 'economy';
-  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-  capabilities: string[];
   permissions: { read: boolean; write: boolean };
 }
 

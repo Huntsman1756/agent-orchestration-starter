@@ -1,0 +1,33 @@
+schema_version: 3
+gate_policy_id: arli-stage1-gate-v1
+pilot_id: arli-mechanical-localized-20260809
+manifest_hash: b431cc45d2a7cb6f08f0e3001621d446bf32b6fb8a8a82c3ec9ff8c020d70c96
+stage: 1
+evaluated_at: 2026-08-09T17:13:42.856Z
+resampling_seed: arli-bootstrap-seed-20260809
+strata_policy:
+  - matching_stratum: mechanical-low
+    complexity_class: mechanical
+    risk_class: low
+    promotion_eligible: true
+    exclusion_reason: null
+  - matching_stratum: localized-low
+    complexity_class: localized
+    risk_class: low
+    promotion_eligible: true
+    exclusion_reason: null
+thresholds:
+  material_improvement_rate: 0.15
+  economic_rejection_rate: 0.1
+  max_parent_rework_block_rate: 0.1
+  max_parent_rework_production_line_share: 0.1
+  max_escaped_material_defects: 0
+  max_escaped_high_defects: 0
+  max_escaped_critical_defects: 0
+  min_observed_cost_completeness: 0.9
+  min_observed_strong_token_completeness: 0.9
+  min_stratum_triplets_for_promotion: 10
+  confidence_level: 0.95
+  interval_algorithm_version: paired-bootstrap-sha256-counter-v1
+  resampling_iterations: 1000
+  minimum_blocks_per_arm: 10

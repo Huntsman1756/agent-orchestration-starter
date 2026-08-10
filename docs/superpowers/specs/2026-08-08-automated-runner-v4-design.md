@@ -6,7 +6,7 @@
 
 ## 1. Objective
 
-V4 turns the existing compiler and offline evidence system into an automatic, fail-closed coding workflow. A user asks for a normal coding task in Codex. A Sol orchestrator classifies and contracts the work, a local typed broker executes it in an isolated Git worktree, OpenCode with the profile-selected economy provider performs eligible implementation work, deterministic gates run, and an independent Sol reviewer accepts or rejects the resulting evidence. The broker creates a local commit on a task branch only after every required gate passes.
+V4 turns the existing compiler and offline evidence system into an automatic, fail-closed coding workflow. A user asks for a normal coding task in Codex. A Sol orchestrator classifies and contracts the work, a local typed broker executes it in an isolated Git worktree through a profile-selected executor binding, deterministic gates run, and an independent Sol reviewer accepts or rejects the resulting evidence. The broker creates a local commit on a task branch only after every required gate passes.
 
 The intended default path is:
 
@@ -14,7 +14,7 @@ The intended default path is:
 Codex/Sol orchestrator
   -> typed broker
   -> isolated worktree
-  -> OpenCode/qwen3.6
+  -> profile-selected verified executor
   -> deterministic validation
   -> fresh Codex/Sol reviewer
   -> broker commit on codex/auto/<run-id>
@@ -47,12 +47,12 @@ V4 includes:
 - frozen base SHA, contract hash, diff hash, and final tree hash;
 - mandatory OS-enforced process sandboxes for executors, validation, and review;
 - broker-built executor capsules that prevent harness configuration discovery from repositories;
-- headless OpenCode execution using explicit profile bindings;
-- capability probes for executable model bindings;
-- fail-closed OpenCode permissions generated from project policy;
+- headless executor execution using an immutable, qualified profile binding;
+- capability probes for executable harness/model bindings;
+- fail-closed harness permissions generated from project policy;
 - deterministic validation with exact command allowlists;
 - a fresh read-only Sol review session with a bounded evidence envelope;
-- a bounded qwen3.6 repair and gemma4 escalation state machine;
+- a bounded executor repair and typed frontier escalation state machine;
 - broker-owned final commit;
 - append-only runtime artifacts and V3 telemetry export.
 
@@ -62,7 +62,7 @@ V4 excludes:
 - production databases, production MCPs, real customer or fiscal data, and project secrets;
 - arbitrary shell, Git, or filesystem tools exposed over MCP;
 - Hermes production integration;
-- additional economy models in the default critical path;
+- any unqualified external agentic binding in the default critical path;
 - automatic modification of an unmanaged existing `AGENTS.md`;
 - general-purpose workflow scheduling, queues, or multi-repository fan-out;
 - automatic routing promotion based on one run.
@@ -135,59 +135,51 @@ Harness is part of each runtime role binding. Stable policy continues to name ca
 
 ```yaml
 schemaVersion: 4
-id: nan-opencode-pro
+id: profile-selected-verified-executor
 bindings:
   orchestrator:
-    harness: codex
-    provider: openai
-    model: gpt-5.6-sol
+    harness: profile-selected
     capability: frontier-planning
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
 
   executor:
-    harness: opencode
-    provider: nan
-    model: qwen3.6
-    capability: economy-coding
+    harness: profile-selected
+    capability: verified-agentic-coding
+    qualification:
+      status: VERIFIED
+      cleanRuns: 3
+      requiredCleanRuns: 3
+      evidenceHash: profile-supplied-sha256
     allowedDataScopes: [SOURCE_CODE_ONLY]
-    allowedSourceSensitivity: [PUBLIC]
-    permissions: contract-write
-
-  escalationExecutor:
-    harness: opencode
-    provider: nan
-    model: gemma4
-    capability: strong-economy-coding
-    allowedDataScopes: [SOURCE_CODE_ONLY]
-    allowedSourceSensitivity: [PUBLIC]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
 
   frontierExecutor:
-    harness: codex
-    provider: openai
-    model: gpt-5.6-sol
+    harness: profile-selected
     capability: frontier-coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
 
   reviewer:
-    harness: codex
-    provider: openai
-    model: gpt-5.6-sol
+    harness: profile-selected
     capability: frontier-review
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
 
 runtime:
-  maxEconomyParallelRequests: 2
   maxConcurrentRunsPerRepository: 1
 ```
 
-Compilation must fail when a binding is unsupported by its harness. A profile cannot silently turn a NAN model into a Codex custom agent or place a Sol subscription model in OpenCode. Provider credentials and global provider definitions remain outside the repository.
+The example is deliberately abstract: concrete provider, model, harness alias,
+and credential references belong only in a versioned profile. Compilation must
+fail when a binding is unsupported by its harness, when an executor declares
+`agentic_tool_execution` without three clean qualification runs, or when the
+profile evidence hash is missing. Provider credentials and global provider
+definitions remain outside the repository.
 
 ## 6. Capability registry and probes
 
@@ -207,6 +199,8 @@ structured_result
 file_edit
 shell
 multi_step_tool_use
+agentic_tool_execution
+patch_generation
 failed_test_recovery
 context_tokens
 output_tokens
@@ -226,12 +220,18 @@ Model descriptions do not satisfy a capability requirement. `doctor --probe-runt
 
 Initial required probes are:
 
-- qwen3.6: structured result, bounded edit, multi-step file-tool use, and one repair from broker-supplied failed-validation evidence without invoking a shell;
-- gemma4: the same executor capabilities;
-- Sol reviewer: strict review-attestation output and read-only behavior;
-- Sol frontier executor: bounded capsule edit, command containment, and credential separation.
+- the profile-selected executor: structured result, bounded edit, multi-step
+  file-tool use, validation round-trip, and one repair from broker-supplied
+  failed-validation evidence;
+- the Sol reviewer: strict review-attestation output and read-only behavior;
+- the frontier executor: bounded capsule edit, command containment, and
+  credential separation.
 
-Gemma may later register image/document capabilities, but it is explicitly ineligible for the executor binding until a separate tool-calling probe passes.
+An external agentic binding is eligible only after three consecutive clean
+  runs under the exact same immutable binding identity. A textual tool-call
+  marker, shell-contract violation, missing round-trip, or changed baseline
+  resets the qualification series to zero. Patch generation may be probed
+  separately and does not qualify agentic execution.
 
 ## 7. Runtime contracts
 
@@ -302,7 +302,12 @@ contract_hash
 
 The repository policy supplies data scope and source sensitivity; neither is caller- or model-selectable. V4 accepts only `SOURCE_CODE_ONLY`. `PUBLIC` means the repository policy permits the selected source to leave the host under the configured provider terms. `PRIVATE` means the source is non-public even when it contains no real-world records or secrets. A binding may execute only when both effective dimensions appear in its allowlists.
 
-The initial economy bindings accept `SOURCE_CODE_ONLY + PUBLIC` only. Sending private source to an economy provider requires a future explicit profile opt-in plus policy authorization and new probe evidence. A private repository therefore routes to a compatible frontier binding when policy allows it, or fails with `SOURCE_SENSITIVITY_UNSUPPORTED`; it is never silently reclassified as public.
+An executor binding may process only the data scopes and source sensitivities
+declared by its profile and verified by its capability record. A private
+repository therefore routes to a compatible qualified frontier binding when
+policy allows it, or fails with `SOURCE_SENSITIVITY_UNSUPPORTED`; it is never
+silently reclassified as public. No external provider receives private source
+by default.
 
 The repository policy may mark paths, task classes, validations, risk levels, or source sensitivities as `frontier_only`. Policy resolution is monotonic: the daemon may elevate `AUTO` or `ECONOMY` to `FRONTIER`, but can never downgrade a caller-requested or policy-required frontier route. The model cannot select its effective route, data scope, or source sensitivity.
 
@@ -435,9 +440,7 @@ The broker never checks out, resets, cleans, stashes, merges, or commits in the 
 
 Run artifacts are append-only under a broker-owned state directory. Model workers cannot edit run state or attestations.
 
-On Unix, the broker state directory and every existing component in its parent chain are a physical security boundary. The broker walks the chain without following links and rejects any symbolic link, junction-like/reparse alias, ambiguous component, ownership mismatch, or component whose stable physical identity cannot be proven. The validated physical identity, never `resolve()` or another textual path, binds endpoint coordination and every create, replace, connect, listen, cleanup, and unlink operation. Validation occurs before any socket side effect. Sensitive operations remain protected against replacement after validation by the certified cross-process coordinator plus exact identity checks inside its critical section; a pre-operation scan alone is not sufficient. Any alias or identity change fails closed without touching the legitimate socket.
-
-## 9. Executor capsule and OpenCode worker execution
+## 9. Executor capsule and worker execution
 
 Both economy executors and the Sol frontier executor run from a newly built `ExecutorCapsule`:
 
@@ -454,7 +457,12 @@ ExecutorCapsule/
 
 The harness working directory is the capsule root, never `repo/` or an ancestor of the real worktree. Repository `opencode.json`, `.opencode/`, `AGENTS.md`, `CLAUDE.md`, `.claude/`, Codex rules, plugins, tools, agents, commands, skills, and LSP definitions are therefore data inside `repo/`, not automatically discovered harness configuration. The OS sandbox exposes no user-global or system-managed harness configuration. Capability probes inspect the resolved effective configuration and fail if any unapproved source was merged.
 
-The broker uses headless OpenCode with capsule root as `--dir`, explicit agent, model, JSON output, `--pure`, and automatic permission handling. The exact CLI argv is constructed internally; no CLI fragments come from the model or work contract. OpenCode is pinned to the probed version. Its broker-owned config directory, complete effective config, executable hash, provider endpoint, and agent policy are part of the binding identity.
+The broker invokes the harness selected by the immutable profile with an
+explicit agent, model, structured output mode, and broker-owned configuration.
+The exact argv is constructed internally; no CLI fragments come from the
+model or work contract. The pinned harness version, executable hash, provider
+endpoint, effective configuration, and agent policy are part of the binding
+identity.
 
 The generated worker agent starts from a wildcard deny and adds only the minimum positive file tools:
 
@@ -468,7 +476,12 @@ edit: allow only exact paths and operations in allowed_changes
 
 All current and future tools not explicitly opened remain denied, including `bash`, `task`, `skill`, `lsp`, `question`, `webfetch`, `websearch`, MCP tools, and external directories. The worker receives no Git command capability; diffs, status, and prior findings are supplied by the broker. `--auto` may be used only with this deny-all policy and never changes an explicit deny.
 
-The broker-owned OpenCode configuration sets `share: "disabled"`, `autoupdate: false`, and `enabled_providers: ["nan"]`. The launch environment also disables auto-update, default plugins, LSP downloads, model-list fetching, and Claude compatibility using flags supported by the pinned harness. It points `OPENCODE_CONFIG_DIR` at immutable capsule configuration and uses `--pure`. Capability probes must prove the effective configuration, exact provider allowlist, and absence of project/global/managed config, plugins, custom tools, agents, rules, and skills; unrecognized or ineffective isolation controls invalidate the binding.
+The broker-owned harness configuration disables auto-update, default plugins,
+model discovery, and unmanaged project/global configuration. Capability probes
+must prove the effective configuration, exact provider allowlist, and absence
+of unapproved plugins, custom tools, agents, rules, and skills; unrecognized or
+ineffective isolation controls invalidate the binding. No external provider is
+enabled by default.
 
 Always prohibited to the worker:
 
@@ -479,7 +492,15 @@ Always prohibited to the worker:
 - project `.env` files, credential stores, production fixtures, and real data;
 - modifying broker state, attestations, inventory, or runtime policy.
 
-OpenCode runs inside an `EXECUTOR_NETWORKED` process sandbox whose filesystem view is the `ExecutorCapsule`. It cannot see the active repository, original worktree path, host credential stores, broker state, global/managed OpenCode directories, or arbitrary host files. It reaches only a per-run broker-owned provider gateway on an internal sandbox network. The gateway receives the real provider credential through the platform credential adapter, injects authentication when it creates the outbound TLS request, and never mounts repository or capsule content. OpenCode receives no provider credential in configuration, environment, files, argv, or inherited process state; a fixed non-secret local gateway token may be used only if the pinned harness requires an API-key-shaped value. The gateway strips any inbound authorization, permits only the profile-approved origin, methods, and API paths, rejects redirects and alternate destinations, and records metadata without bodies. If this separation cannot be demonstrated on the host, the binding is unavailable.
+Networked executors run inside an `EXECUTOR_NETWORKED` process sandbox whose
+filesystem view is the `ExecutorCapsule`. They cannot see the active
+repository, original worktree path, host credential stores, broker state,
+global configuration, or arbitrary host files. Outbound network is restricted
+to the resolved, pinned endpoint in the profile. The trusted harness parent
+may receive a credential through the platform adapter, but model-invoked tools
+and child processes receive no credential and cannot execute arbitrary
+processes. If that separation cannot be demonstrated on the host, the binding
+is unavailable.
 
 Repository-controlled lifecycle hooks, plugins, language servers, package installers, shells, and binaries never run in the executor sandbox. All code execution happens later through registered validation in the credential-free sandbox.
 
@@ -489,36 +510,45 @@ The initial route is deliberately small:
 
 ```text
 eligible normal task
-  -> qwen3.6 implementation
+  -> qualified executor implementation
   -> deterministic gates
   -> Sol review 1
      -> ACCEPT: finalize
-     -> REJECT: qwen3.6 repair 1
+      -> REJECT: one bounded executor repair
         -> deterministic gates
         -> Sol review 2
            -> ACCEPT: finalize
-           -> REJECT: gemma4 final execution
+            -> REJECT: typed frontier escalation
               -> deterministic gates
               -> Sol final review
                  -> ACCEPT: finalize
                  -> REJECT: fail
 ```
 
-High-risk, restricted, security, architecture, ambiguous debugging, and cross-cutting work routes directly to the Sol frontier executor in an isolated worktree. The complete initial frontier state machine is exactly `frontier execution -> deterministic validation -> fresh Sol review -> ACCEPT and finalize | terminal REJECT`. V4 performs no automatic frontier repair after rejection. It never uses qwen3.6 merely to satisfy an "economy first" rule.
+High-risk, restricted, security, architecture, ambiguous debugging, and
+cross-cutting work routes directly to the qualified frontier executor in an
+isolated worktree. The complete frontier state machine is exactly `frontier
+execution -> deterministic validation -> fresh Sol review -> ACCEPT and
+finalize | terminal REJECT`. V4 performs no automatic frontier repair after
+rejection and never selects a binding merely to satisfy an economy-first rule.
 
 The frontier executor uses the same `ExecutorCapsule` layout under a separate `FRONTIER_NETWORKED` sandbox profile. Codex starts at the capsule root with user/project config and automatic rules disabled; `repo/` is its only editable source mount, and approved project instructions arrive only through the broker-owned bundle. The trusted Codex harness may use saved CLI authentication and reach only the configured OpenAI endpoint; model-invoked commands receive no credential and have no network. Any command capability is further restricted by repository policy and the same exact allowed-change contract. Lack of capsule isolation, credential separation, or OS containment makes the frontier binding unavailable.
 
 Normative ceilings:
 
-- at most three executor attempts for the qwen3.6/gemma4 route;
-- exactly one qwen3.6 repair after the first rejected review;
-- gemma4 is legal only after the second rejected review and an explicit typed escalation event;
+- at most three executor attempts for the qualified executor route;
+- exactly one repair after the first rejected review;
+- a frontier executor is legal only after the second rejected review and an
+  explicit typed escalation event;
 - no provider fallback on authentication, policy, invalid output, grounding, validation, or unknown failures;
 - availability failure may retry the same binding within a bounded transport retry budget, but cannot change model silently;
 - failed deterministic validation prevents review acceptance and commit;
 - a final rejection terminates the run.
 
-Additional economy models remain opt-in experimental bindings and cannot enter this state machine without a future versioned policy and evidence gate.
+Any new provider, model, or harness binding remains opt-in and cannot enter
+this state machine without a future versioned policy and qualification
+evidence. Textual tool-call markup is invalid output and is never parsed into
+an executable call.
 
 ## 11. Independent Sol review
 
@@ -559,7 +589,7 @@ Validation commands are registered as exact argv arrays, working directories, ti
 
 Every validation runs in a `VALIDATION_UNTRUSTED` process sandbox with:
 
-- no OpenAI, economy-provider, Git, cloud, package-registry, SSH, or user credentials;
+- no provider, Git, cloud, package-registry, SSH, or user credentials;
 - synthetic empty `HOME`, `USERPROFILE`, config, cache, and temp roots;
 - only the task worktree and dedicated scratch/output paths mounted;
 - outbound and inbound network denied at the OS boundary;
@@ -593,7 +623,6 @@ Every failure is typed:
 INVALID_CONTRACT
 REPOSITORY_NOT_ALLOWED
 REPOSITORY_BUSY
-BROKER_STATE_CORRUPT
 BASE_SHA_INVALID
 WORKTREE_CREATION_FAILED
 CAPABILITY_UNVERIFIED
@@ -633,9 +662,9 @@ Tool schemas use strict JSON Schema and reject additional properties. Tool resul
 
 `run_coding_task` enqueues the complete state machine. The daemon automatically advances execution, validation, review, permitted repair/escalation, and finalization without another user decision. `repair_coding_task` and `finalize_coding_task` are idempotent typed controls for orchestrator recovery and explicit state progression; they cannot override the daemon's persisted findings or gates. Any `findings` supplied to repair must be only IDs and hashes that exactly match the latest stored rejection.
 
-The broker daemon owns an append-only journal plus transactional current-state store and communicates over an authenticated, user-local named pipe or Unix-domain socket with owner-only permissions. Unix endpoint creation additionally requires the link-free physical-path proof above; a textual alias is never an endpoint identity. It outlives individual STDIO clients. After daemon restart it reconciles journal state, sandbox process identity, worktree identity, and locks before accepting commands. Unknown process state fails closed; it is never assumed successful. Reconnecting with the same `request_id` returns the existing run. Thus "resumable" means resumable observation and control of daemon-owned state, not resumption of a dead STDIO process or model session.
+The broker daemon owns an append-only journal plus transactional current-state store and communicates over an authenticated, user-local named pipe or Unix-domain socket with owner-only permissions. It outlives individual STDIO clients. After daemon restart it reconciles journal state, sandbox process identity, worktree identity, and locks before accepting commands. Unknown process state fails closed; it is never assumed successful. Reconnecting with the same `request_id` returns the existing run. Thus "resumable" means resumable observation and control of daemon-owned state, not resumption of a dead STDIO process or model session.
 
-The generated project `.codex/config.toml` marks the V4 MCP server `required = true`, sets an exact `enabled_tools` list to the five domain operations, uses no forwarded credential environment variables, fixes `cwd` to the canonical project root, uses an absolute canonical path to the installed runtime bundle, and sets bounded startup/tool timeouts appropriate to short control calls. Relative-path resolution and the caller's current directory cannot select the executable. If the adapter cannot initialize or authenticate to the daemon, Codex startup fails instead of continuing without orchestration.
+The generated project `.codex/config.toml` marks the V4 MCP server `required = true`, sets an exact `enabled_tools` list to the five domain operations, uses no forwarded credential environment variables, and sets bounded startup/tool timeouts appropriate to short control calls. If the adapter cannot initialize or authenticate to the daemon, Codex startup fails instead of continuing without orchestration.
 
 The adapter and daemon accept only configured local repositories. A caller cannot register a new repository, alter validation commands, change provider credentials, choose `run_id`, set effective routing/classification, or expand permissions through MCP.
 
@@ -683,7 +712,6 @@ src/runtime/
   executor-capsule.ts
   process-sandbox.ts
   process-policy.ts
-  provider-egress-gateway.ts
   opencode-runner.ts
   codex-runner.ts
   validation.ts
@@ -708,7 +736,7 @@ contracts/
   review-attestation-v4.schema.json
 
 profiles/
-  nan-opencode.example.yaml
+  runtime.example.yaml
 
 policies/
   repository-policy.example.yaml
@@ -787,13 +815,13 @@ V4 is complete only when tests prove:
 - every repository-controlled process runs in a verified OS sandbox or the run fails before execution;
 - executor and reviewer credentials are unavailable to model-invoked commands, tests, hooks, and repository code;
 - validation has no network or host credentials and its whole descendant process tree is contained;
-- OpenCode runs pinned with `--pure`, broker-owned config, wildcard-deny permissions, no shell/Git, no sharing/auto-update, and cannot escape its worktree;
+- the selected harness runs pinned with broker-owned config, wildcard-deny permissions, no shell/Git unless explicitly allowed, no sharing/auto-update, and cannot escape its worktree;
 - economy and frontier harnesses start from an `ExecutorCapsule`; repository/global config, tools, plugins, agents, skills, rules, and instructions are not auto-discovered;
-- the OpenCode capsule enables only the profile provider and the NAN example enables only `nan`;
+- each capsule enables only the provider selected by the immutable profile; no provider is enabled by default;
 - `SOURCE_CODE_ONLY` is separate from `PUBLIC | PRIVATE`; incompatible sensitivity fails or routes to an explicitly permitted binding without silent reclassification;
 - exact path/operation and validation allowlists are enforced before and after every attempt;
 - the daemon owns `run_id`, effective route, effective risk, data scope, and source sensitivity; routing can elevate but never downgrade frontier requirements;
-- qwen3.6, qwen3.6 repair, and gemma4 escalation follow the exact bounded state machine;
+- the qualified executor, one bounded repair, and typed frontier escalation follow the exact bounded state machine;
 - high-risk work bypasses economy execution and follows the terminal frontier state machine without automatic repair;
 - deterministic validation failure prevents acceptance and commit;
 - every Sol review has a fresh ephemeral session inside a capsule where the worktree is not mounted or visible;
@@ -820,11 +848,5 @@ After V4 is validated in the starter repository:
 
 - Codex supports local STDIO MCP servers, project-scoped configuration, server instructions, `required`, exact `enabled_tools`, and bounded tool timeouts: https://developers.openai.com/codex/mcp
 - Codex non-interactive mode supports ephemeral sessions, read-only sandboxing, JSONL, output schemas, and saved CLI authentication; its security guidance forbids exposing API keys to repository-controlled code: https://learn.chatgpt.com/codex/non-interactive-mode
-- OpenCode headless execution supports `--pure`, `--dir`, explicit model/agent selection, JSON, and `--auto`: https://opencode.ai/docs/cli/
-- OpenCode custom OpenAI-compatible providers: https://opencode.ai/docs/providers/
-- OpenCode permissions are permissive by default, support wildcard deny rules, and retain explicit denies under `--auto`: https://opencode.ai/docs/permissions
-- OpenCode automatically loads global and project plugins unless isolated; `--pure` and sandbox enforcement are therefore required: https://opencode.ai/docs/plugins/
-- OpenCode project custom tools may execute code and replace built-in tools with the same name: https://opencode.ai/docs/custom-tools/
-- OpenCode automatically discovers project/global `AGENTS.md` and Claude-compatible rules from its working-directory ancestry: https://opencode.ai/docs/rules/
-- OpenCode custom configuration directories and managed configuration precedence: https://opencode.ai/docs/config/
-- Any live NAN binding must pass the versioned capability probes against its configured API contract before it is eligible for routing.
+- each supported harness documents its headless mode, structured output, and explicit tool policy in its own versioned adapter;
+- any external provider integration is profile-specific and must pass the same immutable qualification gate before execution.

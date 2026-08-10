@@ -15,7 +15,7 @@
 - The repository currently contains the V3 specification and plan but no `src/pilot/` implementation. V4 must not invent or duplicate V3; Task 12 exposes a typed adapter port and keeps concrete V3 import disabled until the separate V3 plan is implemented.
 - Node.js floor remains `>=20`; public JSON Schemas and strict Zod loaders must reject unknown properties and agree for every parity fixture.
 - Stable repository policy contains no provider/model name. Concrete providers/models remain in `profiles/*.yaml`.
-- Economy execution accepts only `SOURCE_CODE_ONLY + PUBLIC` by default. `PRIVATE` must route to an explicitly compatible frontier binding or fail with `SOURCE_SENSITIVITY_UNSUPPORTED`.
+- External economy execution is disabled by default. A qualified binding may process only the data scope and source sensitivity declared by its immutable profile; `PRIVATE` must route to an explicitly compatible frontier binding or fail with `SOURCE_SENSITIVITY_UNSUPPORTED`.
 - No model or MCP caller may choose `run_id`, effective route, effective risk, data scope, source sensitivity, command argv, environment variables, credentials, repository root, or sandbox expansion.
 - No source mutation outside exact normalized `allowed_changes`; operation kind is one of `CREATE`, `MODIFY`, or `DELETE`.
 - No generic shell, Git, filesystem, provider, or repository-registration operation is exposed over MCP.
@@ -37,7 +37,7 @@
 | Contracts | `src/runtime/contracts.ts`, `src/runtime/failures.ts`, `src/runtime/contract-schemas.ts`, `src/runtime/load.ts`, `contracts/runtime-*.schema.json` | Strict public V4 vocabulary and failures, Zod loaders, JSON Schema parity |
 | Policy/routing | `src/runtime/repository-registry.ts`, `repository-policy.ts`, `bindings.ts`, `routing.ts`, `path-policy.ts` | Resolve local registrations, freeze owner policy, resolve compatible bindings, derive effective route, reject unsafe paths |
 | Durable control | `src/runtime/journal.ts`, `run-state.ts`, `request-idempotency.ts`, `broker-daemon.ts`, `broker-ipc.ts` | Hash-chained state, locks, recovery, idempotent local control |
-| Sandbox | `src/runtime/process-sandbox.ts`, `docker-sandbox.ts`, `provider-egress-gateway.ts`, `infra/sandbox/Dockerfile` | OS-enforced execution, authenticated provider gateway, resource/network policy, hostile certification |
+| Sandbox | `src/runtime/process-sandbox.ts`, `docker-sandbox.ts`, `sandbox-egress-proxy.ts`, `infra/sandbox/Dockerfile` | OS-enforced execution, resource/network policy, hostile certification |
 | Isolation | `src/runtime/worktree.ts`, `executor-capsule.ts`, `review-capsule.ts` | Task worktree and broker-owned executor/reviewer filesystem views |
 | Harnesses | `src/runtime/opencode-runner.ts`, `codex-runner.ts`, `capabilities.ts`, `credential-adapter.ts` | Exact argv/env, structured outputs, binding probes and TTL |
 | Gates | `src/runtime/validation.ts`, `diff-policy.ts`, `review-envelope.ts`, `review-attestation.ts` | Deterministic validation, scope checks, fresh independent review |
@@ -78,7 +78,6 @@ export type RuntimeFailureCodeV4 =
   | 'INVALID_CONTRACT'
   | 'REPOSITORY_NOT_ALLOWED'
   | 'REPOSITORY_BUSY'
-  | 'BROKER_STATE_CORRUPT'
   | 'BASE_SHA_INVALID'
   | 'WORKTREE_CREATION_FAILED'
   | 'CAPABILITY_UNVERIFIED'
@@ -220,7 +219,7 @@ git commit -m "feat(runtime): add strict v4 contracts"
 - Create: `src/runtime/bindings.ts`
 - Create: `src/runtime/routing.ts`
 - Create: `src/runtime/path-policy.ts`
-- Create: `profiles/nan-opencode.example.yaml`
+- Create: `profiles/runtime.example.yaml`
 - Create: `policies/repository-policy.example.yaml`
 - Create: `tests/runtime-repository-policy.test.ts`
 - Create: `tests/runtime-repository-registry.test.ts`
@@ -243,7 +242,8 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
 - [ ] **Step 1: Write failing separation and routing tests**
 
 ```ts
-assert.equal(profile.bindings.executor.model, 'qwen3.6');
+assert.equal(profile.bindings.executor.capability, 'verified-agentic-coding');
+assert.equal(profile.bindings.executor.qualification.requiredCleanRuns, 3);
 assert.equal('model' in repositoryPolicy, false);
 assert.equal(loadRepositoryRegistration('fixture-repo', registry).canonical_root, fixtureRoot);
 assert.throws(() => loadRepositoryRegistration('missing-repo', registry), /REPOSITORY_NOT_ALLOWED/);
@@ -295,7 +295,7 @@ Create a repository fixture containing a normal file, a directory symlink/juncti
 
 - [ ] **Step 6: Add generic example profile and repository policy**
 
-The profile contains Sol/qwen3.6/gemma4 concrete bindings and `allowedSourceSensitivity`; the repository policy contains only branches, routing classes/paths, exact validation argv, source policy, sandbox requirements, and approved instruction sources. Assert `rg -i "esdata" profiles policies contracts src/runtime` returns no match.
+The profile contains concrete bindings and `allowedSourceSensitivity`; the repository policy contains only branches, routing classes/paths, exact validation argv, source policy, sandbox requirements, and approved instruction sources. Assert that no concrete provider/model identifier appears in policy or stable contracts, and that an executor declaring `agentic_tool_execution` without three clean runs is rejected.
 
 - [ ] **Step 7: Run Task 2 GREEN gates**
 
@@ -308,7 +308,7 @@ Expected: all Task 2 tests PASS; TypeScript exits 0.
 - [ ] **Step 8: Commit Task 2**
 
 ```bash
-git add src/runtime/canonical.ts src/runtime/repository-registry.ts src/runtime/repository-policy.ts src/runtime/bindings.ts src/runtime/routing.ts src/runtime/path-policy.ts profiles/nan-opencode.example.yaml policies/repository-policy.example.yaml tests/runtime-repository-registry.test.ts tests/runtime-repository-policy.test.ts tests/runtime-bindings.test.ts tests/runtime-routing.test.ts tests/runtime-path-policy.test.ts
+git add src/runtime/canonical.ts src/runtime/repository-registry.ts src/runtime/repository-policy.ts src/runtime/bindings.ts src/runtime/routing.ts src/runtime/path-policy.ts profiles/runtime.example.yaml policies/repository-policy.example.yaml tests/runtime-repository-registry.test.ts tests/runtime-repository-policy.test.ts tests/runtime-bindings.test.ts tests/runtime-routing.test.ts tests/runtime-path-policy.test.ts
 git commit -m "feat(runtime): resolve repository policy and routing"
 ```
 
@@ -360,10 +360,10 @@ await journal.append(commandA);
 await journal.append(commandB);
 const recovered = await reopenJournal(directory);
 assert.deepEqual(recovered.records.map((record) => record.command), [commandA, commandB]);
-await assert.rejects(() => reopenJournal(tamperedDirectory), /BROKER_STATE_CORRUPT/);
+await assert.rejects(() => reopenJournal(tamperedDirectory), /JOURNAL_CORRUPT/);
 ```
 
-Cover a partial trailing record, wrong sequence, broken previous hash, duplicate command ID with different bytes, and an atomic cache snapshot that disagrees with journal replay. Invalid journal bytes, hash-chain failure, and an irreconcilable cache/replay mismatch all map to the closed-catalog code `BROKER_STATE_CORRUPT`; genuinely indeterminate external process state after restart remains `UNKNOWN_FAILURE`.
+Cover a partial trailing record, wrong sequence, broken previous hash, duplicate command ID with different bytes, and an atomic cache snapshot that disagrees with journal replay.
 
 - [ ] **Step 2: Run Task 3 tests and record RED**
 
@@ -396,8 +396,6 @@ const endpoint = process.platform === 'win32'
 
 Use length-prefixed canonical JSON messages, a 256-bit token stored in the owner-only state directory, constant-time token comparison, maximum frame size 1 MiB, request deadlines, and strict command loading. Tests prove unauthenticated, oversized, malformed, replayed-mutating, and unknown commands fail without journal append.
 
-Unix precondition: before deriving the endpoint coordinator key or performing any socket operation, walk the broker state directory and every existing parent component without following links. Reject symlinks, junction-like/reparse aliases, ambiguous or unverifiable identity, ownership mismatch, and any link introduced before a destructive operation. Bind coordination to the proven physical identity rather than `resolve()` or path text, retain the certified cross-process coordinator through sensitive lifecycle operations, and recheck exact identities inside the critical section so validation cannot be replaced by a TOCTOU window. Add hostile tests for a direct state-dir symlink, an intermediate-parent symlink, two textual paths to the same physical tree, an alias inserted before cleanup/unlink, and proof that every rejection leaves the legitimate socket untouched. Unix is the mandatory gate; do not expand Windows beyond the existing abstraction unless required by shared code.
-
 - [ ] **Step 6: Test restart reconciliation**
 
 Simulate daemon exit after journal fsync but before reply, reconnect through a new STDIO-like client, resubmit the same `request_id`, and assert the original `run_id` is returned. Simulate an unknown child-process state and assert terminal typed failure rather than success.
@@ -425,7 +423,7 @@ git commit -m "feat(runtime): add durable broker daemon"
 
 - Create: `src/runtime/process-sandbox.ts`
 - Create: `src/runtime/docker-sandbox.ts`
-- Create: `src/runtime/provider-egress-gateway.ts`
+- Create: `src/runtime/sandbox-egress-proxy.ts`
 - Create: `src/runtime/sandbox-certification.ts`
 - Create: `infra/sandbox/Dockerfile`
 - Create: `tests/fixtures/sandbox/hostile-child.mjs`
@@ -451,12 +449,6 @@ export interface DockerSandboxConfigV4 {
   image_id: `sha256:${string}`;
   certification_ttl_seconds: number;
   provider_hosts: readonly string[];
-}
-
-export interface ProviderGatewayLeaseV4 {
-  readonly gateway_base_url: string;
-  readonly non_secret_api_key_value: 'broker-gateway';
-  revoke(): Promise<void>;
 }
 ```
 
@@ -509,13 +501,13 @@ const isolationArgs = [
 
 Never mount `/var/run/docker.sock`, host home, credential directories, broker state, or the active worktree. Spawn Docker with `shell: false`, an environment allowlist, bounded stdout/stderr, and a process-tree timeout.
 
-- [ ] **Step 5: Implement the broker-owned authenticated provider gateway**
+- [ ] **Step 5: Implement broker-owned provider egress proxy**
 
-Run one gateway as a sibling container with no repository or capsule mount. The executor joins only a per-run `--internal` network and uses `http://provider-gateway:8080/v1` as its provider base URL; the gateway joins that network and a separate outbound bridge. The broker streams the real provider credential to gateway stdin, never argv, environment, config, image, or a mounted file. The gateway strips inbound authorization, accepts only profile-approved methods and API paths, creates the outbound HTTPS request to the exact profile-approved origin, injects authentication there, verifies TLS, rejects IP literals/private ranges/redirects/alternate origins, and records only host, path class, decision, byte counts, and duration. The executor uses a fixed non-secret API-key-shaped value only when required by the pinned OpenCode provider adapter; it never receives a provider credential.
+Run the proxy as a sibling container with no repository mount. The target container joins only a per-run `--internal` network; the proxy joins that network and a separate outbound bridge. The proxy accepts only HTTP `CONNECT` to exact lower-case `host:443` entries from `provider_hosts`, resolves after allowlist comparison, rejects IP literals/private ranges/redirect expansion, and records only host, decision, byte counts, and duration.
 
 - [ ] **Step 6: Add hostile fixtures that attempt real effects**
 
-`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, find `PROVIDER_API_KEY`/`OPENAI_API_KEY` in environment, argv, files, and descendant state, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the gateway and fail against a second non-allowlisted fixture plus a direct IP. Gateway tests prove the executor-side request contains only the fixed non-secret value, the upstream fixture receives the injected real test credential, and Docker inspection of the executor and gateway environments exposes neither credential.
+`hostile-child.mjs` must attempt: read an outside sentinel, enumerate host home, read injected provider credential names, write outside the mount, spawn 100 descendants, keep a grandchild alive after timeout, open the Docker socket, and access loopback. `network-probe.mjs` must reach one local allowlisted TLS fixture through the proxy and fail against a second non-allowlisted fixture plus a direct IP.
 
 - [ ] **Step 7: Run hostile certification early**
 
@@ -536,7 +528,7 @@ Expected: all Task 4 tests PASS with a fresh certification bound to host, Docker
 - [ ] **Step 9: Commit Task 4**
 
 ```bash
-git add src/runtime/process-sandbox.ts src/runtime/docker-sandbox.ts src/runtime/provider-egress-gateway.ts src/runtime/sandbox-certification.ts infra/sandbox/Dockerfile tests/fixtures/sandbox tests/runtime-process-sandbox.test.ts tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts
+git add src/runtime/process-sandbox.ts src/runtime/docker-sandbox.ts src/runtime/sandbox-egress-proxy.ts src/runtime/sandbox-certification.ts infra/sandbox/Dockerfile tests/fixtures/sandbox tests/runtime-process-sandbox.test.ts tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts
 git commit -m "feat(runtime): certify docker process sandbox"
 ```
 
@@ -639,21 +631,27 @@ git commit -m "feat(runtime): isolate worktrees and executor capsules"
 
 ---
 
-### Task 6: OpenCode qwen3.6/gemma4 runner and versioned capability probes
+### Task 6: Qualified executor runner and versioned capability probes
 
 **Files:**
 
+- Create: `src/runtime/credential-adapter.ts`
 - Create: `src/runtime/opencode-config.ts`
 - Create: `src/runtime/opencode-runner.ts`
 - Create: `src/runtime/capabilities.ts`
 - Create: `tests/fixtures/bin/fake-opencode.mjs`
 - Create: `tests/runtime-opencode.test.ts`
 - Create: `tests/runtime-capabilities.test.ts`
-- Modify: `profiles/nan-opencode.example.yaml`
+- Modify: `profiles/runtime.example.yaml`
 
 **Interfaces:**
 
 ```ts
+export interface CredentialAdapterV4 {
+  lease(binding: ResolvedBindingV4): Promise<CredentialLeaseV4>;
+  revoke(leaseId: string): Promise<void>;
+}
+
 export interface OpenCodeRunnerV4 {
   execute(input: ExecutorAttemptInputV4): Promise<ExecutorAttemptResultV4>;
 }
@@ -665,7 +663,7 @@ export function assertFreshCapability(record: CapabilityRecordV4, expected: Capa
 
 - [ ] **Step 1: Write failing fake-harness argv/env/config tests**
 
-The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains `run --pure --auto --dir /capsule --model nan/qwen3.6 --agent executor --format json`; no shell fragment exists; the provider base URL is the per-run gateway; and environment contains no provider key or provider-key reference, only explicit OpenCode/runtime variables.
+The fake binary writes its cwd, argv, visible environment-key names, resolved config, and emitted JSON events to a broker-owned capture file. Assert cwd is capsule root; argv contains the profile-resolved model and agent, no shell fragment exists, and environment contains only the credential lease plus explicit harness/runtime variables.
 
 - [ ] **Step 2: Add hostile configuration-discovery tests**
 
@@ -675,7 +673,7 @@ Put conflicting model/provider values and executable custom tools in `repo/`, sy
 {
   "share": "disabled",
   "autoupdate": false,
-  "enabled_providers": ["nan"],
+  "enabled_providers": ["profile-selected-provider"],
   "permission": {
     "*": "deny",
     "read": { "*": "deny", "repo/**": "allow" },
@@ -690,15 +688,20 @@ Put conflicting model/provider values and executable custom tools in `repo/`, sy
 
 Run: `npm exec -- tsx --test tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts`
 
-Expected: FAIL because the OpenCode configuration, runner, and probe registry do not exist.
+Expected: FAIL because the credential adapter, runner, and probe registry do not exist.
 
 - [ ] **Step 4: Implement broker-owned config and structured result parser**
 
-Set `OPENCODE_CONFIG_DIR=/capsule/config`, `OPENCODE_DISABLE_AUTOUPDATE=1`, `OPENCODE_DISABLE_DEFAULT_PLUGINS=1`, `OPENCODE_DISABLE_LSP_DOWNLOAD=1`, `OPENCODE_DISABLE_MODELS_FETCH=1`, and `OPENCODE_DISABLE_CLAUDE_CODE=1`. Define the NAN provider with the per-run gateway base URL and the fixed non-secret value `broker-gateway` only if the pinned provider adapter requires an API-key-shaped value. Never give OpenCode a real NAN key, an environment reference to one, or a reusable local bearer token. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
+Set the broker-owned harness configuration and disable auto-update, default plugins, unmanaged model discovery, and global/project configuration. Resolve the provider endpoint and credential reference from the profile without serializing keys. Reject non-JSON events, output over budget, missing terminal result, unexpected tool, textual `<tool_call>` leakage, or changed binding identity as `EXECUTOR_INVALID_OUTPUT`.
 
-- [ ] **Step 5: Implement sandboxed qwen3.6 then gemma4 attempt execution**
+- [ ] **Step 5: Implement sandboxed qualified-executor attempt execution**
 
-Run OpenCode only through a freshly certified `EXECUTOR_NETWORKED` backend. qwen3.6 may perform the initial attempt and one repair from stored findings. gemma4 is legal only after two persisted review rejections and a typed `ESCALATION_DECIDED` event. Every attempt is followed immediately by `enforceDiffPolicy`.
+Run the profile-selected executor only through a freshly certified
+`EXECUTOR_NETWORKED` backend. It may perform the initial attempt and one
+repair from stored findings only when its qualification is `VERIFIED`. A
+frontier executor is legal only after two persisted review rejections and a
+typed `ESCALATION_DECIDED` event. Every attempt is followed immediately by
+`enforceDiffPolicy`.
 
 - [ ] **Step 6: Implement versioned capability probes and TTL**
 
@@ -715,9 +718,13 @@ const identity: CapabilityIdentityV4 = {
 
 Probe structured result, exact bounded edit, multi-step file-tool use, and repair from supplied failed-validation evidence without shell. Store content-addressed evidence with `probed_at`/`expires_at`. Any identity mismatch or expiry yields `CAPABILITY_UNVERIFIED`.
 
-- [ ] **Step 7: Add opt-in live NAN probe**
+- [ ] **Step 7: Add opt-in live binding probe**
 
-Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the broker-owned gateway and a disposable public fixture only. The real credential is consumed only by the gateway process. Default CI asserts the test is not run and no network call occurs.
+Gate it behind `AO_LIVE_PROVIDER_PROBES=1`; require the user credential adapter
+and a disposable fixture only. Default CI asserts the test is not run and no
+network call occurs. A live probe never promotes a binding by itself; three
+identical clean runs and a content-addressed qualification record are still
+required.
 
 - [ ] **Step 8: Run Task 6 GREEN gates**
 
@@ -730,8 +737,8 @@ Expected: fake harness tests PASS with no provider call; TypeScript exits 0.
 - [ ] **Step 9: Commit Task 6**
 
 ```bash
-git add src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/nan-opencode.example.yaml
-git commit -m "feat(runtime): run verified opencode executors"
+git add src/runtime/credential-adapter.ts src/runtime/opencode-config.ts src/runtime/opencode-runner.ts src/runtime/capabilities.ts tests/fixtures/bin/fake-opencode.mjs tests/runtime-opencode.test.ts tests/runtime-capabilities.test.ts profiles/runtime.example.yaml
+git commit -m "feat(runtime): run qualified executor bindings"
 ```
 
 ---
@@ -823,13 +830,11 @@ git commit -m "feat(runtime): validate trees in untrusted sandbox"
 
 **Files:**
 
-- Create: `src/runtime/credential-adapter.ts`
 - Create: `src/runtime/codex-runner.ts`
 - Create: `src/runtime/frontier-executor.ts`
 - Create: `contracts/frontier-executor-result-v4.schema.json`
 - Create: `tests/fixtures/bin/fake-codex.mjs`
 - Create: `tests/runtime-codex-runner.test.ts`
-- Create: `tests/runtime-credential-adapter.test.ts`
 - Create: `tests/runtime-frontier.test.ts`
 - Modify: `tests/runtime-schema-parity.test.ts`
 
@@ -866,7 +871,7 @@ Provide a fake saved-auth sentinel to the trusted Codex parent and instruct a mo
 
 - [ ] **Step 3: Run Task 8 tests and record RED**
 
-Run: `npm exec -- tsx --test tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
+Run: `npm exec -- tsx --test tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
 
 Expected: FAIL because Codex/frontier services and result schema do not exist.
 
@@ -893,7 +898,7 @@ Use only the disposable public fixture, require `AO_LIVE_PROVIDER_PROBES=1`, rec
 
 - [ ] **Step 7: Run Task 8 GREEN gates**
 
-Run: `npm exec -- tsx --test tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
+Run: `npm exec -- tsx --test tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts`
 
 Run: `npm run typecheck`
 
@@ -902,7 +907,7 @@ Expected: all Task 8 tests PASS; TypeScript exits 0.
 - [ ] **Step 8: Commit Task 8**
 
 ```bash
-git add src/runtime/credential-adapter.ts src/runtime/codex-runner.ts src/runtime/frontier-executor.ts contracts/frontier-executor-result-v4.schema.json tests/fixtures/bin/fake-codex.mjs tests/runtime-credential-adapter.test.ts tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts
+git add src/runtime/codex-runner.ts src/runtime/frontier-executor.ts contracts/frontier-executor-result-v4.schema.json tests/fixtures/bin/fake-codex.mjs tests/runtime-codex-runner.test.ts tests/runtime-frontier.test.ts tests/runtime-schema-parity.test.ts
 git commit -m "feat(runtime): execute frontier tasks in capsule"
 ```
 
@@ -976,7 +981,7 @@ Recompute `attestation_hash`, reject stale/forged/session-reused attestations, a
 
 - [ ] **Step 7: Encode the economy review/repair/escalation sequence**
 
-Test exactly: qwen3.6 → validation → review 1 → qwen3.6 repair → validation → review 2 → typed gemma4 escalation → validation → final fresh review. A fourth attempt, second qwen3.6 repair, early gemma4, validation failure, or final rejection is terminal without commit.
+Test exactly: qualified executor → validation → review 1 → one bounded repair → validation → review 2 → typed frontier escalation → validation → final fresh review. A fourth attempt, second repair, early escalation, validation failure, or final rejection is terminal without commit.
 
 - [ ] **Step 8: Run Task 9 GREEN gates**
 
@@ -1131,8 +1136,7 @@ sandbox_mode = "read-only"
 
 [mcp_servers.agent_orchestration_v4]
 command = "node"
-args = ["/tmp/agent-orchestration-fixture/.agent-orchestration/runtime/dist/cli/main.js", "runtime", "mcp-stdio"]
-cwd = "/tmp/agent-orchestration-fixture"
+args = [".agent-orchestration/runtime/dist/cli/main.js", "runtime", "mcp-stdio"]
 required = true
 enabled_tools = ["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status"]
 startup_timeout_sec = 10
@@ -1140,7 +1144,7 @@ tool_timeout_sec = 30
 default_tools_approval_mode = "auto"
 ```
 
-The TOML above is the deterministic POSIX fixture. The renderer canonicalizes its input project root, rejects a relative root or bundle path, and emits the platform-native absolute project root as `cwd` plus the absolute immutable bundle path as one argv value. Tests use a temporary absolute Windows path on Windows and the POSIX fixture elsewhere, then launch the server from an unrelated caller directory to prove resolution is independent of caller `cwd`. It creates `.codex/config.toml` only when absent or inventory-managed; unmanaged conflicts are reported and never overwritten.
+The renderer installs the immutable runtime bundle at the project-local canonical path shown above and emits that path as one argv value. It creates `.codex/config.toml` only when absent or inventory-managed; unmanaged conflicts are reported and never overwritten.
 
 - [ ] **Step 7: Add CLI lifecycle commands**
 
@@ -1240,15 +1244,15 @@ Wire Tasks 1–11 in this order: request/idempotency → policy/routing → lock
 
 - [ ] **Step 6: Add fake-harness normal/economy E2E**
 
-Prove one MCP task automatically executes qwen3.6, validates, receives fresh Sol acceptance, commits exact accepted bytes on `codex/auto/run_01HZX3YH8C7Y9QJ4J6M2G5K8N1`, leaves the active worktree untouched, and performs no push. Assert journal, artifact manifest, attestation, tree, diff, and commit hashes reproduce.
+Prove one MCP task automatically executes the qualified executor, validates, receives fresh Sol acceptance, commits exact accepted bytes on `codex/auto/run_01HZX3YH8C7Y9QJ4J6M2G5K8N1`, leaves the active worktree untouched, and performs no push. Assert journal, artifact manifest, attestation, tree, diff, and commit hashes reproduce.
 
 - [ ] **Step 7: Add repair/escalation/frontier/failure E2E matrix**
 
-Cover: qwen3.6 repair acceptance; second rejection then gemma4 acceptance; final rejection without commit; private source routed to Sol; security task routed to Sol; frontier rejection terminal; validation failure; sandbox unavailable; stale capability; forged attestation; out-of-scope path; daemon restart; abort; and broker failure with no direct-edit fallback.
+Cover: bounded repair acceptance; second rejection then frontier acceptance; final rejection without commit; private source routed to Sol; security task routed to Sol; frontier rejection terminal; validation failure; sandbox unavailable; stale qualification; forged attestation; out-of-scope path; daemon restart; abort; and broker failure with no direct-edit fallback.
 
 - [ ] **Step 8: Add package exports and operator documentation**
 
-Publish `./runtime-v4` from `src/runtime/index.ts`. Document installation, repository registry/profile/policy separation, Docker sandbox build/certification, OpenCode/Codex authentication, public-only economy default, MCP project config, run/status/abort, artifact retention/cleanup, typed failures, no-push guarantee, and the currently unavailable concrete V3 adapter.
+Publish `./runtime-v4` from `src/runtime/index.ts`. Document installation, repository registry/profile/policy separation, Docker sandbox build/certification, supported harness authentication, the qualified-executor gate, MCP project config, run/status/abort, artifact retention/cleanup, typed failures, no-push guarantee, and the currently unavailable concrete V3 adapter.
 
 - [ ] **Step 9: Run focused V4 verification**
 

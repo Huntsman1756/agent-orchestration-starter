@@ -88,9 +88,49 @@ node dist/cli/main.js benchmark `
 
 El resultado JSON devuelve `promote`, `reject` o `insufficient_evidence` por clase de tarea y candidato. Es una recomendación determinista y portable; esta versión no invoca proveedores ni modifica el routing automáticamente.
 
+## Piloto experimental V3
+
+V3 mantiene separados el registro de lo ocurrido y la decisión posterior. Un manifiesto se congela antes del piloto; cada harness añade eventos V3 append-only con identidades, hashes, duraciones y usage explícitos; el reducer deriva observaciones canónicas; y el evaluator aplica los stages y umbrales ya congelados.
+
+La CLI acotada consume únicamente esa evidencia resuelta:
+
+```powershell
+node dist/cli/main.js pilot-v3 evaluate `
+  --manifest examples/pilot-manifest-v3.yaml `
+  --events examples/pilot-events-v3.jsonl `
+  --gate examples/pilot-routing-gate-v3.yaml `
+  --evaluation-id evaluation-v3-001 `
+  --evaluation-version 1
+```
+
+Para una versión posterior debe añadirse `--prior-report ruta/al/reporte.json`; la identidad y el hash del reporte anterior se verifican antes de aceptar la supersesión. La salida canónica contiene `observations` y `report`. Los costes observados y estimados conservan provenance y completitud separadas; nunca se mezclan para satisfacer un gate. Las decisiones Stage 1/2/3 solo permiten promoción acotada en los estratos respaldados por muestra y evidencia suficientes.
+
+Esta superficie no ejecuta modelos o proveedores, no crea worktrees, no decide routing global, no hace merge ni deploy y no consulta precios actuales. Tampoco reconstruye exit status, usage, timestamps, revisiones u operaciones ausentes: el reducer los conserva como evidencia incompleta o inválida y la evaluación falla cerrado. La CLI V2 `benchmark` permanece independiente y no convierte observaciones V2 a V3.
+
+La API pública equivalente se importa desde `agent-orchestration-starter/pilot-v3`; no es necesario depender de rutas internas del paquete.
+
 ## Límites conocidos
 
 `writeIsolation` forma parte del contrato. Codex y OpenCode ofrecen `hard`; Hermes ofrece `degraded` porque hereda la superficie de herramientas del padre. Una política `hard` rechaza Hermes salvo aceptación exacta con `--accept-degraded-isolation hermes`. El manifiesto registra aislamiento requerido y efectivo.
+
+## Cualificación de ejecutores con herramientas
+
+El núcleo no habilita por defecto ningún binding externo para
+`agentic_tool_execution`. Un perfil que declare esa capacidad debe incluir una
+cualificación verificable con tres ejecuciones limpias consecutivas usando el
+mismo perfil, harness, binding, baseline, política de shell y protocolo de
+herramientas. Sin esa evidencia, la resolución falla cerrada antes de ejecutar
+el repositorio.
+
+La salida textual de herramientas (por ejemplo, etiquetas como
+`<tool_call>`) es una salida inválida. El runtime no la convierte en una
+llamada sintética. La generación de parches es una capacidad distinta que
+puede probarse en un piloto independiente con aplicación y validación
+deterministas.
+
+La decisión y la evidencia histórica de los bindings externos no cualificados
+se conservan en
+[`docs/decisions/2026-08-09-external-agentic-binding-qualification.md`](docs/decisions/2026-08-09-external-agentic-binding-qualification.md).
 
 ## Diseño e investigación
 

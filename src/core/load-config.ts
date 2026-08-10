@@ -42,6 +42,13 @@ const assignmentSchema = z.object({
   tier: tierSchema,
   reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']),
   capabilities: z.array(z.string().min(1)).min(1),
+  qualification: z.object({
+    policyVersion: z.string().min(1),
+    status: z.enum(['VERIFIED', 'UNQUALIFIED']),
+    cleanRuns: z.number().int().nonnegative(),
+    requiredCleanRuns: z.literal(3),
+    evidenceHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  }).strict().optional(),
 }).strict();
 
 const profileSchema = z.object({
