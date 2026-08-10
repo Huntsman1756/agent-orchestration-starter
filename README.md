@@ -121,6 +121,8 @@ Publication policy is repository-owned and model-neutral. The broker durably adv
 
 For larger economy-route changes, Runtime V4 also exposes a bounded iterative executor inspired by Ralph: one dependency-ready story per fresh coding context, deterministic validation, independent review, and retry from the last accepted tree. Unlike a free-running loop, only hash-bound accepted receipts cross contexts, the coding model cannot mark its own story complete, and tree promotion plus event persistence is a broker-owned atomic operation. See [`docs/iterative-executor-v4.md`](docs/iterative-executor-v4.md).
 
+Portable inspection adds explicit role/adapter capability matching, bounded story graphs, safe hash-bound trace export and deterministic trajectory evaluation. These surfaces contain no provider/model policy and cannot alter runtime gates or routing. See [`docs/portable-runtime-inspection-v4.md`](docs/portable-runtime-inspection-v4.md).
+
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos

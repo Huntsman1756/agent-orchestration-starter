@@ -102,6 +102,16 @@ export interface IterativeExecutionResultV4 {
   readonly escalation_story_id: string | null;
 }
 
+export interface IterativeTrajectorySnapshotV4 {
+  readonly status: 'COMPLETE' | 'ESCALATE' | 'IN_PROGRESS';
+  readonly tree_hash: string;
+  readonly accepted_story_ids: readonly string[];
+  readonly attempts_by_story: Readonly<Record<string, number>>;
+  readonly session_count: number;
+  readonly escalation_story_id: string | null;
+  readonly events: readonly StoryIterationEventV4[];
+}
+
 function invalid(message: string): never { throw new Error(`INVALID_CONTRACT: ${message}`); }
 function violation(message: string): never { throw new Error(`EXECUTOR_POLICY_VIOLATION: ${message}`); }
 
@@ -176,6 +186,7 @@ export function loadStoryIterationEventV4(value: unknown): StoryIterationEventV4
 
 function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: readonly StoryIterationEventV4[]) {
   if (!/^[a-f0-9]{64}$/.test(initialTreeHash)) invalid('initial tree hash is invalid');
+  if (supplied.length > plan.max_iterations) invalid('iteration history exceeds the plan budget');
   const events = supplied.map(loadStoryIterationEventV4);
   const attempts = new Map<string, number>();
   const accepted = new Map<string, AcceptedStoryReceiptV4>();
@@ -204,6 +215,21 @@ function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: r
     }
   }
   return { events, attempts, accepted, sessions, treeHash, escalationStoryId };
+}
+
+export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContractV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[] }): IterativeTrajectorySnapshotV4 {
+  const plan = loadIterativeStoryPlanV4(input.plan, input.contract);
+  const state = replay(plan, input.initial_tree_hash, input.events);
+  const complete = state.accepted.size === plan.stories.length;
+  return Object.freeze({
+    status: complete ? 'COMPLETE' : state.escalationStoryId === null ? 'IN_PROGRESS' : 'ESCALATE',
+    tree_hash: state.treeHash,
+    accepted_story_ids: Object.freeze([...state.accepted.keys()]),
+    attempts_by_story: Object.freeze(Object.fromEntries(state.attempts)),
+    session_count: state.sessions.size,
+    escalation_story_id: state.escalationStoryId,
+    events: Object.freeze([...state.events]),
+  });
 }
 
 export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4): Promise<IterativeExecutionResultV4> {
