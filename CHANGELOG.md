@@ -31,6 +31,11 @@ host qualification.
 
 ## Unreleased
 
+### Changed
+
+- Platform CI and manual host certification now exercise Ubuntu and Windows on
+  Node 20, 22 and 24, matching the supported `>=20` engine range more closely.
+
 ### Added
 
 - A packaged delegation-practice runbook covering deterministic frontend/backend stack guidance, full-stack story decomposition, validation evidence and fail-closed escalation without provider-specific core policy.
