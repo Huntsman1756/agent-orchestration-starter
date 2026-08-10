@@ -61,6 +61,12 @@ Activation is registration, not certification. `ANALYSIS_ONLY`, `ISOLATED_EXECUT
 
 Future adapters should implement the same driver boundary. They may compose `createRuntimeHostCompositionV4`, but must keep credentials in a broker-owned gateway, use certified platform verifiers/coordinators and persist accepted, failed and aborted lifecycle transitions before acknowledging controls.
 
+An adapter for OpenHands, another agent framework or a different sandbox backend follows
+the same rule. Before installation, pin and qualify its source, image, launcher, host,
+credential boundary and policy with
+[`external-runtime-qualification-v4.md`](external-runtime-qualification-v4.md). A
+vendor's default sandbox status does not transfer into the activation manifest.
+
 ## Known deployment work
 
 The repository now supplies native composition factories, complete lifecycle persistence, an immutable installer, portable activation and a hash-pinned driver loader. It intentionally does not ship a universal production host driver: saved subscriptions, API credentials, Docker, native cross-process coordination and provider protocols differ by host. Each supported host/provider combination still needs certification and evidence; each target repository does not need custom orchestrator code.

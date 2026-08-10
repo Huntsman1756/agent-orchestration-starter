@@ -125,6 +125,13 @@ For larger economy-route changes, Runtime V4 also exposes a bounded iterative ex
 
 Portable inspection adds explicit role/adapter capability matching, bounded story graphs, safe hash-bound trace export and deterministic trajectory evaluation. These surfaces contain no provider/model policy and cannot alter runtime gates or routing. See [`docs/portable-runtime-inspection-v4.md`](docs/portable-runtime-inspection-v4.md).
 
+External agent runtimes and sandbox launchers are evaluated through one provider-neutral
+qualification procedure before they can back a trusted host driver. Container use alone
+does not imply `hard` isolation. See
+[`docs/external-runtime-qualification-v4.md`](docs/external-runtime-qualification-v4.md)
+and the pinned
+[`OpenHands sandbox evaluation`](docs/research/openhands-sandbox-evaluation-2026-08-10.md).
+
 Cross-system interoperability can use the optional, version-pinned A2A v1 task projection. It exports bounded status evidence only and is intentionally not an HTTP server or a replacement for the broker state machine. See [`docs/a2a-adapter-v1.md`](docs/a2a-adapter-v1.md).
 
 Before activation in another repository, `assessRuntimeActivationV4` reports portable route coverage and host readiness for analysis-only, isolated execution, or autonomous publication. It does not infer project-specific production rules. See [`docs/activation-readiness-v4.md`](docs/activation-readiness-v4.md).
