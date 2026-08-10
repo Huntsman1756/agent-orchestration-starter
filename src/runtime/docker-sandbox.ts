@@ -46,6 +46,7 @@ export const DOCKER_ISOLATION_ARGS_V4 = Object.freeze([
 
 const commonEnvironmentKeys = new Set([
   'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'PATH', 'LANG', 'LC_ALL', 'NO_COLOR',
+  'AO_EXECUTION_ID', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME',
 ]);
 const networkedProfiles = new Set<SandboxProfileV4>([
   'EXECUTOR_NETWORKED', 'FRONTIER_NETWORKED', 'REVIEW_CAPSULE',
@@ -79,7 +80,12 @@ export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): vo
   if (!Number.isSafeInteger(config.certification_ttl_seconds)
     || config.certification_ttl_seconds < 1
     || config.certification_ttl_seconds > 900) unavailable();
-  if (config.provider_hosts.length !== 1 || config.provider_hosts[0] !== 'api.arliai.com') unavailable();
+  if (config.provider_hosts.length < 1 || config.provider_hosts.length > 16) unavailable();
+  const providerHosts = new Set<string>();
+  for (const host of config.provider_hosts) {
+    if (host.length > 253 || host !== host.toLowerCase() || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) || providerHosts.has(host)) unavailable();
+    providerHosts.add(host);
+  }
   if (config.allowed_mount_roots.length === 0
     || config.allowed_mount_roots.length > 16
     || !isAbsolute(config.active_worktree)
@@ -106,8 +112,8 @@ export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, re
   if (networked && (request.network.mode !== 'INTERNAL' || !/^ao-int-exec-[a-z0-9-]{4,80}$/.test(request.network.name))) unavailable();
 
   for (const [key, value] of Object.entries(request.environment)) {
-    const isGatewayKey = networked && key === 'ARLIAI_API_KEY' && value === 'broker-gateway';
-    const isGatewayUrl = networked && key === 'ARLIAI_BASE_URL' && value === 'http://provider-gateway:8080/v1';
+    const isGatewayKey = networked && key === 'PROVIDER_GATEWAY_TOKEN' && value === 'broker-gateway';
+    const isGatewayUrl = networked && key === 'PROVIDER_BASE_URL' && value === 'http://provider-gateway:8080/v1';
     if ((!commonEnvironmentKeys.has(key) && !isGatewayKey && !isGatewayUrl) || value.includes('\0')) unavailable();
   }
 
@@ -117,7 +123,7 @@ export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, re
       || resolve(mount.source) !== mount.source
       || mount.source.includes('\0')
       || mount.source.includes(',')
-      || !(['/capsule', '/workspace', '/scratch'] as const).includes(mount.target)
+      || !(['/capsule', '/capsule/repo', '/workspace', '/scratch'] as const).includes(mount.target)
       || !(['READ_ONLY', 'READ_WRITE'] as const).includes(mount.access)) unavailable();
     if (targets.has(mount.target)) unavailable();
     targets.add(mount.target);
@@ -920,6 +926,7 @@ async function startCertificationTlsFixtureV4(
   networkId: string,
   address: string,
   certificateDirectory: string,
+  providerHost: string,
   suffix: string,
 ): Promise<DockerContainerRemovalControllerV4> {
   const source = [
@@ -949,7 +956,7 @@ async function startCertificationTlsFixtureV4(
   const removal = owned.removal;
   try {
     await requiredDockerOutputV4(config, ['network', 'disconnect', 'none', containerId], 16_384);
-    await requiredDockerOutputV4(config, ['network', 'connect', '--alias=api.arliai.com', `--ip=${address}`, networkId, containerId], 16_384);
+    await requiredDockerOutputV4(config, ['network', 'connect', `--alias=${providerHost}`, `--ip=${address}`, networkId, containerId], 16_384);
     const started = await requiredDockerOutputV4(config, ['start', containerId], 16_384);
     if (started !== containerId) unavailable();
     await waitForExactContainerRunningV4(config, containerId);
@@ -999,7 +1006,8 @@ export async function runDockerSandboxHostileCertificationV4(
   const internalName = `ao-int-exec-cert-${runSuffix}`;
   const outboundName = `ao-out-exec-cert-${runSuffix}`;
   const executionPrefix = `exec_cert_${runSuffix}`;
-  const syntheticCredential = `synthetic-arliai-certification-${runSuffix}`;
+  const providerHost = config.provider_hosts[0]!;
+  const syntheticCredential = `synthetic-provider-certification-${runSuffix}`;
   let loopbackConnections = 0;
   const loopbackServer = createTcpServer((socket) => {
     loopbackConnections += 1;
@@ -1078,8 +1086,8 @@ export async function runDockerSandboxHostileCertificationV4(
       profile: 'VALIDATION_UNTRUSTED',
       argv: [
         'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
-        '-keyout', '/scratch/key.pem', '-out', '/scratch/cert.pem', '-subj', '/CN=api.arliai.com',
-        '-addext', 'subjectAltName=DNS:api.arliai.com',
+        '-keyout', '/scratch/key.pem', '-out', '/scratch/cert.pem', `-subj=/CN=${providerHost}`,
+        '-addext', `subjectAltName=DNS:${providerHost}`,
       ],
       working_directory: '/capsule',
       environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
@@ -1115,6 +1123,7 @@ export async function runDockerSandboxHostileCertificationV4(
       outboundNetworkId,
       '93.184.216.10',
       certificateDirectory,
+      providerHost,
       runSuffix,
     );
     gateway = await startProviderEgressGatewayV4({
@@ -1125,7 +1134,8 @@ export async function runDockerSandboxHostileCertificationV4(
       internal_network: internalName,
       outbound_network: outboundName,
       outbound_address: '93.184.216.20',
-      provider_origin: 'https://api.arliai.com',
+      provider_origin: `https://${providerHost}`,
+      allowed_provider_hosts: config.provider_hosts,
       allowed_methods: ['POST'],
       allowed_paths: ['/v1/chat/completions'],
       real_api_key: syntheticCredential,
@@ -1143,8 +1153,8 @@ export async function runDockerSandboxHostileCertificationV4(
       working_directory: '/capsule',
       environment: {
         HOME: '/tmp/home', TMPDIR: '/tmp',
-        ARLIAI_API_KEY: gateway.non_secret_api_key_value,
-        ARLIAI_BASE_URL: gateway.gateway_base_url,
+        PROVIDER_GATEWAY_TOKEN: gateway.non_secret_api_key_value,
+        PROVIDER_BASE_URL: gateway.gateway_base_url,
       },
       mounts: [],
       network: { mode: 'INTERNAL', name: internalName },

@@ -80,7 +80,7 @@ async function writeDockerForwarder(
   const source = [
     "import {spawnSync} from 'node:child_process';import {basename,dirname} from 'node:path';import {appendFileSync,writeSync} from 'node:fs';",
     "const command=basename(process.argv[1]),args=process.argv.slice(2);",
-    `if(${String(weakenCertification)}&&command==='create'&&args.some((arg)=>/^--label=agent-orchestration\.execution=exec_cert_.+_process$/.test(arg))){const image=args.findIndex((arg)=>/^sha256:[a-f0-9]{64}$/.test(arg));if(image>=0)args.splice(image,0,'--env=ARLIAI_API_KEY=wrapper-leak');}`,
+    `if(${String(weakenCertification)}&&command==='create'&&args.some((arg)=>/^--label=agent-orchestration\.execution=exec_cert_.+_process$/.test(arg))){const image=args.findIndex((arg)=>/^sha256:[a-f0-9]{64}$/.test(arg));if(image>=0)args.splice(image,0,'--env=OPENAI_API_KEY=wrapper-leak');}`,
     "appendFileSync(dirname(process.argv[1])+'/commands.log',command+' '+args.join(' ')+'\\n');",
     `const child=spawnSync(${JSON.stringify(dockerExecutable)},[command,...args],{encoding:'utf8',windowsHide:true,maxBuffer:1048576});appendFileSync(dirname(process.argv[1])+'/commands.log','=> '+String(child.status)+' '+JSON.stringify(child.stdout??'')+' '+JSON.stringify(child.stderr??'')+'\\n');writeSync(1,child.stdout??'');writeSync(2,child.stderr??'');`,
     `const block=command==='create'&&args.some((arg)=>arg==='--label=agent-orchestration.execution=${blockedExecutionId}');`,
@@ -362,6 +362,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       outbound_network: outboundNetwork,
       outbound_address: '93.184.216.20',
       provider_origin: 'https://api.arliai.com',
+      allowed_provider_hosts: ['api.arliai.com'],
       allowed_methods: ['POST'],
       allowed_paths: ['/v1/chat/completions'],
       real_api_key: syntheticCredential,
@@ -387,8 +388,8 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
       working_directory: '/capsule',
       environment: {
         HOME: '/tmp/home', TMPDIR: '/tmp',
-        ARLIAI_API_KEY: lease.non_secret_api_key_value,
-        ARLIAI_BASE_URL: lease.gateway_base_url,
+        PROVIDER_GATEWAY_TOKEN: lease.non_secret_api_key_value,
+        PROVIDER_BASE_URL: lease.gateway_base_url,
       },
       mounts: [{ source: capsule, target: '/capsule', access: 'READ_ONLY' }],
       network: { mode: 'INTERNAL', name: internalNetwork },

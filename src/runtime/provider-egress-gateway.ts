@@ -30,6 +30,7 @@ export interface ProviderGatewayStartRequestV4 {
   readonly outbound_network: string;
   readonly outbound_address: string;
   readonly provider_origin: string;
+  readonly allowed_provider_hosts: readonly string[];
   readonly allowed_methods: readonly string[];
   readonly allowed_paths: readonly string[];
   readonly real_api_key: string;
@@ -76,12 +77,16 @@ async function exactContainerIdPresentV4(executable: string, containerId: string
   unavailable();
 }
 
-export function validateProviderGatewayOriginV4(value: string): URL {
+export function validateProviderGatewayOriginV4(value: string, allowedProviderHosts: readonly string[]): URL {
   let origin: URL;
   try { origin = new URL(value); } catch { unavailable(); }
-  if (value !== 'https://api.arliai.com'
+  if (allowedProviderHosts.length < 1
+    || allowedProviderHosts.length > 16
+    || new Set(allowedProviderHosts).size !== allowedProviderHosts.length
+    || !allowedProviderHosts.every((host) => host.length <= 253 && host === host.toLowerCase() && /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host))
+    || !allowedProviderHosts.includes(origin.hostname)
+    || value !== `https://${origin.hostname}`
     || origin.protocol !== 'https:'
-    || origin.hostname !== 'api.arliai.com'
     || origin.hostname !== origin.hostname.toLowerCase()
     || isIP(origin.hostname) !== 0
     || origin.username !== ''
@@ -104,7 +109,7 @@ function validateStartRequest(request: ProviderGatewayStartRequestV4): URL {
   if (request.real_api_key.length < 16 || request.real_api_key.length > 512 || /[\r\n\0]/.test(request.real_api_key)) unavailable();
   if (!request.ca_pem.includes('-----BEGIN CERTIFICATE-----') || request.ca_pem.length > 128 * 1024) unavailable();
   if (!Number.isSafeInteger(request.startup_timeout_ms) || request.startup_timeout_ms < 100 || request.startup_timeout_ms > 60_000) unavailable();
-  return validateProviderGatewayOriginV4(request.provider_origin);
+  return validateProviderGatewayOriginV4(request.provider_origin, request.allowed_provider_hosts);
 }
 
 async function validateNetwork(
@@ -198,6 +203,7 @@ export async function startProviderEgressGatewayV4(
     request.image_id,
     'node', '/broker/provider-egress-gateway.js', '--serve',
     `--origin=${request.provider_origin}`,
+    `--allowed-host=${new URL(request.provider_origin).hostname}`,
     '--allowed-method=POST',
     '--allowed-path=/v1/chat/completions',
   ];
@@ -502,7 +508,7 @@ async function readBootPayload(): Promise<GatewayBootPayloadV4> {
 }
 
 async function serveGateway(): Promise<void> {
-  const origin = validateProviderGatewayOriginV4(argument('origin'));
+  const origin = validateProviderGatewayOriginV4(argument('origin'), [argument('allowed-host')]);
   const allowedMethod = argument('allowed-method');
   const allowedPath = argument('allowed-path');
   if (allowedMethod !== 'POST' || allowedPath !== '/v1/chat/completions') unavailable();
