@@ -9,6 +9,18 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
+    guidance: &sol_guidance
+      id: openai-sol-current
+      revision: official-2026-08-10
+      sourceUrls: [https://developers.openai.com/api/docs/guides/latest-model]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: high
+      textVerbosity: low
+      temperature: null
+      maxSteps: 64
+      instructions:
+        - Keep prompts lean and preserve explicit constraints, required evidence, and success criteria.
   executor:
     harness: opencode
     provider: nan
@@ -17,6 +29,18 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    guidance:
+      id: qwen3p6-nan
+      revision: official-2026-08-10
+      sourceUrls: [https://github.com/QwenLM/Qwen3.6/blob/main/README.md, https://nan.builders/docs/api]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: provider-default
+      textVerbosity: low
+      temperature: null
+      maxSteps: 32
+      instructions:
+        - Use direct tool calls, keep edits minimal, and stop after the contract and validation are satisfied.
   escalationExecutor:
     harness: opencode
     provider: nan
@@ -25,6 +49,18 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    guidance:
+      id: gemma4-nan
+      revision: official-2026-08-10
+      sourceUrls: [https://developers.google.com/edge/litert-lm/models/gemma-4, https://nan.builders/docs/api]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: provider-default
+      textVerbosity: low
+      temperature: null
+      maxSteps: 32
+      instructions:
+        - Follow the explicit output contract and make only the requested code changes.
   frontierExecutor:
     harness: codex
     provider: openai
@@ -33,6 +69,7 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
+    guidance: *sol_guidance
   reviewer:
     harness: codex
     provider: openai
@@ -41,6 +78,7 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
+    guidance: *sol_guidance
 runtime:
   maxEconomyParallelRequests: 2
   maxConcurrentRunsPerRepository: 1

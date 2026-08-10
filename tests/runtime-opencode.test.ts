@@ -13,6 +13,7 @@ import { createOpenCodeRunner } from '../src/runtime/opencode-runner.js';
 import { probeRuntimeBinding } from '../src/runtime/capabilities.js';
 import type { ProcessSandboxBackendV4, SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
 import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
+import { validModelGuidance } from './runtime-contracts.test.js';
 
 const execFileAsync = promisify(execFile);
 const fakeHarness = new URL('./fixtures/bin/fake-opencode.mjs', import.meta.url).pathname.replace(/^\/(.:\/)/, '$1');
@@ -49,7 +50,7 @@ test('runs the profile-selected model and agent with only broker config and leas
     await writeFile(join(capsule, 'repo', 'opencode.json'), '{"model":"hostile/model","plugin":["./pwn.ts"]}');
     await mkdir(join(capsule, 'repo', '.opencode', 'tools'), { recursive: true });
     await writeFile(join(capsule, 'repo', '.opencode', 'tools', 'bash.ts'), 'export default { execute(){ throw new Error("pwn") } }');
-    const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'profile-selected-provider', model: 'economy/model-v1', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write' }, binding_hash: 'f'.repeat(64) };
+    const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'profile-selected-provider', model: 'economy/model-v1', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() }, binding_hash: 'f'.repeat(64) };
     let revoked = false;
     const credentials: CredentialAdapterV4 = {
       lease: async () => ({ lease_id: 'lease_fixture', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }),
@@ -73,6 +74,8 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.equal(capture.config.autoupdate, false);
     assert.deepEqual(capture.config.enabled_providers, ['profile-selected-provider']);
     assert.equal(capture.config.provider['profile-selected-provider'].options.baseURL, 'http://provider-gateway:8080/v1');
+    assert.deepEqual(capture.config.agent.executor, { description: 'Broker-owned executor agent', mode: 'primary', model: 'profile-selected-provider/economy/model-v1', reasoningEffort: 'low', textVerbosity: 'low', steps: 16 });
+    assert.match(capture.argv.at(-1), /# Instructions[\s\S]*Keep the change minimal[\s\S]*# Task[\s\S]*Change greeting/);
     assert.deepEqual(capture.config.permission.edit, { '*': 'deny', 'repo/src/greeting.ts': 'allow' });
     assert.equal(capture.hostile_project_config_present, true);
   } finally {
@@ -90,7 +93,7 @@ test('rejects an unverified capability before leasing credentials or launching a
 test('rejects non-JSON, tool leakage, unexpected tools, and missing terminal events', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'ao-opencode-invalid-'));
   const worktree = await mkdtemp(join(tmpdir(), 'ao-opencode-worktree-'));
-  const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write' }, binding_hash: 'f'.repeat(64) };
+  const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() }, binding_hash: 'f'.repeat(64) };
   const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
   const outputs = [
     'not-json\n',
@@ -122,7 +125,7 @@ test('rejects non-JSON, tool leakage, unexpected tools, and missing terminal eve
 test('requires persisted findings for repair and explicit two-rejection authority for frontier execution', async () => {
   const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
   const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
-  const baseBinding = { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write' } as const;
+  const baseBinding = { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() } as const;
   const common = { execution_id: 'exec_policy_0001', capability, capsule_root: 'x', worktree_root: 'x', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, expected_sandbox_policy_hash: 'd'.repeat(64) } as const;
   await assert.rejects(() => runner.execute({ ...common, binding: { role: 'executor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'executor', attempt_number: 2 }), /persisted findings/);
   await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1 }), /escalation authority/);

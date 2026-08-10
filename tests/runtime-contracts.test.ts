@@ -36,6 +36,14 @@ export function validTaskRequest() {
   };
 }
 
+export function validModelGuidance() {
+  return {
+    id: 'fixture-guidance', revision: 'fixture-1', sourceUrls: ['https://example.invalid/model-guidance'],
+    promptFormat: 'markdown', contextPlacement: 'before-task', reasoningEffort: 'low', textVerbosity: 'low',
+    temperature: null, maxSteps: 16, instructions: ['Keep the change minimal.'],
+  } as const;
+}
+
 export function validRuntimeProfile() {
   const binding = {
     harness: 'fixture-harness',
@@ -45,6 +53,7 @@ export function validRuntimeProfile() {
     allowedDataScopes: ['SOURCE_CODE_ONLY'],
     allowedSourceSensitivity: ['PUBLIC'],
     permissions: 'read-only',
+    guidance: validModelGuidance(),
   };
   return {
     schemaVersion: 4,

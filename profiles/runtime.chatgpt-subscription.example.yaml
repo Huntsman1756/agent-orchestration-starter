@@ -1,56 +1,58 @@
 schemaVersion: 4
-id: provider-neutral-runtime-example
+id: chatgpt-subscription-runtime-example
 bindings:
   orchestrator: &frontier_read
     harness: codex
-    provider: frontier-provider
-    model: frontier-model
+    provider: openai
+    model: gpt-5.6-sol
     capability: frontier_reasoning
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
-    guidance: &frontier_guidance
-      id: frontier-guidance
-      revision: vendor-reviewed-1
-      sourceUrls: [https://provider.example.invalid/model-guidance]
+    guidance: &sol_guidance
+      id: openai-gpt-5p6-sol
+      revision: official-2026-08-10
+      sourceUrls: [https://developers.openai.com/api/docs/guides/latest-model]
       promptFormat: markdown
       contextPlacement: before-task
       reasoningEffort: high
       textVerbosity: low
       temperature: null
-      maxSteps: 48
+      maxSteps: 64
       instructions:
-        - Prefer direct, outcome-focused instructions and verify against explicit acceptance criteria.
+        - Keep prompts lean, state each instruction once, and expose only tools relevant to the task.
+        - Preserve hard constraints, autonomy boundaries, required evidence, and success criteria.
   executor: &economy_write
     harness: opencode
-    provider: economy-provider
-    model: economy-model
+    provider: openai
+    model: gpt-5.6-luna
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
-    guidance: &economy_guidance
-      id: economy-guidance
-      revision: vendor-reviewed-1
-      sourceUrls: [https://provider.example.invalid/model-guidance]
+    guidance: &luna_guidance
+      id: openai-gpt-5p6-luna
+      revision: official-2026-08-10
+      sourceUrls: [https://developers.openai.com/api/docs/guides/latest-model, https://opencode.ai/docs/agents]
       promptFormat: markdown
       contextPlacement: before-task
       reasoningEffort: low
       textVerbosity: low
-      temperature: 0
-      maxSteps: 24
+      temperature: null
+      maxSteps: 32
       instructions:
-        - Keep the implementation minimal and stop after the requested change and validation are complete.
+        - Keep prompts lean and implement only the requested scope.
+        - Prefer direct tool calls and stop when deterministic validation and the output contract are satisfied.
   escalationExecutor: *economy_write
   frontierExecutor:
-    harness: opencode
-    provider: frontier-provider
-    model: frontier-model
+    harness: codex
+    provider: openai
+    model: gpt-5.6-sol
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
-    guidance: *frontier_guidance
+    guidance: *sol_guidance
   reviewer: *frontier_read
 runtime:
   maxEconomyParallelRequests: 1

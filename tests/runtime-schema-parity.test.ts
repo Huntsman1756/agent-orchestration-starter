@@ -21,7 +21,8 @@ const hash = 'a'.repeat(64);
 const sha = 'b'.repeat(40);
 const validTaskRequest = () => ({ schema_version: 4, task_id: 'TASK-1', request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', repository_id: 'fixture-repo', objective: 'Change the greeting', task_class: 'mechanical-change', requested_risk_class: 'normal', requested_route: 'AUTO', allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['fixture test passes'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push', 'deploy'], result_schema_version: 4 });
 const validRuntimeProfile = () => {
-  const binding = { harness: 'fixture-harness', provider: 'fixture-provider', model: 'fixture-model', capability: 'fixture-capability', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'read-only' };
+  const guidance = { id: 'fixture-guidance', revision: 'fixture-1', sourceUrls: ['https://example.invalid/model-guidance'], promptFormat: 'markdown', contextPlacement: 'before-task', reasoningEffort: 'low', textVerbosity: 'low', temperature: null, maxSteps: 16, instructions: ['Keep the change minimal.'] };
+  const binding = { harness: 'fixture-harness', provider: 'fixture-provider', model: 'fixture-model', capability: 'fixture-capability', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'read-only', guidance };
   return { schemaVersion: 4, id: 'fixture-profile', bindings: { orchestrator: binding, executor: { ...binding, permissions: 'contract-write' }, escalationExecutor: { ...binding, permissions: 'contract-write' }, frontierExecutor: { ...binding, permissions: 'contract-write' }, reviewer: binding }, runtime: { maxEconomyParallelRequests: 2, maxConcurrentRunsPerRepository: 1 } };
 };
 const validRepositoryPolicy = () => ({ schemaVersion: 4, repositoryId: 'fixture-repo', base: { allowedBranches: ['main'] }, worktrees: { parentRef: 'broker-managed-worktrees' }, routing: { frontierOnly: { riskClasses: ['security'], taskClasses: [], paths: [], sourceSensitivity: ['PRIVATE'] } }, validation: { test: { argv: ['npm', 'test'], workingDirectory: '.', timeoutSeconds: 300, sandboxProfile: 'validation-default' } }, sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PUBLIC' }, sandbox: { requiredBackend: 'auto', requiredProfiles: ['executor-networked', 'frontier-networked', 'validation-untrusted', 'review-capsule'] }, instructions: { approvedSources: ['AGENTS.md'] } });
@@ -66,6 +67,7 @@ test('profile and repository policy schemas reject mixed contracts and malformed
   await assertParity('runtime-profile-v4.schema.json', validRuntimeProfile(), loadRuntimeProfileV4, [
     (value) => ({ ...value, sourcePolicy: validRepositoryPolicy().sourcePolicy }),
     (value) => ({ ...value, bindings: { ...value.bindings, executor: { ...value.bindings.executor, allowedSourceSensitivity: ['PRVIATE'] } } }),
+    (value) => ({ ...value, bindings: { ...value.bindings, executor: { ...value.bindings.executor, guidance: { ...value.bindings.executor.guidance, sourceUrls: ['http://insecure.invalid'] } } } }),
   ]);
   await assertParity('runtime-repository-policy-v4.schema.json', validRepositoryPolicy(), loadRuntimeRepositoryPolicyV4, [
     (value) => ({ ...value, bindings: validRuntimeProfile().bindings }),

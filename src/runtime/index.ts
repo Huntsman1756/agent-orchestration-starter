@@ -3,6 +3,7 @@ export * from './failures.js';
 export * from './telemetry.js';
 export * from './v3-telemetry-port.js';
 export * from './orchestrator.js';
+export * from './model-guidance.js';
 export * from './bindings.js';
 export * from './capabilities.js';
 export * from './routing.js';

@@ -9,6 +9,18 @@ const runIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{16,96}$/);
 const requestIdSchema = z.string().regex(/^req_[A-Za-z0-9_-]{16,96}$/);
 const sourceSensitivitySchema = z.enum(['PUBLIC', 'PRIVATE']);
 const dataScopeSchema = z.literal('SOURCE_CODE_ONLY');
+const modelGuidanceSchema = z.object({
+  id: identifierSchema,
+  revision: identifierSchema,
+  sourceUrls: uniqueArray(z.url().max(2_048).refine((value) => value.startsWith('https://'), 'guidance sources must use HTTPS'), { min: 1, max: 8 }),
+  promptFormat: z.enum(['plain', 'markdown', 'xml']),
+  contextPlacement: z.enum(['before-task', 'after-task']),
+  reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+  textVerbosity: z.enum(['low', 'medium', 'high']),
+  temperature: z.number().min(0).max(2).nullable(),
+  maxSteps: z.number().int().min(1).max(128),
+  instructions: uniqueArray(z.string().min(1).max(500), { max: 16 }),
+}).strict();
 const windowsReservedDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 const prohibitedPathCharacter = /[\0\\:*?"<>|[\]{}]/;
 
@@ -75,6 +87,7 @@ const bindingSchema = z.object({
   allowedDataScopes: uniqueArray(dataScopeSchema, { min: 1, max: 1 }),
   allowedSourceSensitivity: uniqueArray(sourceSensitivitySchema, { min: 1, max: 2 }),
   permissions: z.enum(['read-only', 'contract-write']),
+  guidance: modelGuidanceSchema,
 }).strict();
 
 export const runtimeProfileV4Schema = z.object({

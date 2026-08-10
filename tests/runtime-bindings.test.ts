@@ -13,6 +13,9 @@ test('resolves the economy executor binding from the profile', () => {
 
   assert.equal(binding.role, 'executor');
   assert.equal(binding.binding.model, 'economy-coder');
+  assert.equal(Object.isFrozen(binding.binding.guidance), true);
+  assert.equal(Object.isFrozen(binding.binding.guidance.instructions), true);
+  assert.throws(() => { (binding.binding.guidance as { id: string }).id = 'mutated'; }, /read only|Cannot assign/i);
 });
 
 test('rejects a route whose selected binding cannot process private source', () => {

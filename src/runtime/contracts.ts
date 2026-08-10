@@ -9,6 +9,21 @@ export type EffectiveRouteV4 = 'ECONOMY' | 'FRONTIER';
 export type ChangeOperationV4 = 'CREATE' | 'MODIFY' | 'DELETE';
 export type ReviewDecisionV4 = 'REQUEST_CONTEXT' | 'ACCEPT' | 'REJECT';
 export type RuntimeRoleV4 = 'orchestrator' | 'executor' | 'escalationExecutor' | 'frontierExecutor' | 'reviewer';
+export type PromptFormatV4 = 'plain' | 'markdown' | 'xml';
+export type ContextPlacementV4 = 'before-task' | 'after-task';
+
+export interface RuntimeModelGuidanceV4 {
+  id: string;
+  revision: string;
+  sourceUrls: readonly string[];
+  promptFormat: PromptFormatV4;
+  contextPlacement: ContextPlacementV4;
+  reasoningEffort: string;
+  textVerbosity: 'low' | 'medium' | 'high';
+  temperature: number | null;
+  maxSteps: number;
+  instructions: readonly string[];
+}
 
 export interface AllowedChangeV4 {
   path: string;
@@ -44,6 +59,7 @@ export interface RuntimeBindingV4 {
   allowedDataScopes: readonly DataScopeV4[];
   allowedSourceSensitivity: readonly SourceSensitivityV4[];
   permissions: 'read-only' | 'contract-write';
+  guidance: RuntimeModelGuidanceV4;
 }
 
 export interface RuntimeProfileV4 {
