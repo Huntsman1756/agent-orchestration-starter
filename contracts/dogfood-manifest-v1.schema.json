@@ -12,6 +12,7 @@
     "repository",
     "baseline",
     "cost_policy",
+    "provider_usage_policy",
     "analysis_policy_hash",
     "corpus_policy",
     "cases",
@@ -41,6 +42,7 @@
     },
     "baseline": { "$ref": "#/$defs/baseline" },
     "cost_policy": { "$ref": "#/$defs/costPolicy" },
+    "provider_usage_policy": { "$ref": "#/$defs/providerUsagePolicy" },
     "analysis_policy_hash": { "$ref": "#/$defs/hash" },
     "corpus_policy": { "$ref": "#/$defs/corpusPolicy" },
     "cases": {
@@ -116,6 +118,52 @@
         "conversion_policy_hash": { "$ref": "#/$defs/hash" },
         "observed_cost_in_reporting_currency": { "const": true },
         "usage_binding_refs": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_ref", "capability_class", "profile_hash"],
+      "properties": {
+        "binding_ref": { "$ref": "#/$defs/identifier" },
+        "capability_class": { "enum": ["cheap", "strong"] },
+        "profile_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "usageRoleBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_binding_refs"],
+      "properties": {
+        "allowed_binding_refs": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } }
+      }
+    },
+    "providerUsagePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding_registry", "binding_registry_hash", "roles", "required_usage_roles"],
+      "properties": {
+        "binding_registry": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/binding" } },
+        "binding_registry_hash": { "$ref": "#/$defs/hash" },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["orchestrator", "executor", "reviewer"],
+          "properties": {
+            "orchestrator": { "$ref": "#/$defs/usageRoleBindings" },
+            "executor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["orchestrated", "frontier_execution"],
+              "properties": {
+                "orchestrated": { "$ref": "#/$defs/identifier" },
+                "frontier_execution": { "$ref": "#/$defs/identifier" }
+              }
+            },
+            "reviewer": { "$ref": "#/$defs/usageRoleBindings" }
+          }
+        },
+        "required_usage_roles": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["orchestrator", "executor", "reviewer"] } }
       }
     },
     "corpusPolicy": {
@@ -202,11 +250,12 @@
     "reviewer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["binding_ref", "binding_hash", "qualification_hash", "review_policy_hash", "evidence_packet_schema_hash", "fresh_session_per_run", "same_packet_shape", "sees_executor_narrative", "sees_other_route_result", "scope"],
+      "required": ["binding_ref", "binding_hash", "qualification_hash", "profile_hash", "review_policy_hash", "evidence_packet_schema_hash", "fresh_session_per_run", "same_packet_shape", "sees_executor_narrative", "sees_other_route_result", "scope"],
       "properties": {
         "binding_ref": { "$ref": "#/$defs/identifier" },
         "binding_hash": { "$ref": "#/$defs/hash" },
         "qualification_hash": { "$ref": "#/$defs/hash" },
+        "profile_hash": { "$ref": "#/$defs/hash" },
         "review_policy_hash": { "$ref": "#/$defs/hash" },
         "evidence_packet_schema_hash": { "$ref": "#/$defs/hash" },
         "fresh_session_per_run": { "const": true },

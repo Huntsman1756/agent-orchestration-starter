@@ -44,6 +44,7 @@ export const DOGFOOD_STOP_CONDITIONS_V1 = [
 ] as const;
 
 const strategy = z.enum(['orchestrated', 'frontier_execution']);
+const usageRole = z.enum(['orchestrator', 'executor', 'reviewer']);
 const sourceSensitivity = z.enum(['PUBLIC', 'PRIVATE', 'RESTRICTED']);
 const riskClass = z.enum(['low', 'medium', 'high', 'restricted']);
 const severity = z.enum(['low', 'medium', 'high', 'critical']);
@@ -123,6 +124,7 @@ const reviewerSchema = z.object({
   binding_ref: identifier,
   binding_hash: hash,
   qualification_hash: hash,
+  profile_hash: hash,
   review_policy_hash: hash,
   evidence_packet_schema_hash: hash,
   fresh_session_per_run: z.literal(true),
@@ -130,6 +132,24 @@ const reviewerSchema = z.object({
   sees_executor_narrative: z.literal(false),
   sees_other_route_result: z.literal(false),
   scope: z.literal('EVIDENCE_ONLY'),
+}).strict();
+
+const usageRoleBindingsSchema = z.object({
+  allowed_binding_refs: z.array(identifier).min(1).max(128),
+}).strict();
+
+const providerUsagePolicySchema = z.object({
+  binding_registry: z.array(bindingV3Schema).min(1).max(128),
+  binding_registry_hash: hash,
+  roles: z.object({
+    orchestrator: usageRoleBindingsSchema,
+    executor: z.object({
+      orchestrated: identifier,
+      frontier_execution: identifier,
+    }).strict(),
+    reviewer: usageRoleBindingsSchema,
+  }).strict(),
+  required_usage_roles: z.array(usageRole).min(1).max(3),
 }).strict();
 
 const runPolicySchema = z.object({
@@ -173,6 +193,7 @@ const dogfoodManifestShape = {
   repository: z.object({ repository_id: identifier, base_branch: identifier }).strict(),
   baseline: baselineSchema,
   cost_policy: costPolicySchema,
+  provider_usage_policy: providerUsagePolicySchema,
   analysis_policy_hash: hash,
   corpus_policy: corpusPolicySchema,
   cases: z.array(caseSchema).min(20).max(30),
@@ -192,6 +213,12 @@ export type DogfoodManifestV1 = z.infer<typeof dogfoodManifestV1Schema>;
 export type DogfoodManifestInputV1 = Omit<DogfoodManifestV1, 'schema_version' | 'manifest_hash' | 'schedule_hash' | 'schedule'>;
 
 const defectSchema = z.object({ defect_hash: hash, severity }).strict();
+const usageEventBindingSchema = z.object({
+  usage_id: identifier,
+  run_id: identifier,
+  event_id: identifier,
+  event_hash: hash,
+}).strict();
 const dogfoodRunRecordShape = {
   schema_version: z.literal(1),
   record_hash: hash,
@@ -211,7 +238,8 @@ const dogfoodRunRecordShape = {
     evidence_schema_version: z.literal(3),
     pricing_snapshot: pricingSnapshotV3Schema,
     binding_registry: z.array(bindingV3Schema).min(1).max(128),
-    usage: z.array(usageRecordedV3Schema).max(128),
+    usage: z.array(usageRecordedV3Schema).min(1).max(128),
+    usage_event_bindings: z.array(usageEventBindingSchema).min(1).max(128),
     usage_ledger_hash: hash,
     binding_registry_hash: hash,
   }).strict(),
@@ -384,10 +412,36 @@ function manifestErrors(manifest: DogfoodManifestV1): string[] {
   if (new Set(manifest.route_bindings.map(binding => binding.binding_ref)).size !== manifest.route_bindings.length) {
     errors.push('route binding references must be unique');
   }
+  const topology = manifest.provider_usage_policy;
+  const topologyRegistry = canonicalBindingRegistry(topology.binding_registry);
+  const topologyRefs = new Set(topologyRegistry.map(binding => binding.binding_ref));
+  if (topology.binding_registry_hash !== hashCanonical(topologyRegistry)) errors.push('provider usage policy registry hash does not match canonical registry content');
+  if (topologyRefs.size !== topologyRegistry.length) errors.push('provider usage policy binding references must be unique');
   const requiredUsageRefs = [...manifest.route_bindings.map(binding => binding.binding_ref), manifest.reviewer.binding_ref];
+  for (const bindingRef of requiredUsageRefs) if (!topologyRefs.has(bindingRef)) errors.push(`provider usage policy omits required binding: ${bindingRef}`);
   const usageRefs = new Set(manifest.cost_policy.usage_binding_refs);
   if (usageRefs.size !== manifest.cost_policy.usage_binding_refs.length) errors.push('cost policy usage binding references must be unique');
-  for (const bindingRef of requiredUsageRefs) if (!usageRefs.has(bindingRef)) errors.push(`cost policy omits required usage binding: ${bindingRef}`);
+  if (usageRefs.size !== topologyRefs.size || [...topologyRefs].some(bindingRef => !usageRefs.has(bindingRef))) errors.push('cost policy usage binding references must match the frozen provider usage registry');
+  const orchestratorRefs = new Set(topology.roles.orchestrator.allowed_binding_refs);
+  const reviewerRefs = new Set(topology.roles.reviewer.allowed_binding_refs);
+  const executorRefs = new Set([topology.roles.executor.orchestrated, topology.roles.executor.frontier_execution]);
+  for (const [role, refs] of [['orchestrator', orchestratorRefs], ['reviewer', reviewerRefs], ['executor', executorRefs]] as const) {
+    for (const bindingRef of refs) if (!topologyRefs.has(bindingRef)) errors.push(`${role} usage policy references unknown binding: ${bindingRef}`);
+  }
+  const allRoleRefs = new Set([...orchestratorRefs, ...reviewerRefs, ...executorRefs]);
+  for (const bindingRef of topologyRefs) if (!allRoleRefs.has(bindingRef)) errors.push(`provider usage registry contains an unassigned binding: ${bindingRef}`);
+  for (const requiredRole of ['executor', 'reviewer'] as const) if (!topology.required_usage_roles.includes(requiredRole)) errors.push(`provider usage policy must require the ${requiredRole} usage role`);
+  if (new Set(topology.required_usage_roles).size !== topology.required_usage_roles.length) errors.push('provider usage policy required roles must be unique');
+  const routeBindingByStrategy = new Map(manifest.route_bindings.map(binding => [binding.strategy, binding]));
+  for (const currentStrategy of ['orchestrated', 'frontier_execution'] as const) {
+    const routeBinding = routeBindingByStrategy.get(currentStrategy);
+    if (routeBinding && topology.roles.executor[currentStrategy] !== routeBinding.binding_ref) errors.push(`executor usage policy does not match the ${currentStrategy} route binding`);
+    const registryBinding = routeBinding ? topologyRegistry.find(binding => binding.binding_ref === routeBinding.binding_ref) : undefined;
+    if (routeBinding && registryBinding && registryBinding.profile_hash !== routeBinding.profile_hash) errors.push(`${currentStrategy} provider profile hash does not match its route binding`);
+  }
+  if (!reviewerRefs.has(manifest.reviewer.binding_ref)) errors.push('reviewer usage policy must allow the frozen reviewer binding');
+  const reviewerRegistryBinding = topologyRegistry.find(binding => binding.binding_ref === manifest.reviewer.binding_ref);
+  if (reviewerRegistryBinding && reviewerRegistryBinding.profile_hash !== manifest.reviewer.profile_hash) errors.push('reviewer provider profile hash does not match its reviewer binding');
   const caseIds = new Set<string>();
   const taskIds = new Set<string>();
   const pairIds = new Set<string>();
@@ -435,6 +489,10 @@ function canonicalBindingRegistry(bindings: DogfoodRunRecordV1['provider_cost_ev
   return [...bindings].sort((left, right) => compareCodeUnits(left.binding_ref, right.binding_ref));
 }
 
+function canonicalUsageEventBindings(bindings: DogfoodRunRecordV1['provider_cost_evidence']['usage_event_bindings']): readonly DogfoodRunRecordV1['provider_cost_evidence']['usage_event_bindings'][number][] {
+  return [...bindings].sort((left, right) => compareCodeUnits(left.usage_id, right.usage_id));
+}
+
 function timingErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): string[] {
   const errors: string[] = [];
   const started = parseTimestamp(record.started_at);
@@ -456,6 +514,7 @@ function timingErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): 
 function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): string[] {
   const errors: string[] = [];
   const policy = manifest.cost_policy;
+  const topology = manifest.provider_usage_policy;
   const expectedPolicyHash = hashCanonical(policy);
   if (record.cost_policy_hash !== expectedPolicyHash) errors.push('cost_policy_hash does not match the frozen cost policy');
   if (record.currency !== policy.reporting_currency) errors.push('currency does not match the frozen reporting currency');
@@ -466,16 +525,38 @@ function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): st
   if (snapshot.pricing_snapshot_hash !== hashCanonical(snapshotContent)) errors.push('provider pricing snapshot hash does not match its content');
   if (snapshot.pricing_snapshot_hash !== policy.conversion_policy_hash) errors.push('provider pricing snapshot does not match the frozen conversion policy');
   if (snapshot.currency !== policy.reporting_currency) errors.push('provider pricing snapshot currency does not match the frozen reporting currency');
-  if (providerEvidence.usage_ledger_hash !== hashCanonical(canonicalUsageLedger(providerEvidence.usage as readonly UsageRecordedV3[]))) errors.push('provider usage ledger hash does not match canonical usage content');
+  const canonicalUsage = canonicalUsageLedger(providerEvidence.usage as readonly UsageRecordedV3[]);
+  const canonicalUsageEventRefs = canonicalUsageEventBindings(providerEvidence.usage_event_bindings);
+  if (providerEvidence.usage_ledger_hash !== hashCanonical({ usage: canonicalUsage, usage_event_bindings: canonicalUsageEventRefs })) errors.push('provider usage ledger hash does not match canonical usage and event references');
   if (providerEvidence.binding_registry_hash !== hashCanonical(canonicalBindingRegistry(providerEvidence.binding_registry))) errors.push('provider binding registry hash does not match canonical registry content');
+  if (providerEvidence.binding_registry_hash !== topology.binding_registry_hash) errors.push('provider binding registry does not match the frozen provider usage topology');
 
-  const allowedBindingRefs = new Set(policy.usage_binding_refs);
+  const allowedBindingRefs = new Set(topology.binding_registry.map(binding => binding.binding_ref));
   const registryBindingRefs = new Set(providerEvidence.binding_registry.map(binding => binding.binding_ref));
   if (registryBindingRefs.size !== providerEvidence.binding_registry.length) errors.push('provider binding registry references must be unique');
-  if (registryBindingRefs.size !== allowedBindingRefs.size || [...allowedBindingRefs].some(bindingRef => !registryBindingRefs.has(bindingRef))) errors.push('provider binding registry does not match frozen usage binding references');
+  if (registryBindingRefs.size !== allowedBindingRefs.size || [...allowedBindingRefs].some(bindingRef => !registryBindingRefs.has(bindingRef))) errors.push('provider binding registry does not match the frozen provider usage registry');
   const tariffBindingRefs = new Set(snapshot.tariffs.map(tariff => tariff.binding_ref));
   if (tariffBindingRefs.size !== registryBindingRefs.size || [...registryBindingRefs].some(bindingRef => !tariffBindingRefs.has(bindingRef))) errors.push('provider pricing tariffs do not match the provider binding registry');
-  for (const usage of providerEvidence.usage) if (!allowedBindingRefs.has(usage.binding_ref)) errors.push(`provider usage references an unapproved binding: ${usage.binding_ref}`);
+  const usageIds = new Set(providerEvidence.usage.map(usage => usage.usage_id));
+  if (usageIds.size !== providerEvidence.usage.length) errors.push('provider usage ids must be unique');
+  const eventRefsByUsageId = new Map<string, typeof canonicalUsageEventRefs[number]>();
+  for (const eventRef of providerEvidence.usage_event_bindings) {
+    if (eventRefsByUsageId.has(eventRef.usage_id)) errors.push(`provider usage event references must be unique: ${eventRef.usage_id}`);
+    eventRefsByUsageId.set(eventRef.usage_id, eventRef);
+    if (eventRef.run_id !== record.run_id) errors.push(`provider usage event ${eventRef.event_id} is bound to a different run`);
+    if (!record.evidence_hashes.includes(eventRef.event_hash)) errors.push(`provider usage event ${eventRef.event_id} is not included in the run evidence hashes`);
+  }
+  if (eventRefsByUsageId.size !== usageIds.size || [...usageIds].some(usageId => !eventRefsByUsageId.has(usageId))) errors.push('provider usage event references must cover every usage entry exactly once');
+  const allowedUsageRefs = (role: UsageRecordedV3['role']): readonly string[] => role === 'executor'
+    ? [topology.roles.executor[record.strategy]]
+    : topology.roles[role].allowed_binding_refs;
+  const usageRoles = new Set<UsageRecordedV3['role']>();
+  for (const usage of providerEvidence.usage) {
+    usageRoles.add(usage.role);
+    if (!allowedBindingRefs.has(usage.binding_ref)) errors.push(`provider usage references an unapproved binding: ${usage.binding_ref}`);
+    if (!allowedUsageRefs(usage.role).includes(usage.binding_ref)) errors.push(`provider ${usage.role} usage does not match the frozen role binding: ${usage.binding_ref}`);
+  }
+  for (const requiredRole of topology.required_usage_roles) if (!usageRoles.has(requiredRole)) errors.push(`provider usage evidence is missing required role: ${requiredRole}`);
 
   let aggregate: ReturnType<typeof aggregateUsage> | null = null;
   try {
@@ -492,7 +573,7 @@ function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): st
       }
     }
     if (aggregate.cost_observed.value !== record.observed_cost_micro_units) errors.push('observed_cost_micro_units does not match reproduced provider cost');
-    const frontierUsageCalls = aggregate.priced_usage.filter(usage => providerEvidence.binding_registry.find(binding => binding.binding_ref === usage.binding_ref)?.capability_class === 'strong').length;
+    const frontierUsageCalls = aggregate.priced_usage.filter(usage => usage.role === 'executor' && providerEvidence.binding_registry.find(binding => binding.binding_ref === usage.binding_ref)?.capability_class === 'strong').length;
     if (record.frontier_usage_calls !== frontierUsageCalls) errors.push('frontier_usage_calls does not match reproduced provider usage');
   }
 
@@ -521,6 +602,18 @@ function semanticErrors(record: DogfoodRunRecordV1): string[] {
   if (record.post_acceptance_defects.length > 0 && !record.final_accepted) errors.push('post_acceptance_defects require final_accepted');
   if (record.post_acceptance_defects.some(defect => defect.severity === 'critical') && !record.false_acceptance) errors.push('critical post-acceptance defects require critical false acceptance');
   return errors;
+}
+
+type DerivedDogfoodStopCondition = Extract<DogfoodStopEventV1['stop_condition'], 'CRITICAL_FALSE_ACCEPTANCE' | 'CROSS_RUN_CONTAMINATION' | 'UNRECONSTRUCTABLE_EVIDENCE'>;
+
+function derivedStopCondition(record: DogfoodRunRecordV1): DerivedDogfoodStopCondition | null {
+  // Precedence is frozen to the stop-condition order: a critical false
+  // acceptance is more specific than contamination, which is more specific
+  // than an unreconstructable evidence condition observed in the same run.
+  if (record.false_acceptance && record.post_acceptance_defects.some(defect => defect.severity === 'critical')) return 'CRITICAL_FALSE_ACCEPTANCE';
+  if (record.cross_run_contamination) return 'CROSS_RUN_CONTAMINATION';
+  if (!record.evidence_reconstructible) return 'UNRECONSTRUCTABLE_EVIDENCE';
+  return null;
 }
 
 export function loadDogfoodManifestV1(value: unknown): DogfoodManifestV1 {
@@ -676,6 +769,18 @@ export function verifyDogfoodRunSetV1(manifest: DogfoodManifestV1, records: read
   for (const ordinal of expectedOrdinals) if (!seenOrdinals.has(ordinal)) errors.push(`missing schedule ordinal: ${ordinal}`);
   for (const record of parsedRecords) if (!expectedOrdinals.has(record.schedule_ordinal)) errors.push(`record occurs after the frozen stop ordinal: ${record.schedule_ordinal}`);
   const orderedRecords = [...parsedRecords].sort((left, right) => left.schedule_ordinal - right.schedule_ordinal);
+  const firstDerivedStop = orderedRecords
+    .map(record => ({ record, stopCondition: derivedStopCondition(record) }))
+    .find(value => value.stopCondition !== null) ?? null;
+  if (firstDerivedStop) {
+    if (stopEvent === null) {
+      errors.push(`derived hard stop ${firstDerivedStop.stopCondition} at ordinal ${firstDerivedStop.record.schedule_ordinal} requires a hash-bound stop event; run set cannot be COMPLETE`);
+    } else {
+      if (stopEvent.last_completed_schedule_ordinal !== firstDerivedStop.record.schedule_ordinal) errors.push('stop event must target the first observable derived hard-stop ordinal');
+      if (stopEvent.stop_condition !== firstDerivedStop.stopCondition) errors.push('stop event must use the first observable derived hard-stop condition');
+      if (stopEvent.triggering_run_id !== firstDerivedStop.record.run_id) errors.push('stop event must identify the first observable derived hard-stop run');
+    }
+  }
   if (manifest.run_policy.execution_mode === 'STRICT_SERIAL') {
     for (let index = 1; index < orderedRecords.length; index += 1) {
       const prior = parseTimestamp(orderedRecords[index - 1]!.completed_at);
@@ -693,6 +798,6 @@ export function verifyDogfoodRunSetV1(manifest: DogfoodManifestV1, records: read
     const stopVerification = verifyDogfoodStopEventV1(manifest, stopEvent, triggeringRun ?? null);
     if (!stopVerification.ok) errors.push(...stopVerification.errors.map(error => `stop event: ${error}`));
   }
-  const status = stopEvent ? 'STOPPED_OPERATIONAL_FAILURE' : 'COMPLETE';
+  const status = stopEvent || firstDerivedStop ? 'STOPPED_OPERATIONAL_FAILURE' : 'COMPLETE';
   return { ok: errors.length === 0, errors, status, expected_records: expectedOrdinals.size, actual_records: records.length };
 }

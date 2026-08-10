@@ -60,15 +60,29 @@ The manifest also freezes `cost_policy`:
 - `observed_cost_in_reporting_currency: true` means route, repair and escalation
   costs are already converted before recording them.
 - `usage_binding_refs` freezes every binding allowed to appear in the provider
-  usage ledger, including both route bindings and the reviewer binding.
+  usage ledger, including both route bindings and the reviewer binding. It must
+  equal the registry frozen by `provider_usage_policy`.
+
+`provider_usage_policy` is the execution-topology boundary. It freezes the
+canonical binding registry and its hash, maps the executor binding separately
+for `orchestrated` and `frontier_execution`, declares the bindings allowed for
+the orchestrator and reviewer roles, and requires the executor and reviewer
+usage roles for every valid dogfood record. The run verifier compares every
+run's registry to this manifest registry; changing a capability class,
+profile hash, role binding or allowed binding therefore invalidates the run.
+Each usage entry also has a hash-bound `usage_event_bindings` reference with
+the record's `run_id`, event id and event hash. The event hash must be present
+in the run evidence packet, so a provider can no longer report an unrelated or
+empty ledger as the cost of a real execution.
 
 The verifier recomputes human cost as
 `human_intervention_seconds × human_cost_micro_units_per_second` and total cost
 as `observed_cost_micro_units + human_intervention_cost_micro_units`.
 `conversion_policy_hash` must equal the self-hash of the V3 pricing snapshot in
 each run's `provider_cost_evidence`. That evidence retains the pricing snapshot,
-binding registry and usage ledger; the verifier reuses V3 `aggregateUsage`/
-`priceUsage` logic to reproduce observed cost and frontier usage calls.
+binding registry, usage ledger and event references; the verifier reuses V3
+`aggregateUsage`/`priceUsage` logic to reproduce observed cost and executor
+frontier usage calls.
 
 Changing any one of these starts a new experiment. Do not edit a frozen
 manifest in place and do not reinterpret a record under a later binding.
@@ -185,8 +199,12 @@ records must be exactly the prefix `1..N`, the triggering run must be ordinal
 contain both routes for every case. Without a stop event, the only valid result
 is `COMPLETE` with the full schedule. A system stop detected before the first run
 may use ordinal `0` and `triggering_run_id: null`; run-derived stop conditions
-must include the triggering record hash in `evidence_hashes`. The verifier also
-checks causal compatibility: critical false acceptance requires both
+must include the triggering record hash in `evidence_hashes`. The verifier
+derives the first observable hard-stop condition from records, in frozen
+precedence order `CRITICAL_FALSE_ACCEPTANCE`, `CROSS_RUN_CONTAMINATION`, then
+`UNRECONSTRUCTABLE_EVIDENCE`. A run-set with such a record cannot be
+`COMPLETE`: it must contain a stop event targeting that first ordinal and no
+later record. The verifier also checks causal compatibility: critical false acceptance requires both
 `false_acceptance: true` and a critical post-acceptance defect, cross-run
 contamination requires `cross_run_contamination: true`, and unreconstructable
 evidence requires `evidence_reconstructible: false`. Authority escapes and

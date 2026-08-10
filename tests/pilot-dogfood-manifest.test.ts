@@ -18,6 +18,7 @@ import {
   verifyDogfoodStopEventV1,
   type DogfoodManifestInputV1,
   type DogfoodManifestV1,
+  type DogfoodRunRecordV1,
   type DogfoodRunRecordInputV1,
   type DogfoodStopEventInputV1,
 } from '../src/pilot/dogfood-manifest.js';
@@ -46,25 +47,23 @@ function pricingSnapshot(): PricingSnapshotV3 {
 }
 
 function providerRegistry(manifest: DogfoodManifestV1): BindingRegistryV3 {
-  const orchestrated = manifest.route_bindings.find(binding => binding.strategy === 'orchestrated')!;
-  const frontier = manifest.route_bindings.find(binding => binding.strategy === 'frontier_execution')!;
-  return [
-    { binding_ref: orchestrated.binding_ref, capability_class: 'cheap', profile_hash: orchestrated.profile_hash },
-    { binding_ref: frontier.binding_ref, capability_class: 'strong', profile_hash: frontier.profile_hash },
-    { binding_ref: manifest.reviewer.binding_ref, capability_class: 'strong', profile_hash: manifest.reviewer.binding_hash },
-  ];
+  return [...manifest.provider_usage_policy.binding_registry];
 }
 
-function providerUsage(bindingRef: string, runId: string): UsageRecordedV3 {
+function providerUsage(bindingRef: string, runId: string, role: UsageRecordedV3['role']): UsageRecordedV3 {
   return {
-    usage_id: `${runId}-usage`, attempt_number: 1, role: 'executor', binding_ref: bindingRef,
+    usage_id: `${runId}-${role}-usage`, attempt_number: 1, role, binding_ref: bindingRef,
     provider_usage_id: null, input_tokens_observed: 100, output_tokens_observed: 0,
     cached_input_tokens_observed: null, reasoning_tokens_observed: null,
     input_tokens_estimated: null, output_tokens_estimated: null, cached_input_tokens_estimated: null,
     reasoning_tokens_estimated: null, token_estimator_id: null, token_estimator_version: null,
     pricing_snapshot_id: 'pricing-v1', cost_observed: 100, cost_estimated: null, currency: 'USD',
-    cost_provenance: 'TARIFF_REPRODUCED', attempt_id: 'attempt-1', review_id: null,
-    orchestrator_operation_id: null,
+    cost_provenance: 'TARIFF_REPRODUCED',
+    ...(role === 'executor'
+      ? { attempt_id: `${runId}-attempt-1`, review_id: null, orchestrator_operation_id: null }
+      : role === 'reviewer'
+        ? { attempt_id: null, review_id: `${runId}-review-1`, orchestrator_operation_id: null }
+        : { attempt_id: null, review_id: null, orchestrator_operation_id: `${runId}-operation-1` }),
   };
 }
 
@@ -72,18 +71,33 @@ function providerCostEvidence(manifest: DogfoodManifestV1, strategy: 'orchestrat
   const snapshot = pricingSnapshot();
   const bindingRegistry = providerRegistry(manifest);
   const routeBinding = manifest.route_bindings.find(binding => binding.strategy === strategy)!;
-  const usage = [providerUsage(routeBinding.binding_ref, runId)];
+  const usage = [providerUsage(routeBinding.binding_ref, runId, 'executor'), providerUsage(manifest.reviewer.binding_ref, runId, 'reviewer')];
+  const usageEventBindings = usage.map((entry, index) => ({
+    usage_id: entry.usage_id,
+    run_id: runId,
+    event_id: `evt-${runId}-${entry.role}`,
+    event_hash: hash(index === 0 ? '3' : '4'),
+  }));
   return {
     evidence_schema_version: 3 as const,
     pricing_snapshot: snapshot,
     binding_registry: [...bindingRegistry],
     usage,
-    usage_ledger_hash: hashCanonical(usage),
+    usage_event_bindings: usageEventBindings,
+    usage_ledger_hash: hashCanonical({
+      usage: [...usage].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+      usage_event_bindings: [...usageEventBindings].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+    }),
     binding_registry_hash: hashCanonical([...bindingRegistry].sort((left, right) => left.binding_ref.localeCompare(right.binding_ref))),
   };
 }
 
 function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifestInputV1 {
+  const providerBindings = [
+    { binding_ref: 'binding-orchestrated', capability_class: 'cheap' as const, profile_hash: hash('d') },
+    { binding_ref: 'binding-frontier', capability_class: 'strong' as const, profile_hash: hash('4') },
+    { binding_ref: 'binding-reviewer', capability_class: 'strong' as const, profile_hash: hash('8') },
+  ];
   return {
     experiment_id: 'dogfood-v1-example',
     created_at: timestamp,
@@ -102,6 +116,16 @@ function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifest
       conversion_policy_hash: pricingSnapshot().pricing_snapshot_hash,
       observed_cost_in_reporting_currency: true,
       usage_binding_refs: ['binding-orchestrated', 'binding-frontier', 'binding-reviewer'],
+    },
+    provider_usage_policy: {
+      binding_registry: providerBindings,
+      binding_registry_hash: hashCanonical([...providerBindings].sort((left, right) => left.binding_ref.localeCompare(right.binding_ref))),
+      roles: {
+        orchestrator: { allowed_binding_refs: ['binding-frontier'] },
+        executor: { orchestrated: 'binding-orchestrated', frontier_execution: 'binding-frontier' },
+        reviewer: { allowed_binding_refs: ['binding-reviewer'] },
+      },
+      required_usage_roles: ['executor', 'reviewer'],
     },
     analysis_policy_hash: hash('6'),
     corpus_policy: {
@@ -152,6 +176,7 @@ function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifest
       binding_ref: 'binding-reviewer',
       binding_hash: hash('d'),
       qualification_hash: hash('e'),
+      profile_hash: hash('8'),
       review_policy_hash: hash('f'),
       evidence_packet_schema_hash: hash('1'),
       fresh_session_per_run: true,
@@ -235,11 +260,11 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     attempts: 1,
     duration_ms: 2_000,
     currency: 'USD',
-    observed_cost_micro_units: 100,
+    observed_cost_micro_units: 200,
     human_interventions: 0,
     human_intervention_seconds: 0,
     human_intervention_cost_micro_units: 0,
-    total_cost_to_accepted_result_micro_units: 100,
+    total_cost_to_accepted_result_micro_units: 200,
     frontier_usage_calls: scheduled.strategy === 'frontier_execution' ? 1 : 0,
     changed_files: 1,
     changed_lines: 4,
@@ -248,7 +273,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     post_acceptance_window_closed: true,
     post_acceptance_defects: [],
     evidence_reconstructible: true,
-    evidence_hashes: [hash('2')],
+    evidence_hashes: [hash('2'), hash('3'), hash('4')],
     cross_run_contamination: false,
     publication_state: 'MANUAL_PENDING',
     recorded_at: timestampAt((scheduleOrdinal - 1) * 3 + 86_402),
@@ -338,7 +363,7 @@ test('run records recalculate human cost and total cost from the frozen cost pol
     human_interventions: 1,
     human_intervention_seconds: 10,
     human_intervention_cost_micro_units: 250,
-    total_cost_to_accepted_result_micro_units: 350,
+    total_cost_to_accepted_result_micro_units: 450,
   }));
   const validResult = verifyDogfoodRunRecordV1(manifest, valid);
   assert.equal(validResult.ok, true, validResult.errors.join('; '));
@@ -400,6 +425,114 @@ test('run-set verification requires exactly one valid record per scheduled ordin
   const serialResult = verifyDogfoodRunSetV1(manifest, [records[0]!, overlapping, ...records.slice(2)]);
   assert.equal(serialResult.ok, false);
   assert.match(serialResult.errors.join('; '), /strict serial/u);
+});
+
+test('run-set verification derives the first observable hard stop instead of accepting a forged COMPLETE result', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const records = manifest.schedule.map((entry, index) => freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: `run-derived-${String(index + 1).padStart(4, '0')}`,
+    ...(entry.ordinal === 7 ? { cross_run_contamination: true } : {}),
+  }, entry.ordinal)));
+  const missingStop = verifyDogfoodRunSetV1(manifest, records);
+  assert.equal(missingStop.ok, false);
+  assert.equal(missingStop.status, 'STOPPED_OPERATIONAL_FAILURE');
+  assert.match(missingStop.errors.join('; '), /derived hard stop.*requires.*stop event/u);
+
+  const triggeringRun = records[6]!;
+  const stopEvent = freezeDogfoodStopEventV1({
+    experiment_id: manifest.experiment_id,
+    manifest_hash: manifest.manifest_hash,
+    stop_condition: 'CROSS_RUN_CONTAMINATION',
+    last_completed_schedule_ordinal: 7,
+    triggering_run_id: triggeringRun.run_id,
+    observed_at: timestampAt(21),
+    evidence_hashes: [triggeringRun.record_hash, hash('c')],
+  });
+  const validStoppedPrefix = verifyDogfoodRunSetV1(manifest, records.slice(0, 7), stopEvent);
+  assert.equal(validStoppedPrefix.ok, true, validStoppedPrefix.errors.join('; '));
+
+  const earlierUnreconstructable = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: 'run-derived-unreconstructable',
+    evidence_reconstructible: false,
+  }, 3));
+  const laterContaminated = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: 'run-derived-contaminated',
+    cross_run_contamination: true,
+  }, 4));
+  const wrongFirstStop = freezeDogfoodStopEventV1({
+    experiment_id: manifest.experiment_id,
+    manifest_hash: manifest.manifest_hash,
+    stop_condition: 'CROSS_RUN_CONTAMINATION',
+    last_completed_schedule_ordinal: 4,
+    triggering_run_id: laterContaminated.run_id,
+    observed_at: timestampAt(12),
+    evidence_hashes: [laterContaminated.record_hash, hash('c')],
+  });
+  const wrongFirstStopResult = verifyDogfoodRunSetV1(manifest, [records[0]!, records[1]!, earlierUnreconstructable, laterContaminated], wrongFirstStop);
+  assert.equal(wrongFirstStopResult.ok, false);
+  assert.match(wrongFirstStopResult.errors.join('; '), /first observable derived hard-stop|first observable derived hard-stop condition/u);
+});
+
+test('provider usage evidence is bound to the frozen topology, required roles and run events', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const record = freezeDogfoodRunRecordV1(recordInput(manifest));
+
+  const changedRegistry = record.provider_cost_evidence.binding_registry.map(binding => binding.binding_ref === 'binding-orchestrated'
+    ? { ...binding, profile_hash: hash('9') }
+    : binding);
+  const changedRegistryEvidence = {
+    ...record.provider_cost_evidence,
+    binding_registry: changedRegistry,
+    binding_registry_hash: hashCanonical([...changedRegistry].sort((left, right) => left.binding_ref.localeCompare(right.binding_ref))),
+  };
+  const changedRegistryRecord = freezeDogfoodRunRecordV1(recordInput(manifest, { provider_cost_evidence: changedRegistryEvidence }));
+  const changedRegistryResult = verifyDogfoodRunRecordV1(manifest, changedRegistryRecord);
+  assert.equal(changedRegistryResult.ok, false);
+  assert.match(changedRegistryResult.errors.join('; '), /frozen provider usage topology/u);
+
+  const executorUsage = record.provider_cost_evidence.usage[0]!;
+  const executorEvent = record.provider_cost_evidence.usage_event_bindings[0]!;
+  const missingReviewerEvidence = {
+    ...record.provider_cost_evidence,
+    usage: [executorUsage],
+    usage_event_bindings: [executorEvent],
+    usage_ledger_hash: hashCanonical({ usage: [executorUsage], usage_event_bindings: [executorEvent] }),
+  };
+  const missingReviewerRecord = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    provider_cost_evidence: missingReviewerEvidence,
+    observed_cost_micro_units: 100,
+    total_cost_to_accepted_result_micro_units: 100,
+  }));
+  const missingReviewerResult = verifyDogfoodRunRecordV1(manifest, missingReviewerRecord);
+  assert.equal(missingReviewerResult.ok, false);
+  assert.match(missingReviewerResult.errors.join('; '), /missing required role: reviewer/u);
+
+  const wrongRunEventBindings = record.provider_cost_evidence.usage_event_bindings.map((eventRef, index) => index === 0
+    ? { ...eventRef, run_id: 'another-run' }
+    : eventRef);
+  const wrongRunEvidence = {
+    ...record.provider_cost_evidence,
+    usage_event_bindings: wrongRunEventBindings,
+    usage_ledger_hash: hashCanonical({
+      usage: [...record.provider_cost_evidence.usage].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+      usage_event_bindings: [...wrongRunEventBindings].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+    }),
+  };
+  const wrongRunRecord = freezeDogfoodRunRecordV1(recordInput(manifest, { provider_cost_evidence: wrongRunEvidence }));
+  const wrongRunResult = verifyDogfoodRunRecordV1(manifest, wrongRunRecord);
+  assert.equal(wrongRunResult.ok, false);
+  assert.match(wrongRunResult.errors.join('; '), /different run/u);
+
+  assert.throws(() => freezeDogfoodRunRecordV1(recordInput(manifest, {
+    provider_cost_evidence: {
+      ...record.provider_cost_evidence,
+      usage: [],
+      usage_event_bindings: [],
+      usage_ledger_hash: hashCanonical({ usage: [], usage_event_bindings: [] }),
+    },
+    observed_cost_micro_units: 0,
+    total_cost_to_accepted_result_micro_units: 0,
+  })), /too_small/u);
 });
 
 test('run-set verification distinguishes a complete experiment from an operationally stopped prefix', () => {

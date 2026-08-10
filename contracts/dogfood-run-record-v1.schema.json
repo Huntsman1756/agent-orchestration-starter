@@ -181,14 +181,26 @@
     "providerCostEvidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["evidence_schema_version", "pricing_snapshot", "binding_registry", "usage", "usage_ledger_hash", "binding_registry_hash"],
+      "required": ["evidence_schema_version", "pricing_snapshot", "binding_registry", "usage", "usage_event_bindings", "usage_ledger_hash", "binding_registry_hash"],
       "properties": {
         "evidence_schema_version": { "const": 3 },
         "pricing_snapshot": { "$ref": "#/$defs/pricingSnapshot" },
         "binding_registry": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/binding" } },
-        "usage": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/usage" } },
+        "usage": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/usage" } },
+        "usage_event_bindings": { "type": "array", "minItems": 1, "maxItems": 128, "items": { "$ref": "#/$defs/usageEventBinding" } },
         "usage_ledger_hash": { "$ref": "#/$defs/hash" },
         "binding_registry_hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "usageEventBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["usage_id", "run_id", "event_id", "event_hash"],
+      "properties": {
+        "usage_id": { "$ref": "#/$defs/identifier" },
+        "run_id": { "$ref": "#/$defs/identifier" },
+        "event_id": { "$ref": "#/$defs/identifier" },
+        "event_hash": { "$ref": "#/$defs/hash" }
       }
     }
   }

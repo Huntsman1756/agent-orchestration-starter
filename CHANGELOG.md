@@ -71,6 +71,10 @@ host qualification.
 - Runtime deployment documentation now distinguishes one-time machine composition from per-repository policy/profile activation.
 - Host loading now verifies task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification before importing the thin root.
 - Installation identity now includes aggregate host certification as well as installed bytes, and repository activation binds the exact `hostCompositionHash`.
+- Dogfood run-set verification now derives the first observable hard stop from
+  run evidence, rejects a `COMPLETE` result without its hash-bound stop event,
+  and freezes the provider usage registry, role-to-binding topology, required
+  usage roles and run/event identity references.
 
 ### Fixed
 
