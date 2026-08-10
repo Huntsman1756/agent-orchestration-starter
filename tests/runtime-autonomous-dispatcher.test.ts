@@ -96,6 +96,35 @@ function candidate(): AutonomousTaskCandidateV4 {
   };
 }
 
+test('a fresh dispatcher starts paused and performs no external calls before explicit activation', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-default-paused-'));
+  const calls: string[] = [];
+  const dispatcher = createAutonomousDispatcherV4({
+    state_directory: stateDirectory,
+    policy: {
+      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
+      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+    },
+    source: {
+      listCandidates: async () => { calls.push('list'); return { candidates: [], next_cursor: null }; },
+      loadCandidate: async () => { calls.push('load'); return null; }, claim: async () => { calls.push('claim'); return 'BUSY'; },
+      renew: async () => { calls.push('renew'); return 'LOST'; }, complete: async () => { calls.push('complete'); },
+      reopen: async () => { calls.push('reopen'); }, fail: async () => { calls.push('fail'); },
+    },
+    runtime: {
+      start: async () => { calls.push('start'); return result(); },
+      resume: async () => { calls.push('resume'); return result(); },
+    },
+    post_merge: { verify: async () => { calls.push('verify'); return { outcome: 'PASS', evidence_hash: hash }; } },
+  });
+
+  assert.equal((await dispatcher.status()).mode, 'PAUSED');
+  const report = await dispatcher.runCycle();
+  assert.deepEqual(calls, []);
+  assert.equal(report.scanned, 0);
+  assert.equal((await dispatcher.status()).mode, 'PAUSED');
+});
+
 test('one cycle claims and submits exactly one authorized task', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-'));
   const calls: string[] = [];
@@ -129,6 +158,7 @@ test('one cycle claims and submits exactly one authorized task', async () => {
     lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
 
+  await dispatcher.setMode('RUNNING');
   const report = await dispatcher.runCycle();
   const status = await dispatcher.status();
 
@@ -185,6 +215,7 @@ test('a new dispatcher process renews and resumes durable work without resubmitt
     now: () => '2026-08-10T13:00:00.000Z',
     lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
+  await first.setMode('RUNNING');
   await first.runCycle();
 
   const calls: string[] = [];
@@ -234,6 +265,7 @@ test('a crash after claim reloads the exact candidate and reuses its idempotent 
     post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
     now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
+  await interrupted.setMode('RUNNING');
   await assert.rejects(interrupted.runCycle(), /simulated crash/u);
   assert.equal((await interrupted.status()).tasks[0]!.status, 'CLAIMED');
 
@@ -273,12 +305,14 @@ test('a merged run closes its source task only after exact post-merge verificati
     claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
     complete: async () => {}, reopen: async () => {}, fail: async () => {},
   };
-  await createAutonomousDispatcherV4({
+  const starter = createAutonomousDispatcherV4({
     state_directory: stateDirectory, policy, source,
     runtime: { start: async () => result(), resume: async () => result() },
     post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
     now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
-  }).runCycle();
+  });
+  await starter.setMode('RUNNING');
+  await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
@@ -316,11 +350,13 @@ test('a post-merge regression reopens the task and trips the configured circuit 
     claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
     complete: async () => {}, reopen: async () => {}, fail: async () => {},
   };
-  await createAutonomousDispatcherV4({
+  const starter = createAutonomousDispatcherV4({
     state_directory: stateDirectory, policy, source,
     runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
     now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
-  }).runCycle();
+  });
+  await starter.setMode('RUNNING');
+  await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
@@ -345,9 +381,12 @@ test('a post-merge regression reopens the task and trips the configured circuit 
   assert.equal(status.consecutive_failures, 1);
   assert.equal((await finisher.runCycle()).circuit_open, true);
 
+  await assert.rejects(finisher.resetCircuit(), /INVALID_STATE: circuit reset requires PAUSED mode/u);
+  await finisher.setMode('PAUSED');
   const reset = await finisher.resetCircuit();
   assert.equal(reset.circuit_open, false);
   assert.equal(reset.consecutive_failures, 0);
+  assert.equal(reset.mode, 'PAUSED');
   assert.equal((await finisher.status()).circuit_open, false);
 });
 
@@ -362,11 +401,13 @@ test('a terminal runtime failure is reported once and becomes durable failed wor
     claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
     complete: async () => {}, reopen: async () => {}, fail: async () => {},
   };
-  await createAutonomousDispatcherV4({
+  const starter = createAutonomousDispatcherV4({
     state_directory: stateDirectory, policy, source,
     runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
     now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
-  }).runCycle();
+  });
+  await starter.setMode('RUNNING');
+  await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
@@ -408,6 +449,7 @@ test('a busy source candidate advances the durable cursor without starting work'
     now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
 
+  await dispatcher.setMode('RUNNING');
   const report = await dispatcher.runCycle();
 
   assert.equal(report.skipped, 1);
