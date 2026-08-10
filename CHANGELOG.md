@@ -75,6 +75,9 @@ host qualification.
 ### Fixed
 
 - Relaxed the Windows Docker termination timing assertion to match the bounded `taskkill` and process-absence cleanup contract instead of relying on a sub-second runner timing.
+- Stabilized the stale-lock reclamation regression test with an explicit queue
+  barrier so Node-version scheduling cannot release the first contender before
+  the second contender has entered the certified reclamation queue.
 
 - Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
 
