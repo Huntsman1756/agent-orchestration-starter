@@ -78,6 +78,9 @@ host qualification.
 - Stabilized the stale-lock reclamation regression test with an explicit queue
   barrier so Node-version scheduling cannot release the first contender before
   the second contender has entered the certified reclamation queue.
+- Serialized test-file execution in the cross-platform validation runner so
+  Windows and Node-version scheduling cannot introduce nondeterministic
+  inter-file races during the full suite.
 
 - Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
 
