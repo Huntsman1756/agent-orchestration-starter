@@ -38,6 +38,9 @@ host qualification.
 
 ### Added
 
+- A bounded, seeded dispatcher state-machine model test covering pause, run,
+  admission, crash/recovery, drain and abort invariants with replayable
+  counterexamples.
 - A packaged delegation-practice runbook covering deterministic frontend/backend stack guidance, full-stack story decomposition, validation evidence and fail-closed escalation without provider-specific core policy.
 - Provider-neutral worker capability snapshots that bind plans to exact model, endpoint, harness, parser, tool, instruction/skill and qualification identities plus qualified story limits.
 - Hash-verified structured repair packets and normalized no-progress detection for bounded iterative execution.
