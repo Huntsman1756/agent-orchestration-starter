@@ -133,6 +133,14 @@ export const runtimeRepositoryPolicyV4Schema = z.object({
     requiredProfiles: uniqueArray(identifierSchema, { min: 1, max: 16 }),
   }).strict(),
   instructions: z.object({ approvedSources: uniqueArray(normalizedRepositoryRelativePathV4Schema.max(512), { min: 1, max: 64 }) }).strict(),
+  publication: z.object({
+    enabled: z.boolean(),
+    remote: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/),
+    baseBranch: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/).refine((value) => !value.includes('..') && !value.endsWith('.') && !value.endsWith('/')),
+    mergeMethod: z.enum(['squash', 'merge', 'rebase']),
+    requireRequiredChecks: z.boolean(),
+    timeoutSeconds: z.number().int().min(30).max(3_600),
+  }).strict(),
 }).strict();
 
 export const runtimeWorkContractV4Schema = z.object({

@@ -12,6 +12,7 @@ function policy(): RuntimeRepositoryPolicyV4 {
     validation: { test: { argv: ['npm', 'test', '--', '--runInBand'], workingDirectory: '.', timeoutSeconds: 120, sandboxProfile: 'VALIDATION_UNTRUSTED' } },
     sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PUBLIC' },
     sandbox: { requiredBackend: 'docker', requiredProfiles: ['VALIDATION_UNTRUSTED'] }, instructions: { approvedSources: ['AGENTS.md'] },
+    publication: { enabled: true, remote: 'origin', baseBranch: 'main', mergeMethod: 'squash', requireRequiredChecks: true, timeoutSeconds: 900 },
   };
 }
 

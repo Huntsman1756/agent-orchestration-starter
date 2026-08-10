@@ -111,13 +111,15 @@ La API pública equivalente se importa desde `agent-orchestration-starter/pilot-
 
 ## Automated Runtime V4 status
 
-The public `agent-orchestration-starter/runtime-v4` API now includes strict contracts, capability gates, isolated executor/reviewer building blocks, deterministic validation, hook-free local finalization, bounded telemetry, and the daemon-owned orchestration port. Project Codex configuration is fail-closed: the primary context is read-only and the five-tool MCP server is required.
+The public `agent-orchestration-starter/runtime-v4` API now includes strict contracts, capability gates, isolated executor/reviewer building blocks, deterministic validation, hook-free local finalization, exact-SHA GitHub publication, bounded telemetry, and the daemon-owned orchestration port. Project Codex configuration is fail-closed: the primary context is read-only and the five-tool MCP server is required.
 
 Every Runtime V4 model binding also carries a required, versioned guidance pack. Prompt shape and bounded inference controls travel with the replaceable model profile, while repository authority remains provider-neutral. Changing a model or its guidance changes the binding/profile hash and requires fresh capability qualification. See [`docs/model-guidance-v4.md`](docs/model-guidance-v4.md) and the dated [`profiles/runtime.chatgpt-subscription.example.yaml`](profiles/runtime.chatgpt-subscription.example.yaml).
 
 This is not yet a production-ready one-command runner. The current branch deliberately stops before exposing saved ChatGPT/Codex authentication or an API key to repository-controlled processes. Production IPC composition for repair/finalize/abort and installation of the immutable project-local runtime bundle also remain incomplete. Until those are implemented and certified on the target host, `runtime mcp-stdio` exits with `CAPABILITY_UNVERIFIED` instead of falling back to direct edits.
 
-See `docs/runtime-v4-operations.md` for the verified surface, deployment gates, typed failures, and no-push guarantee.
+Publication policy is repository-owned and model-neutral. The broker can push the accepted commit, create or reuse its exact PR, wait for required checks and merge with a head-SHA guard; models never receive GitHub credentials or choose those settings. See [`docs/publication-v4.md`](docs/publication-v4.md).
+
+See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos
 

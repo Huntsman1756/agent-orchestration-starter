@@ -79,6 +79,14 @@ export interface RuntimeRepositoryPolicyV4 {
   sourcePolicy: { dataScope: DataScopeV4; sourceSensitivity: SourceSensitivityV4 };
   sandbox: { requiredBackend: string; requiredProfiles: readonly string[] };
   instructions: { approvedSources: readonly string[] };
+  publication: {
+    enabled: boolean;
+    remote: string;
+    baseBranch: string;
+    mergeMethod: 'squash' | 'merge' | 'rebase';
+    requireRequiredChecks: boolean;
+    timeoutSeconds: number;
+  };
 }
 
 export interface RuntimeWorkContractV4 extends RuntimeTaskRequestV4 {

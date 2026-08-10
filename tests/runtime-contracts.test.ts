@@ -97,6 +97,7 @@ export function validRepositoryPolicy() {
       requiredProfiles: ['executor-networked', 'frontier-networked', 'validation-untrusted', 'review-capsule'],
     },
     instructions: { approvedSources: ['AGENTS.md'] },
+    publication: { enabled: true, remote: 'origin', baseBranch: 'main', mergeMethod: 'squash', requireRequiredChecks: true, timeoutSeconds: 900 },
   };
 }
 

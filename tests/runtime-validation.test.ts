@@ -17,6 +17,7 @@ function frozenPolicy() {
     routing: { frontierOnly: { riskClasses: [], taskClasses: [], paths: [], sourceSensitivity: ['PRIVATE'] } },
     validation: { test: { argv: ['node', '--test'], workingDirectory: '.', timeoutSeconds: 30, sandboxProfile: 'VALIDATION_UNTRUSTED' } },
     sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PUBLIC' }, sandbox: { requiredBackend: 'docker', requiredProfiles: ['VALIDATION_UNTRUSTED'] }, instructions: { approvedSources: ['AGENTS.md'] },
+    publication: { enabled: true, remote: 'origin', baseBranch: 'main', mergeMethod: 'squash', requireRequiredChecks: true, timeoutSeconds: 900 },
   };
   return freezeRepositoryPolicy(policy);
 }
