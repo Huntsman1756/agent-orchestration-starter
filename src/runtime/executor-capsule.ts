@@ -6,6 +6,7 @@ import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 export interface ExecutorCapsuleV4 {
   readonly root: string;
   readonly manifest_hash: string;
+  readonly instruction_manifest_hash: string;
 }
 
 export interface ExecutorCapsuleInputV4 {
@@ -45,5 +46,5 @@ export async function buildExecutorCapsuleV4(input: ExecutorCapsuleInputV4): Pro
     mounts: [{ capsule_path: 'repo', host_path: worktree, mode: 'rw' }],
   } as const;
   await writeFile(join(root, 'config', 'mount-manifest.json'), `${canonicalJsonV4(manifest)}\n`, { flag: 'wx', mode: 0o600 });
-  return Object.freeze({ root, manifest_hash: hashCanonicalV4(manifest) });
+  return Object.freeze({ root, manifest_hash: hashCanonicalV4(manifest), instruction_manifest_hash: input.instruction_manifest_hash });
 }

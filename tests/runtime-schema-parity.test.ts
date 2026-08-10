@@ -12,6 +12,7 @@ import {
   loadRuntimeTaskRequestV4,
   loadRuntimeWorkContractV4,
 } from '../src/runtime/load.js';
+import { loadFrontierExecutorResultV4 } from '../src/runtime/codex-runner.js';
 
 type Loader = (value: unknown) => unknown;
 
@@ -91,5 +92,14 @@ test('review attestation schema and loader reject unresolved acceptance', async 
   await assertParity('review-attestation-v4.schema.json', validReviewAttestation(), loadReviewAttestationV4, [
     (value) => ({ ...value, decision: 'ACCEPT', unresolved_finding_ids: ['finding-1'] }),
     (value) => ({ ...value, reviewed_diff_hash: 'not-a-hash' }),
+  ]);
+});
+
+test('frontier executor result schema and loader reject unknown fields and unsafe paths', async () => {
+  await assertParity('frontier-executor-result-v4.schema.json', { schema_version: 4, status: 'COMPLETED', summary: 'done', changed_paths: ['src/greeting.ts'] }, loadFrontierExecutorResultV4, [
+    (value) => ({ ...value, unexpected: true }),
+    (value) => ({ ...value, status: 'FAILED' }),
+    (value) => ({ ...value, changed_paths: ['../outside'] }),
+    (value) => ({ ...value, changed_paths: ['src/A.ts', 'src/A.ts'] }),
   ]);
 });

@@ -27,6 +27,7 @@ test('capsule exposes only broker-owned roots and a declarative repo mount', asy
     });
 
     assert.deepEqual((await readdir(capsule.root)).sort(), ['agent', 'cache', 'config', 'home', 'instructions', 'repo', 'tmp']);
+    assert.equal(capsule.instruction_manifest_hash, 'b'.repeat(64));
     assert.deepEqual(JSON.parse(await readFile(join(capsule.root, 'config', 'mount-manifest.json'), 'utf8')), {
       base_sha: 'a'.repeat(40),
       instruction_manifest_hash: 'b'.repeat(64),

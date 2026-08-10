@@ -18,6 +18,9 @@ test('qualifies only three identical complete probe runs and binds their evidenc
     exact_bounded_edit: true,
     multi_step_file_tools: true,
     repair_from_validation_evidence: true,
+    capsule_only: true,
+    credential_separation: true,
+    tool_network_denied: true,
     shell_used: false,
     transcript_hash: 'c'.repeat(64),
   } as const;
@@ -46,6 +49,9 @@ test('identity drift, expiry, or incomplete evidence is CAPABILITY_UNVERIFIED', 
       exact_bounded_edit: iteration++ !== 0,
       multi_step_file_tools: true,
       repair_from_validation_evidence: true,
+      capsule_only: true,
+      credential_separation: true,
+      tool_network_denied: true,
       shell_used: false,
       transcript_hash: 'c'.repeat(64),
     }),
@@ -54,7 +60,7 @@ test('identity drift, expiry, or incomplete evidence is CAPABILITY_UNVERIFIED', 
     identity,
     probed_at: '2026-08-10T08:00:00.000Z',
     ttl_seconds: 60,
-    run_probe: async () => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, shell_used: false, transcript_hash: 'c'.repeat(64) }),
+    run_probe: async () => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, capsule_only: true, credential_separation: true, tool_network_denied: true, shell_used: false, transcript_hash: 'c'.repeat(64) }),
   });
   assert.throws(() => assertFreshCapability(record, { ...identity, harness_version: '1.18.16' }, '2026-08-10T08:00:30.000Z'), /CAPABILITY_UNVERIFIED/);
   assert.throws(() => assertFreshCapability(record, identity, '2026-08-10T08:01:01.000Z'), /CAPABILITY_UNVERIFIED/);
