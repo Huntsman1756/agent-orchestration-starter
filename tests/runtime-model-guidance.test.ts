@@ -1,0 +1,55 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+
+import { parse } from 'yaml';
+
+import { resolveBinding } from '../src/runtime/bindings.js';
+import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
+import { codexModelConfigArgvV4, openCodeModelOptionsV4, renderModelPromptV4 } from '../src/runtime/model-guidance.js';
+import { validModelGuidance, validRuntimeProfile } from './runtime-contracts.test.js';
+
+test('renders the selected model guidance without changing stable authority', () => {
+  const markdown = renderModelPromptV4({ guidance: validModelGuidance(), stableInstructions: ['Stable boundary.'], task: 'Change greeting.', context: '{"trusted":true}' });
+  assert.match(markdown, /^# Instructions\n\nStable boundary\.\nKeep the change minimal\./);
+  assert.ok(markdown.indexOf('# Context') < markdown.indexOf('# Task'));
+
+  const xml = renderModelPromptV4({ guidance: { ...validModelGuidance(), promptFormat: 'xml', contextPlacement: 'after-task' }, stableInstructions: ['Never widen scope.'], task: 'Use <repo>.', context: 'A&B' });
+  assert.ok(xml.indexOf('<task>') < xml.indexOf('<context>'));
+  assert.match(xml, /Use &lt;repo&gt;\./);
+  assert.match(xml, /A&amp;B/);
+});
+
+test('maps only bounded cross-provider controls and rejects unsupported Codex effort', () => {
+  assert.deepEqual(openCodeModelOptionsV4({ ...validModelGuidance(), temperature: 0.2 }), { reasoningEffort: 'low', textVerbosity: 'low', temperature: 0.2, steps: 16 });
+  assert.deepEqual(codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'provider-default' }), []);
+  assert.deepEqual(codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'xhigh' }), ['-c', 'model_reasoning_effort="xhigh"']);
+  assert.throws(() => codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'vendor-ultra' }), /CAPABILITY_UNVERIFIED/);
+});
+
+test('binds model guidance into qualification identity and loads the current subscription snapshot', async () => {
+  const profile = loadRuntimeProfileV4(validRuntimeProfile());
+  const original = resolveBinding({ profile, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' });
+  const changed = loadRuntimeProfileV4({ ...profile, bindings: { ...profile.bindings, executor: { ...profile.bindings.executor, model: 'replacement-model', guidance: { ...profile.bindings.executor.guidance, id: 'replacement-guidance', revision: 'official-2' } } } });
+  assert.notEqual(resolveBinding({ profile: changed, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' }).binding_hash, original.binding_hash);
+
+  const snapshot = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/runtime.chatgpt-subscription.example.yaml', import.meta.url), 'utf8')));
+  assert.equal(snapshot.bindings.executor.model, 'gpt-5.6-luna');
+  assert.equal(snapshot.bindings.executor.guidance.reasoningEffort, 'low');
+  assert.equal(snapshot.bindings.orchestrator.model, 'gpt-5.6-sol');
+  assert.equal(snapshot.bindings.reviewer.guidance.id, 'openai-gpt-5p6-sol');
+
+  const nan = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/nan-opencode.example.yaml', import.meta.url), 'utf8')));
+  assert.equal(nan.bindings.executor.guidance.id, 'qwen3p6-nan');
+  assert.equal(nan.bindings.escalationExecutor.guidance.id, 'gemma4-nan');
+});
+
+test('requires guidance for every model binding and HTTPS provenance', () => {
+  const profile = validRuntimeProfile() as any;
+  delete profile.bindings.executor.guidance;
+  assert.throws(() => loadRuntimeProfileV4(profile), /guidance/i);
+
+  const insecure = validRuntimeProfile() as any;
+  insecure.bindings.executor.guidance.sourceUrls = ['http://example.invalid/model'];
+  assert.throws(() => loadRuntimeProfileV4(insecure), /HTTPS|sourceUrls/i);
+});

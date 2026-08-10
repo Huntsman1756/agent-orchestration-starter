@@ -12,6 +12,7 @@ import type { CredentialAdapterV4 } from '../src/runtime/credential-adapter.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
 import { createCodexRunner } from '../src/runtime/codex-runner.js';
 import type { ProcessSandboxBackendV4, SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
+import { validModelGuidance } from './runtime-contracts.test.js';
 
 const execFileAsync = promisify(execFile);
 const fakeCodex = new URL('./fixtures/bin/fake-codex.mjs', import.meta.url).pathname.replace(/^\/(.:\/)/, '$1');
@@ -19,7 +20,7 @@ const identity = { profile_hash: 'a'.repeat(64), harness: 'codex', harness_versi
 const capability = await probeRuntimeBinding({ identity, probed_at: '2026-08-10T08:00:00.000Z', ttl_seconds: 3600, run_probe: async (iteration) => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, capsule_only: true, credential_separation: true, tool_network_denied: true, shell_used: false, transcript_hash: String(iteration + 1).repeat(64) }) });
 
 function binding(): ResolvedBindingV4 {
-  return { role: 'frontierExecutor', binding: { harness: 'codex', provider: 'profile-frontier-provider', model: 'profile-frontier-model', capability: 'frontier-coding', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC', 'PRIVATE'], permissions: 'contract-write' }, binding_hash: 'f'.repeat(64) };
+  return { role: 'frontierExecutor', binding: { harness: 'codex', provider: 'profile-frontier-provider', model: 'profile-frontier-model', capability: 'frontier-coding', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC', 'PRIVATE'], permissions: 'contract-write', guidance: { ...validModelGuidance(), reasoningEffort: 'high' } }, binding_hash: 'f'.repeat(64) };
 }
 
 function localSandbox(requests: SandboxRunRequestV4[]): ProcessSandboxBackendV4 {
@@ -61,9 +62,10 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   assert.deepEqual(request.environment, { PROVIDER_GATEWAY_TOKEN: 'broker-gateway', HOME: '/capsule/home', TMPDIR: '/capsule/tmp', NO_COLOR: '1' });
   assert.deepEqual(request.argv.slice(2, 14), ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--output-schema', '/capsule/config/frontier-executor-result-v4.schema.json', '--json', '--cd', '/capsule', '--model']);
   assert.equal(request.argv[14], 'profile-frontier-model');
-  const prompt = request.argv[15]!;
+  assert.deepEqual(request.argv.slice(15, 17), ['-c', 'model_reasoning_effort="high"']);
+  const prompt = request.argv[17]!;
   assert.match(prompt, /repo\/ is the only editable source/);
-  assert.match(prompt, /Do not commit, push, deploy, or use network/);
+  assert.match(prompt, /Do not commit, push, merge, deploy, or use network/);
   assert.match(prompt, /"contract_hash":"a{64}"/);
   assert.match(prompt, /"instruction_manifest_hash":"4{64}"/);
   assert.doesNotMatch(prompt, new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));

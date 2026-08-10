@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { ResolvedBindingV4 } from './bindings.js';
 import type { AllowedChangeV4 } from './contracts.js';
+import { openCodeModelOptionsV4 } from './model-guidance.js';
 
 export interface OpenCodeConfigResultV4 {
   readonly host_path: string;
@@ -33,6 +34,14 @@ export async function writeBrokerOpenCodeConfigV4(input: {
     enabled_providers: [input.binding.binding.provider],
     provider: { [input.binding.binding.provider]: { options: { baseURL: endpoint.toString() } } },
     plugin: [],
+    agent: {
+      [input.binding.role]: {
+        description: `Broker-owned ${input.binding.role} agent`,
+        mode: 'primary',
+        model: `${input.binding.binding.provider}/${input.binding.binding.model}`,
+        ...openCodeModelOptionsV4(input.binding.binding.guidance),
+      },
+    },
     permission: {
       '*': 'deny',
       read: { '*': 'deny', 'repo/**': 'allow' },
