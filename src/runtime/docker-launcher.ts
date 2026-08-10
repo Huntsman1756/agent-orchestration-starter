@@ -44,10 +44,6 @@ function fixedDockerEndpoint(): string {
     : 'unix:///var/run/docker.sock';
 }
 
-function rejectAmbientDockerEndpoint(): void {
-  if (process.env.DOCKER_HOST !== undefined || process.env.DOCKER_CONTEXT !== undefined) unavailable();
-}
-
 async function assertIsolatedConfigAbsent(path: string): Promise<void> {
   try {
     await lstat(path);
@@ -59,7 +55,6 @@ async function assertIsolatedConfigAbsent(path: string): Promise<void> {
 
 async function inspect(executable: string, dockerConfigDirectory: string, signal?: AbortSignal): Promise<DockerLauncherIdentityV4> {
   if (signal?.aborted) unavailable();
-  rejectAmbientDockerEndpoint();
   if (!isAbsolute(dockerConfigDirectory) || resolve(dockerConfigDirectory) !== dockerConfigDirectory) unavailable();
   await assertIsolatedConfigAbsent(dockerConfigDirectory);
   if (!isAbsolute(executable) || resolve(executable) !== executable || !/^docker(?:\.exe)?$/i.test(basename(executable))) unavailable();

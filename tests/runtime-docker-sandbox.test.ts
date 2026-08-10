@@ -118,15 +118,14 @@ test('Docker config rejects mutable images and non-canonical provider origins', 
   );
 });
 
-test('Docker config rejects every ambient host or context retarget', () => {
+test('Docker config ignores ambient host and context retargets', () => {
   const previousHost = process.env.DOCKER_HOST;
   const previousContext = process.env.DOCKER_CONTEXT;
   try {
     process.env.DOCKER_HOST = 'tcp://127.0.0.1:2375';
-    assert.throws(() => validateDockerSandboxConfigV4(config), /PROCESS_SANDBOX_UNAVAILABLE/);
-    delete process.env.DOCKER_HOST;
+    assert.doesNotThrow(() => validateDockerSandboxConfigV4(config));
     process.env.DOCKER_CONTEXT = 'same-name-attacker-context';
-    assert.throws(() => validateDockerSandboxConfigV4(config), /PROCESS_SANDBOX_UNAVAILABLE/);
+    assert.doesNotThrow(() => validateDockerSandboxConfigV4(config));
   } finally {
     if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
     if (previousContext === undefined) delete process.env.DOCKER_CONTEXT; else process.env.DOCKER_CONTEXT = previousContext;
@@ -136,8 +135,8 @@ test('Docker config rejects every ambient host or context retarget', () => {
 test('Docker launcher freezes the default endpoint and rejects isolated config mutation', async () => {
   const previousHost = process.env.DOCKER_HOST;
   const previousContext = process.env.DOCKER_CONTEXT;
-  delete process.env.DOCKER_HOST;
-  delete process.env.DOCKER_CONTEXT;
+  process.env.DOCKER_HOST = 'tcp://127.0.0.1:2375';
+  process.env.DOCKER_CONTEXT = 'same-name-attacker-context';
   const root = await mkdtemp(join(tmpdir(), 'ao-docker-endpoint-'));
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const brokerState = join(root, 'broker');

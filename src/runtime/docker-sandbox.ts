@@ -71,7 +71,6 @@ function overlaps(left: string, right: string): boolean {
 }
 
 export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): void {
-  if (process.env.DOCKER_HOST !== undefined || process.env.DOCKER_CONTEXT !== undefined) unavailable();
   if (!isAbsolute(config.docker_executable)
     || resolve(config.docker_executable) !== config.docker_executable
     || !/^docker(?:\.exe)?$/i.test(basename(config.docker_executable))
