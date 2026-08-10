@@ -23,6 +23,11 @@
     "post_acceptance_defect_incidence_rate": "count(final_accepted = true AND post_acceptance_defects is not empty) / count(final_accepted = true)",
     "false_acceptance_rate": "count(false_acceptance = true) / count(records)"
   },
+  "field_semantics": {
+    "first_pass_accepted": "true only when final_accepted is true, attempts = 1, repairs = 0 and escalations = 0",
+    "reviewer_rejected": "true when any reviewer rejection occurred during the run; a later repair or escalation may still produce final acceptance",
+    "human_intervention_rate": "count(human_interventions > 0) / count(records), with human_intervention_seconds > 0 requiring human_interventions > 0"
+  },
   "paired_interpretation": {
     "quality_preserved": "candidate.final_acceptance_rate >= baseline.final_acceptance_rate AND candidate.false_acceptance_rate <= baseline.false_acceptance_rate AND candidate.post_acceptance_defect_incidence_rate <= baseline.post_acceptance_defect_incidence_rate",
     "cost_reduced": "candidate.all_scheduled_run_cost_mean_micro_units < baseline.all_scheduled_run_cost_mean_micro_units",

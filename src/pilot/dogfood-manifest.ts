@@ -268,13 +268,23 @@ const dogfoodStopEventShape = {
   experiment_id: identifier,
   manifest_hash: hash,
   stop_condition: stopEventCondition,
-  last_completed_schedule_ordinal: positiveInteger,
-  triggering_run_id: identifier,
+  last_completed_schedule_ordinal: nonnegativeInteger,
+  triggering_run_id: identifier.nullable(),
   observed_at: timestamp,
   evidence_hashes: boundedArray(hash).min(1),
 };
 
-export const dogfoodStopEventV1Schema = z.object(dogfoodStopEventShape).strict();
+export const dogfoodStopEventV1Schema = z.object(dogfoodStopEventShape).strict().superRefine((event, context) => {
+  if (event.last_completed_schedule_ordinal === 0 && event.triggering_run_id !== null) {
+    context.addIssue({ code: 'custom', path: ['triggering_run_id'], message: 'ordinal-zero stop events cannot have a triggering run' });
+  }
+  if (event.last_completed_schedule_ordinal === 0 && (event.stop_condition === 'CRITICAL_FALSE_ACCEPTANCE' || event.stop_condition === 'CROSS_RUN_CONTAMINATION')) {
+    context.addIssue({ code: 'custom', path: ['stop_condition'], message: `${event.stop_condition} requires a completed triggering run` });
+  }
+  if (event.last_completed_schedule_ordinal > 0 && event.triggering_run_id === null) {
+    context.addIssue({ code: 'custom', path: ['triggering_run_id'], message: 'non-zero stop events require a triggering run' });
+  }
+});
 export type DogfoodStopEventV1 = z.infer<typeof dogfoodStopEventV1Schema>;
 export type DogfoodStopEventInputV1 = Omit<DogfoodStopEventV1, 'schema_version' | 'stop_event_hash'>;
 
@@ -499,7 +509,15 @@ function semanticErrors(record: DogfoodRunRecordV1): string[] {
   const errors: string[] = [];
   if ((record.outcome === 'ACCEPTED') !== record.final_accepted) errors.push('outcome ACCEPTED must be equivalent to final_accepted');
   if (record.false_acceptance && !record.final_accepted) errors.push('false_acceptance requires final_accepted');
-  if (record.reviewer_rejected && record.final_accepted) errors.push('reviewer_rejected cannot coexist with final_accepted');
+  if (record.first_pass_accepted && !record.final_accepted) errors.push('first_pass_accepted requires final_accepted');
+  if (record.first_pass_accepted && record.attempts !== 1) errors.push('first_pass_accepted requires exactly one attempt');
+  if (record.first_pass_accepted && record.repairs !== 0) errors.push('first_pass_accepted requires zero repairs');
+  if (record.first_pass_accepted && record.escalations !== 0) errors.push('first_pass_accepted requires zero escalations');
+  if (record.first_pass_accepted && record.reviewer_rejected) errors.push('first_pass_accepted cannot include a reviewer rejection');
+  if (record.human_intervention_seconds > 0 && record.human_interventions === 0) errors.push('positive human intervention time requires at least one human intervention');
+  if (record.reviewer_rejected && record.final_accepted && record.attempts === 1 && record.repairs === 0 && record.escalations === 0) {
+    errors.push('accepted runs with a reviewer rejection require a repair or escalation');
+  }
   if (record.post_acceptance_defects.length > 0 && !record.final_accepted) errors.push('post_acceptance_defects require final_accepted');
   if (record.post_acceptance_defects.some(defect => defect.severity === 'critical') && !record.false_acceptance) errors.push('critical post-acceptance defects require critical false acceptance');
   return errors;
@@ -550,13 +568,38 @@ export function freezeDogfoodStopEventV1(input: DogfoodStopEventInputV1): Dogfoo
   return loadDogfoodStopEventV1({ ...draft, stop_event_hash: hashCanonical(omitHash(draft, 'stop_event_hash')) });
 }
 
-export function verifyDogfoodStopEventV1(manifest: DogfoodManifestV1, event: DogfoodStopEventV1): DogfoodRunRecordVerificationV1 {
+export function verifyDogfoodStopEventV1(manifest: DogfoodManifestV1, event: DogfoodStopEventV1, triggeringRun: DogfoodRunRecordV1 | null = null): DogfoodRunRecordVerificationV1 {
   const errors: string[] = [];
   try { loadDogfoodStopEventV1(event); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
   if (errors.length > 0) return { ok: false, errors };
   if (event.stop_event_hash !== hashCanonical(omitHash(event, 'stop_event_hash'))) errors.push('stop event hash does not match canonical event content');
   if (event.experiment_id !== manifest.experiment_id || event.manifest_hash !== manifest.manifest_hash) errors.push('stop event is bound to a different experiment manifest');
   if (event.last_completed_schedule_ordinal > manifest.schedule.length) errors.push('stop event ordinal exceeds the frozen schedule');
+  if (event.last_completed_schedule_ordinal === 0) {
+    if (event.stop_condition === 'CRITICAL_FALSE_ACCEPTANCE' || event.stop_condition === 'CROSS_RUN_CONTAMINATION') {
+      errors.push(`${event.stop_condition} requires a completed triggering run`);
+    }
+    if (event.triggering_run_id !== null) errors.push('ordinal-zero stop events cannot identify a triggering run');
+    return { ok: errors.length === 0, errors };
+  }
+  if (triggeringRun === null) {
+    errors.push('non-zero stop events require the verified triggering run evidence');
+    return { ok: false, errors };
+  }
+  const triggeringVerification = verifyDogfoodRunRecordV1(manifest, triggeringRun);
+  if (!triggeringVerification.ok) errors.push(...triggeringVerification.errors.map(error => `triggering run: ${error}`));
+  if (triggeringRun.run_id !== event.triggering_run_id) errors.push('stop event triggering run id does not match the verified run');
+  if (triggeringRun.schedule_ordinal !== event.last_completed_schedule_ordinal) errors.push('stop event triggering run does not match the last completed ordinal');
+  if (!event.evidence_hashes.includes(triggeringRun.record_hash)) errors.push('stop event evidence must include the triggering run record hash');
+  const observedAt = parseTimestamp(event.observed_at);
+  const completedAt = parseTimestamp(triggeringRun.completed_at);
+  if (observedAt !== null && completedAt !== null && observedAt < completedAt) errors.push('stop event must be observed after the triggering run completed');
+  if (event.stop_condition === 'CRITICAL_FALSE_ACCEPTANCE') {
+    if (!triggeringRun.false_acceptance) errors.push('critical false acceptance stop requires false_acceptance=true on the triggering run');
+    if (!triggeringRun.post_acceptance_defects.some(defect => defect.severity === 'critical')) errors.push('critical false acceptance stop requires a critical post-acceptance defect on the triggering run');
+  }
+  if (event.stop_condition === 'CROSS_RUN_CONTAMINATION' && !triggeringRun.cross_run_contamination) errors.push('cross-run contamination stop requires cross_run_contamination=true on the triggering run');
+  if (event.stop_condition === 'UNRECONSTRUCTABLE_EVIDENCE' && triggeringRun.evidence_reconstructible) errors.push('unreconstructable evidence stop requires evidence_reconstructible=false on the triggering run');
   return { ok: errors.length === 0, errors };
 }
 
@@ -609,8 +652,6 @@ export function verifyDogfoodRunSetV1(manifest: DogfoodManifestV1, records: read
   const errors: string[] = [];
   const manifestVerification = verifyDogfoodManifestV1(manifest);
   if (!manifestVerification.ok) errors.push(...manifestVerification.errors.map(error => `manifest: ${error}`));
-  const stopVerification = stopEvent ? verifyDogfoodStopEventV1(manifest, stopEvent) : null;
-  if (stopVerification && !stopVerification.ok) errors.push(...stopVerification.errors.map(error => `stop event: ${error}`));
   const expectedLastOrdinal = stopEvent ? Math.min(stopEvent.last_completed_schedule_ordinal, manifest.schedule.length) : manifest.schedule.length;
   const expectedOrdinals = new Set(Array.from({ length: expectedLastOrdinal }, (_, index) => index + 1));
   if (records.length !== expectedOrdinals.size) errors.push(`run record set must contain exactly ${expectedOrdinals.size} records`);
@@ -648,13 +689,9 @@ export function verifyDogfoodRunSetV1(manifest: DogfoodManifestV1, records: read
   if (!stopEvent && [...expectedPairs].some(pair => !actualPairs.has(pair))) errors.push('run record set must contain each case and route exactly once');
   if (stopEvent) {
     const triggeringRun = parsedRecords.find(record => record.run_id === stopEvent.triggering_run_id);
-    if (!triggeringRun) errors.push('stop event triggering run is missing from the stopped prefix');
-    else {
-      if (triggeringRun.schedule_ordinal !== stopEvent.last_completed_schedule_ordinal) errors.push('stop event triggering run does not match the last completed ordinal');
-      const observedAt = parseTimestamp(stopEvent.observed_at);
-      const completedAt = parseTimestamp(triggeringRun.completed_at);
-      if (observedAt !== null && completedAt !== null && observedAt < completedAt) errors.push('stop event must be observed after the triggering run completed');
-    }
+    if (stopEvent.last_completed_schedule_ordinal > 0 && !triggeringRun) errors.push('stop event triggering run is missing from the stopped prefix');
+    const stopVerification = verifyDogfoodStopEventV1(manifest, stopEvent, triggeringRun ?? null);
+    if (!stopVerification.ok) errors.push(...stopVerification.errors.map(error => `stop event: ${error}`));
   }
   const status = stopEvent ? 'STOPPED_OPERATIONAL_FAILURE' : 'COMPLETE';
   return { ok: errors.length === 0, errors, status, expected_records: expectedOrdinals.size, actual_records: records.length };

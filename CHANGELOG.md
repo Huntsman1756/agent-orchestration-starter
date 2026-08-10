@@ -81,6 +81,10 @@ host qualification.
 - Serialized test-file execution in the cross-platform validation runner so
   Windows and Node-version scheduling cannot introduce nondeterministic
   inter-file races during the full suite.
+- Hardened dogfood semantic evidence so first-pass acceptance, human
+  intervention time and reviewer rejection history cannot be misreported;
+  stop events now prove derived failure causes against the triggering run and
+  support pre-run system stops at ordinal zero.
 
 - Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
 

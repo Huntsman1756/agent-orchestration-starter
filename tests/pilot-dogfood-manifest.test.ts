@@ -19,6 +19,7 @@ import {
   type DogfoodManifestInputV1,
   type DogfoodManifestV1,
   type DogfoodRunRecordInputV1,
+  type DogfoodStopEventInputV1,
 } from '../src/pilot/dogfood-manifest.js';
 import { hashCanonical } from '../src/pilot/canonical-json.js';
 import type { BindingRegistryV3, PricingSnapshotV3, UsageRecordedV3 } from '../src/pilot/usage-cost.js';
@@ -413,9 +414,9 @@ test('run-set verification distinguishes a complete experiment from an operation
     last_completed_schedule_ordinal: 3,
     triggering_run_id: records[2]!.run_id,
     observed_at: timestampAt(9),
-    evidence_hashes: [hash('c')],
+    evidence_hashes: [records[2]!.record_hash, hash('c')],
   });
-  assert.equal(verifyDogfoodStopEventV1(manifest, stopEvent).ok, true);
+  assert.equal(verifyDogfoodStopEventV1(manifest, stopEvent, records[2]).ok, true);
   const stopped = verifyDogfoodRunSetV1(manifest, records, stopEvent);
   assert.equal(stopped.ok, true, stopped.errors.join('; '));
   assert.equal(stopped.status, 'STOPPED_OPERATIONAL_FAILURE');
@@ -423,6 +424,59 @@ test('run-set verification distinguishes a complete experiment from an operation
   const afterStop = verifyDogfoodRunSetV1(manifest, [...records, freezeDogfoodRunRecordV1(recordInput(manifest, { run_id: 'run-after-stop' }, 4))], stopEvent);
   assert.equal(afterStop.ok, false);
   assert.match(afterStop.errors.join('; '), /after.*stop|exactly/u);
+});
+
+test('stop events require causal evidence for derived conditions and support system stops before the first run', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const records = manifest.schedule.slice(0, 3).map((entry, index) => freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: `run-causal-${String(index + 1).padStart(4, '0')}`,
+  }, entry.ordinal)));
+  const derivedStop = (stop_condition: DogfoodStopEventInputV1['stop_condition'], triggeringRun = records[2]!) => freezeDogfoodStopEventV1({
+    experiment_id: manifest.experiment_id,
+    manifest_hash: manifest.manifest_hash,
+    stop_condition,
+    last_completed_schedule_ordinal: 3,
+    triggering_run_id: triggeringRun.run_id,
+    observed_at: timestampAt(9),
+    evidence_hashes: [triggeringRun.record_hash, hash('c')],
+  });
+
+  const critical = verifyDogfoodRunSetV1(manifest, records, derivedStop('CRITICAL_FALSE_ACCEPTANCE'));
+  assert.equal(critical.ok, false);
+  assert.match(critical.errors.join('; '), /false_acceptance|critical post-acceptance/u);
+
+  const contaminated = verifyDogfoodRunSetV1(manifest, records, derivedStop('CROSS_RUN_CONTAMINATION'));
+  assert.equal(contaminated.ok, false);
+  assert.match(contaminated.errors.join('; '), /cross_run_contamination/u);
+
+  const unreconstructable = verifyDogfoodRunSetV1(manifest, records, derivedStop('UNRECONSTRUCTABLE_EVIDENCE'));
+  assert.equal(unreconstructable.ok, false);
+  assert.match(unreconstructable.errors.join('; '), /evidence_reconstructible/u);
+
+  const criticalRun = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: 'run-causal-critical',
+    first_pass_accepted: false,
+    attempts: 2,
+    repairs: 1,
+    false_acceptance: true,
+    post_acceptance_defects: [{ defect_hash: hash('d'), severity: 'critical' }],
+  }, 3));
+  const validCritical = verifyDogfoodRunSetV1(manifest, [records[0]!, records[1]!, criticalRun], derivedStop('CRITICAL_FALSE_ACCEPTANCE', criticalRun));
+  assert.equal(validCritical.ok, true, validCritical.errors.join('; '));
+
+  const systemStop = freezeDogfoodStopEventV1({
+    experiment_id: manifest.experiment_id,
+    manifest_hash: manifest.manifest_hash,
+    stop_condition: 'DURABLE_STATE_INCONSISTENCY',
+    last_completed_schedule_ordinal: 0,
+    triggering_run_id: null,
+    observed_at: timestampAt(0),
+    evidence_hashes: [hash('e')],
+  });
+  assert.equal(verifyDogfoodStopEventV1(manifest, systemStop).ok, true);
+  const stoppedBeforeFirstRun = verifyDogfoodRunSetV1(manifest, [], systemStop);
+  assert.equal(stoppedBeforeFirstRun.ok, true, stoppedBeforeFirstRun.errors.join('; '));
+  assert.equal(stoppedBeforeFirstRun.status, 'STOPPED_OPERATIONAL_FAILURE');
 });
 
 test('run records reject contradictory acceptance and defect semantics', () => {
@@ -443,6 +497,43 @@ test('run records reject contradictory acceptance and defect semantics', () => {
   const criticalDefectResult = verifyDogfoodRunRecordV1(manifest, criticalDefect);
   assert.equal(criticalDefectResult.ok, false);
   assert.match(criticalDefectResult.errors.join('; '), /critical false acceptance/u);
+
+  const forgedFirstPass = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    first_pass_accepted: true,
+    attempts: 3,
+    repairs: 1,
+    escalations: 1,
+  }));
+  const forgedFirstPassResult = verifyDogfoodRunRecordV1(manifest, forgedFirstPass);
+  assert.equal(forgedFirstPassResult.ok, false);
+  assert.match(forgedFirstPassResult.errors.join('; '), /first_pass_accepted/u);
+
+  const uncountedHumanTime = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    human_interventions: 0,
+    human_intervention_seconds: 1,
+    human_intervention_cost_micro_units: 25,
+    total_cost_to_accepted_result_micro_units: 125,
+  }));
+  const uncountedHumanTimeResult = verifyDogfoodRunRecordV1(manifest, uncountedHumanTime);
+  assert.equal(uncountedHumanTimeResult.ok, false);
+  assert.match(uncountedHumanTimeResult.errors.join('; '), /human intervention time/u);
+
+  const recoveredAfterReview = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: 'run-review-recovered',
+    first_pass_accepted: false,
+    reviewer_rejected: true,
+    attempts: 2,
+    repairs: 1,
+  }));
+  const recoveredAfterReviewResult = verifyDogfoodRunRecordV1(manifest, recoveredAfterReview);
+  assert.equal(recoveredAfterReviewResult.ok, true, recoveredAfterReviewResult.errors.join('; '));
+
+  const acceptedWithoutRecovery = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    reviewer_rejected: true,
+  }));
+  const acceptedWithoutRecoveryResult = verifyDogfoodRunRecordV1(manifest, acceptedWithoutRecovery);
+  assert.equal(acceptedWithoutRecoveryResult.ok, false);
+  assert.match(acceptedWithoutRecoveryResult.errors.join('; '), /reviewer rejection/u);
 });
 
 test('analysis policy is a canonical artifact bound into the manifest identity', async () => {
@@ -464,10 +555,14 @@ test('dogfood schemas compile independently and reject provider/model fields', a
   const validateStop = ajv.compile(stopSchema);
   const manifest = freezeDogfoodManifestV1(input());
   const record = freezeDogfoodRunRecordV1(recordInput(manifest));
-  const stop = freezeDogfoodStopEventV1({ experiment_id: manifest.experiment_id, manifest_hash: manifest.manifest_hash, stop_condition: 'AUTHORITY_ESCAPE', last_completed_schedule_ordinal: 1, triggering_run_id: record.run_id, observed_at: timestampAt(3), evidence_hashes: [hash('e')] });
+  const stop = freezeDogfoodStopEventV1({ experiment_id: manifest.experiment_id, manifest_hash: manifest.manifest_hash, stop_condition: 'AUTHORITY_ESCAPE', last_completed_schedule_ordinal: 1, triggering_run_id: record.run_id, observed_at: timestampAt(3), evidence_hashes: [record.record_hash, hash('e')] });
+  const systemStop = freezeDogfoodStopEventV1({ experiment_id: manifest.experiment_id, manifest_hash: manifest.manifest_hash, stop_condition: 'DURABLE_STATE_INCONSISTENCY', last_completed_schedule_ordinal: 0, triggering_run_id: null, observed_at: timestampAt(0), evidence_hashes: [hash('e')] });
   assert.equal(validateManifest(manifest), true, JSON.stringify(validateManifest.errors));
   assert.equal(validateRecord(record), true, JSON.stringify(validateRecord.errors));
   assert.equal(validateStop(stop), true, JSON.stringify(validateStop.errors));
+  assert.equal(validateStop(systemStop), true, JSON.stringify(validateStop.errors));
+  assert.equal(validateStop({ ...systemStop, triggering_run_id: record.run_id }), false);
+  assert.equal(validateStop({ ...systemStop, stop_condition: 'CRITICAL_FALSE_ACCEPTANCE' }), false);
   const invalidUsageRecord = {
     ...record,
     provider_cost_evidence: {

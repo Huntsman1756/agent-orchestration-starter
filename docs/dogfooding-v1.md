@@ -155,6 +155,16 @@ from operational human cost so a cheap worker cannot appear cheaper merely
 because intervention is omitted. A record with a manipulated currency, pricing
 snapshot, usage ledger, human rate or total is invalid.
 
+`first_pass_accepted` is a one-way claim: when true, `final_accepted` must also be
+true, `attempts` must equal one, and both `repairs` and `escalations` must be zero.
+An accepted result after repair or escalation is therefore final-accepted but not
+first-pass-accepted. `human_intervention_seconds > 0` requires
+`human_interventions > 0`; otherwise the human-intervention rate would be
+silently understated. `reviewer_rejected` means that at least one reviewer
+rejection occurred during the run, not necessarily that the final reviewer
+decision was rejection. A run may therefore be rejected, repaired and accepted,
+but an accepted run with a reviewer rejection must show a repair or escalation.
+
 The manifest freezes `post_acceptance_window_seconds`. A final run record is
 valid only when `started_at ≤ completed_at ≤ recorded_at`, `duration_ms` equals
 the timestamp difference, and `recorded_at` is at least
@@ -173,7 +183,15 @@ stopEvent)`. The result is then `STOPPED_OPERATIONAL_FAILURE`, not `COMPLETE`:
 records must be exactly the prefix `1..N`, the triggering run must be ordinal
 `N`, and no record after `N` is allowed. A stopped prefix does not need to
 contain both routes for every case. Without a stop event, the only valid result
-is `COMPLETE` with the full schedule.
+is `COMPLETE` with the full schedule. A system stop detected before the first run
+may use ordinal `0` and `triggering_run_id: null`; run-derived stop conditions
+must include the triggering record hash in `evidence_hashes`. The verifier also
+checks causal compatibility: critical false acceptance requires both
+`false_acceptance: true` and a critical post-acceptance defect, cross-run
+contamination requires `cross_run_contamination: true`, and unreconstructable
+evidence requires `evidence_reconstructible: false`. Authority escapes and
+durable-state inconsistencies remain externally evidenced by their hash-bound
+system evidence.
 
 The aggregate `human_intervention_rate` is the proportion of runs requiring at
 least one human action. The aggregate `total_cost_to_accepted_result` is the
@@ -215,13 +233,14 @@ The first question is:
 > operating cost without introducing new operational failures?
 
 The record verifier also enforces semantic invariants: `outcome: ACCEPTED` is
-equivalent to `final_accepted`, `false_acceptance` requires final acceptance,
-and a critical post-acceptance defect is a critical false acceptance. Do not
-modify thresholds, omit difficult cases, collapse human intervention,
-or count a frontier rescue as an orchestrated first-pass success after seeing
-the results. Record `insufficient_evidence` only for a complete run set whose
-denominators are insufficient; an operationally stopped run set is always
-`operational_failure`.
+equivalent to `final_accepted`, first-pass acceptance has the one-attempt/no-
+repair/no-escalation constraints above, `false_acceptance` requires final
+acceptance, and a critical post-acceptance defect is a critical false
+acceptance. Do not modify thresholds, omit difficult cases, collapse human
+intervention, or count a frontier rescue as an orchestrated first-pass success
+after seeing the results. Record `insufficient_evidence` only for a complete run
+set whose denominators are insufficient; an operationally stopped run set is
+always `operational_failure`.
 
 The manifest and record contracts are published as
 [`dogfood-manifest-v1.schema.json`](../contracts/dogfood-manifest-v1.schema.json)
