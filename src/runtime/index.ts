@@ -15,6 +15,8 @@ export * from './host-composition.js';
 export * from './host-installation.js';
 export * from './host-driver.js';
 export * from './autonomous-dispatcher.js';
+export * from './worker-capability.js';
+export * from './repair-packet.js';
 export * from './bindings.js';
 export * from './capabilities.js';
 export * from './routing.js';

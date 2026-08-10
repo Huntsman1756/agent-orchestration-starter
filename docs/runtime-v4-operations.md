@@ -4,6 +4,8 @@
 
 Runtime V4 is a fail-closed implementation framework with a portable host bootstrap, not a universal pre-certified unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, lifecycle persistence, telemetry, orchestration scheduling, immutable installation and repository activation have automated coverage. No code path deploys or changes routing automatically.
 
+The iterative worker primitive now binds each plan to an exact `WorkerCapabilityV4`, including the model deployment, harness/parser, tool and instruction/skill bundles, qualification evidence and story-size limits. It verifies repair packets against persisted findings and escalates repeated normalized failures before exhausting retries. These controls remain host-driver obligations at composition time: the trusted driver must derive the snapshot and enforce context/step limits; a model profile cannot certify itself.
+
 Production activation remains blocked until all of these are supplied and certified for the target host:
 
 - a trusted host driver which uses the supplied native composition factory and provides exact pipeline, repair, finalize and abort operations plus certified platform verifiers/coordinators;

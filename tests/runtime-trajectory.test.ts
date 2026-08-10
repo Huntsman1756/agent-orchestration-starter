@@ -10,6 +10,7 @@ import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
 import { createStoryIterationEventV4, type IterativeStoryPlanV4 } from '../src/runtime/iterative-executor.js';
 import { createRuntimeEventV4, type RuntimeEventV4 } from '../src/runtime/telemetry.js';
 import { buildRuntimeExecutionGraphV4, evaluateRuntimeTrajectoryV4, exportRuntimeTraceV4 } from '../src/runtime/trajectory.js';
+import { createWorkerCapabilityV4, type WorkerCapabilityV4 } from '../src/runtime/worker-capability.js';
 import { validWorkContract } from './runtime-contracts.test.js';
 
 const h = (value: string) => value.repeat(64);
@@ -20,15 +21,29 @@ function contract(): RuntimeWorkContractV4 {
   return { ...body, contract_hash: hashCanonicalV4(body) } as unknown as RuntimeWorkContractV4;
 }
 
-function plan(work: RuntimeWorkContractV4): IterativeStoryPlanV4 {
-  const storyBody = { story_id: 'story_alpha', title: 'Alpha', objective: 'Implement alpha', priority: 1, depends_on: [] as string[], allowed_changes: [{ path: 'src/a.ts', operations: ['MODIFY' as const] }], validation_ids: ['test'], acceptance_criteria: ['passes'], max_attempts: 2 };
+function worker(): WorkerCapabilityV4 {
+  return createWorkerCapabilityV4({
+    schema_version: 4,
+    binding_ref: 'trajectory-fixture',
+    deployment: {
+      provider_ref: 'fixture-provider', model_ref: 'fixture-model', model_revision: 'fixture-model-r1', model_artifact_hash: h('a'),
+      endpoint_revision: 'fixture-endpoint-r1', harness_ref: 'fixture-harness', harness_revision: 'fixture-harness-r1',
+      tool_protocol: 'native-json-tools', tool_parser_revision: 'fixture-parser-r1', tool_bundle_hash: h('b'), instruction_bundle_hash: h('d'), qualification_evidence_hash: h('c'),
+    },
+    capabilities: ['patch_application', 'repository_search'],
+    limits: { max_story_files: 2, max_story_changed_lines: 100, max_story_context_bytes: 65_536, max_acceptance_criteria: 4, max_dependency_depth: 2, max_steps_per_attempt: 32, max_attempts: 3, no_progress_repeat_limit: 2 },
+  });
+}
+
+function plan(work: RuntimeWorkContractV4, activeWorker: WorkerCapabilityV4): IterativeStoryPlanV4 {
+  const storyBody = { story_id: 'story_alpha', title: 'Alpha', objective: 'Implement alpha', priority: 1, depends_on: [] as string[], allowed_changes: [{ path: 'src/a.ts', operations: ['MODIFY' as const] }], validation_ids: ['test'], acceptance_criteria: ['passes'], required_capabilities: ['patch_application'], context_budget_bytes: 4_096, max_changed_lines: 20, max_steps: 16, max_attempts: 2 };
   const stories = [{ ...storyBody, story_hash: hashCanonicalV4(storyBody) }];
-  const body = { schema_version: 4 as const, run_id: work.run_id, contract_hash: work.contract_hash, base_sha: work.base_sha, max_iterations: 2, stories };
+  const body = { schema_version: 4 as const, run_id: work.run_id, contract_hash: work.contract_hash, base_sha: work.base_sha, worker_capability_hash: activeWorker.worker_capability_hash, max_iterations: 2, stories };
   return { ...body, plan_hash: hashCanonicalV4(body) };
 }
 
 function storyEvent(work: RuntimeWorkContractV4, storyPlan: IterativeStoryPlanV4) {
-  return createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: work.run_id, plan_hash: storyPlan.plan_hash, story_id: 'story_alpha', iteration: 1, attempt: 1, session_id: 'session_0000000000000001', input_tree_hash: h('1'), candidate_tree_hash: h('2'), outcome: 'ACCEPTED', changes: [{ path: 'src/a.ts', operation: 'MODIFY' }], execution_result_hash: h('3'), validation_manifest_hash: h('4'), review_attestation_hash: h('5'), finding_hashes: [] });
+  return createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: work.run_id, plan_hash: storyPlan.plan_hash, story_id: 'story_alpha', iteration: 1, attempt: 1, session_id: 'session_0000000000000001', input_tree_hash: h('1'), candidate_tree_hash: h('2'), outcome: 'ACCEPTED', changes: [{ path: 'src/a.ts', operation: 'MODIFY' }], changed_lines: 10, execution_result_hash: h('3'), validation_manifest_hash: h('4'), review_attestation_hash: h('5'), finding_hashes: [], repair_packet_hash: null, failure_signature_hash: null, escalation_reason: null });
 }
 
 function runtimeEvents(work: RuntimeWorkContractV4): RuntimeEventV4[] {
@@ -49,8 +64,9 @@ test('matches replaceable adapters against an explicit role capability contract'
 
 test('builds a bounded hash-stable story graph and safe trace export', () => {
   const work = contract();
-  const storyPlan = plan(work);
-  const graph = buildRuntimeExecutionGraphV4({ contract: work, plan: storyPlan, initial_tree_hash: h('1'), events: [storyEvent(work, storyPlan)] });
+  const activeWorker = worker();
+  const storyPlan = plan(work, activeWorker);
+  const graph = buildRuntimeExecutionGraphV4({ contract: work, worker: activeWorker, plan: storyPlan, initial_tree_hash: h('1'), events: [storyEvent(work, storyPlan)] });
   assert.equal(graph.status, 'COMPLETE');
   assert.deepEqual(graph.nodes.map((node) => [node.node_id, node.status, node.attempts]), [['story_alpha', 'ACCEPTED', 1]]);
   const trace = exportRuntimeTraceV4(runtimeEvents(work));
@@ -62,9 +78,10 @@ test('builds a bounded hash-stable story graph and safe trace export', () => {
 
 test('evaluates complete trajectories and reports tampered graph or lifecycle order as FAIL', () => {
   const work = contract();
-  const storyPlan = plan(work);
+  const activeWorker = worker();
+  const storyPlan = plan(work, activeWorker);
   const accepted = storyEvent(work, storyPlan);
-  const passed = evaluateRuntimeTrajectoryV4({ contract: work, plan: storyPlan, initial_tree_hash: h('1'), story_events: [accepted], runtime_events: runtimeEvents(work) });
+  const passed = evaluateRuntimeTrajectoryV4({ contract: work, worker: activeWorker, plan: storyPlan, initial_tree_hash: h('1'), story_events: [accepted], runtime_events: runtimeEvents(work) });
   assert.equal(passed.outcome, 'PASS');
   assert.equal(passed.rules.every((rule) => rule.outcome === 'PASS'), true);
 
@@ -74,7 +91,7 @@ test('evaluates complete trajectories and reports tampered graph or lifecycle or
   const reordered = runtimeEvents(work);
   const terminal = reordered.pop()!;
   reordered.splice(2, 0, terminal);
-  const failed = evaluateRuntimeTrajectoryV4({ contract: work, plan: storyPlan, initial_tree_hash: h('1'), story_events: [forged], runtime_events: reordered });
+  const failed = evaluateRuntimeTrajectoryV4({ contract: work, worker: activeWorker, plan: storyPlan, initial_tree_hash: h('1'), story_events: [forged], runtime_events: reordered });
   assert.equal(failed.outcome, 'FAIL');
   assert.equal(failed.rules.find((rule) => rule.rule_id === 'ITERATION_GRAPH')!.outcome, 'FAIL');
   assert.equal(failed.rules.find((rule) => rule.rule_id === 'TELEMETRY_CHAIN')!.outcome, 'FAIL');
@@ -88,8 +105,9 @@ test('publishes strict schemas for portable capabilities and trajectory reports'
   const validateEvaluation = ajv.compile(evaluationSchema);
   const capability = createModelCapabilityContractV4({ schema_version: 4, contract_id: 'reviewer', role: 'REVIEWER', structured_output: true, tool_protocol: 'NONE', filesystem: 'READ_ONLY', network: 'DENIED', context_mode: 'FRESH_PER_ATTEMPT', max_steps: 16, reasoning_efforts: ['high'], temperature_control: false });
   const work = contract();
-  const storyPlan = plan(work);
-  const evaluation = evaluateRuntimeTrajectoryV4({ contract: work, plan: storyPlan, initial_tree_hash: h('1'), story_events: [storyEvent(work, storyPlan)], runtime_events: runtimeEvents(work) });
+  const activeWorker = worker();
+  const storyPlan = plan(work, activeWorker);
+  const evaluation = evaluateRuntimeTrajectoryV4({ contract: work, worker: activeWorker, plan: storyPlan, initial_tree_hash: h('1'), story_events: [storyEvent(work, storyPlan)], runtime_events: runtimeEvents(work) });
   assert.equal(validateCapability(capability), true, JSON.stringify(validateCapability.errors));
   assert.equal(validateEvaluation(evaluation), true, JSON.stringify(validateEvaluation.errors));
   assert.equal(validateCapability({ ...capability, provider: 'coupled' }), false);
