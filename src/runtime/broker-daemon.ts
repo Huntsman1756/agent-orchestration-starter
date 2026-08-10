@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 
-import { hashCanonicalV4 } from './canonical.js';
+import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4 } from './contracts.js';
 import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
@@ -34,6 +34,8 @@ export interface BrokerDaemonV4 {
   recordAttempt(runId: string, attempt: { attempt: number; executor_binding_ref: string; result_hash: string }): Promise<void>;
   reinspect(runId: string): Promise<void>;
   recordExternalProcessStarted(runId: string, process: ExternalProcessIdentityV4): Promise<void>;
+  recordCommitCreated?(event: Extract<BrokerCommandV4, { type: 'COMMIT_CREATED' }>): Promise<void>;
+  recordPublication?(event: Extract<BrokerCommandV4, { type: 'BRANCH_PUSHED' | 'PULL_REQUEST_RECORDED' | 'REQUIRED_CHECKS_PASSED' | 'RUN_MERGED' | 'PUBLICATION_SKIPPED' }>): Promise<void>;
 }
 
 export interface BrokerDaemonDependenciesV4 {
@@ -100,6 +102,7 @@ function initialResult(runId: string, contract: ReturnType<typeof deriveWorkCont
     changed_files: [],
     review_attestation_hash: null,
     commit_sha: null,
+    publication: { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
     failure: null,
     artifact_manifest_hash: hashCanonicalV4({ run_id: runId, artifacts: [] }),
   };
@@ -154,6 +157,11 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
 
   const persist = async (command: BrokerCommandV4): Promise<void> => {
     if (state === null || journal === null) throw new Error('BROKER_STATE_CORRUPT: daemon was not recovered');
+    const prior = journal.records.find((record) => record.command.command_id === command.command_id);
+    if (prior !== undefined) {
+      if (canonicalJsonV4(prior.command) !== canonicalJsonV4(command)) throw new Error(`BROKER_STATE_CORRUPT: command_id ${command.command_id} has conflicting canonical bytes`);
+      return;
+    }
     const next = reduceBrokerStateV4(state, command);
     try {
       await journal.append(command);
@@ -318,6 +326,16 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       requireOpen();
       await ensureRecovered();
       await persist({ type: 'EXTERNAL_PROCESS_STARTED', command_id: commandId('external-started'), run_id: runId, process });
+    }),
+    recordCommitCreated: (event) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await persist(event);
+    }),
+    recordPublication: (event) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await persist(event);
     }),
     close: () => serialize(async () => {
       if (closed) return;

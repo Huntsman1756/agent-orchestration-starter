@@ -46,7 +46,7 @@ Retained failed-run worktrees and artifacts require a future explicit cleanup co
 
 ## Broker-owned publication
 
-Successful finalization creates a deterministic local commit and updates only the task branch. When the hashed repository policy enables publication, `publishFinalizedRunV4` pushes that exact SHA, creates or reuses its exact GitHub pull request, waits for required checks, merges with a head-SHA guard and records verified `RUN_MERGED` evidence. The operation is idempotent after a remote merge. It never force-pushes, runs repository hooks, lets the model choose publication settings, deletes branches, deploys or changes routing. See `docs/publication-v4.md`.
+Successful finalization creates a deterministic local commit and updates only the task branch. That commit now enters `READY_FOR_PUBLICATION`; it is not terminal. When the hashed repository policy enables publication, `publishFinalizedRunV4` durably records the exact push, pull request, required checks and head-bound merge before reaching `FINALIZED`. The operation is idempotent at every publication boundary and after a remote merge. It never force-pushes, runs repository hooks, lets the model choose publication settings, deletes branches, deploys or changes routing. See `docs/publication-v4.md`.
 
 ## Typed failures
 

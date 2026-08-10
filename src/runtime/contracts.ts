@@ -117,6 +117,15 @@ export interface RuntimeValidationResultV4 {
   result_hash: string;
 }
 
+export interface RuntimePublicationV4 {
+  state: 'NOT_STARTED' | 'PUSHED' | 'PR_OPEN' | 'CHECKS_PASSED' | 'MERGED' | 'SKIPPED';
+  remote: string | null;
+  base_branch: string | null;
+  pull_request: number | null;
+  pull_request_url: string | null;
+  merge_commit_sha: string | null;
+}
+
 export interface RuntimeResultV4 {
   run_id: string;
   request_id: string;
@@ -138,6 +147,7 @@ export interface RuntimeResultV4 {
   changed_files: readonly string[];
   review_attestation_hash: string | null;
   commit_sha: string | null;
+  publication: RuntimePublicationV4;
   failure: RuntimeFailureV4 | null;
   artifact_manifest_hash: string;
 }

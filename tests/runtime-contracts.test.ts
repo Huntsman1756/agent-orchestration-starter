@@ -142,6 +142,7 @@ export function validRuntimeResult() {
     changed_files: ['src/greeting.ts'],
     review_attestation_hash: hash,
     commit_sha: sha,
+    publication: { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
     failure: null,
     artifact_manifest_hash: hash,
   };

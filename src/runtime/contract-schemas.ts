@@ -188,6 +188,14 @@ export const runtimeResultV4Schema = z.object({
   changed_files: uniqueArray(z.string().min(1).max(512), { max: 256 }),
   review_attestation_hash: hashSchema.nullable(),
   commit_sha: shaSchema.nullable(),
+  publication: z.object({
+    state: z.enum(['NOT_STARTED', 'PUSHED', 'PR_OPEN', 'CHECKS_PASSED', 'MERGED', 'SKIPPED']),
+    remote: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).nullable(),
+    base_branch: z.string().min(1).max(192).nullable(),
+    pull_request: z.number().int().positive().nullable(),
+    pull_request_url: z.string().url().regex(/^https:\/\/github\.com\//).max(2_048).nullable(),
+    merge_commit_sha: shaSchema.nullable(),
+  }).strict(),
   failure: failureSchema.nullable(),
   artifact_manifest_hash: hashSchema,
 }).strict();
