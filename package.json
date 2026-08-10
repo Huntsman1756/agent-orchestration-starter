@@ -58,7 +58,7 @@
     "build:sbom": "node scripts/generate-sbom.mjs",
     "prepack": "node scripts/build-linux-native-helper.mjs --clean-only && tsc -p tsconfig.json && node scripts/build-linux-native-helper.mjs --for-package && npm run build:host",
     "pretest": "npm run build:native && npm run build:host",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "test:autonomous": "tsx --test tests/runtime-autonomous-dispatcher.test.ts",
     "test:hostile": "tsx --test tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts",
     "example:reference-e2e": "tsx --test tests/runtime-reference-host-e2e.test.ts",

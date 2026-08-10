@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 
@@ -105,6 +105,16 @@ function timestamp(value: string, field: string): void {
   if (!Number.isFinite(parsed.getTime()) || parsed.toISOString() !== value) invalid(`${field} is invalid`);
 }
 function portable(path: string): string { return path.split(sep).join('/'); }
+async function rejectWindowsPathLinks(path: string, message: string): Promise<void> {
+  if (process.platform !== 'win32') return;
+  const root = parse(path).root;
+  let current = root;
+  for (const segment of path.slice(root.length).split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    const metadata = await lstat(current).catch(() => invalid(`${message}: path component unavailable`));
+    if (metadata.isSymbolicLink()) invalid(message);
+  }
+}
 function within(parent: string, child: string): boolean {
   const value = relative(parent, child);
   return value === '' || (!value.startsWith(`..${sep}`) && value !== '..' && !isAbsolute(value));
@@ -166,8 +176,9 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
     const configuredMetadata = await lstat(configuredPath).catch(() => invalid('host driver cannot be canonicalized'));
     if (!configuredMetadata.isFile() || configuredMetadata.isSymbolicLink()) invalid('host driver must be a regular non-symbolic file');
     if (configuredMetadata.size > maxBytes) invalid('host driver exceeds installation limits');
+    await rejectWindowsPathLinks(configuredPath, 'host driver source path contains a symbolic link or reparse point');
     const path = await realpath(configuredPath).catch(() => invalid('host driver cannot be canonicalized'));
-    if (path !== configuredPath) invalid('host driver source path contains a symbolic link or alias');
+    if (path !== configuredPath && process.platform !== 'win32') invalid('host driver source path contains a symbolic link or alias');
     const metadata = await lstat(path);
     if (!metadata.isFile() || metadata.isSymbolicLink()) invalid('host driver must be a regular non-symbolic file');
     return Object.freeze({ path, ...(await fileHash(path)) });
@@ -177,8 +188,9 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
     const configuredMetadata = await lstat(configuredPath).catch(() => invalid('host component manifest cannot be canonicalized'));
     if (!configuredMetadata.isFile() || configuredMetadata.isSymbolicLink()) invalid('host component manifest must be a regular non-symbolic file');
     if (configuredMetadata.size > maxHostComponentManifestBytes) invalid('host component manifest exceeds installation limits');
+    await rejectWindowsPathLinks(configuredPath, 'host component manifest path contains a symbolic link or reparse point');
     const manifestPath = await realpath(configuredPath).catch(() => invalid('host component manifest cannot be canonicalized'));
-    if (manifestPath !== configuredPath) invalid('host component manifest path contains a symbolic link or alias');
+    if (manifestPath !== configuredPath && process.platform !== 'win32') invalid('host component manifest path contains a symbolic link or alias');
     const sourceManifest = loadRuntimeHostComponentSourceManifestV4(JSON.parse(await readFile(manifestPath, 'utf8')));
     if (hostDriverSource === null || sourceManifest.driverSha256 !== hostDriverSource.sha256) invalid('host composition does not bind the selected root driver');
     const manifestRoot = dirname(manifestPath);
@@ -188,10 +200,11 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
       const requestedPath = resolve(manifestRoot, ...component.modulePath.split('/'));
       const configuredModuleMetadata = await lstat(requestedPath).catch(() => invalid(`host component ${component.id} is unavailable`));
       if (!configuredModuleMetadata.isFile() || configuredModuleMetadata.isSymbolicLink()) invalid(`host component ${component.id} must be a regular non-symbolic file`);
+      await rejectWindowsPathLinks(requestedPath, `host component ${component.id} contains a symbolic link or reparse point`);
       selectedBytes += configuredModuleMetadata.size;
       if (configuredModuleMetadata.size > maxBytes || selectedBytes > maxBytes) invalid('bundle exceeds installation limits');
       const path = await realpath(requestedPath).catch(() => invalid(`host component ${component.id} cannot be canonicalized`));
-      if (path !== requestedPath || !within(manifestRoot, path)) invalid(`host component ${component.id} escaped its source root`);
+      if ((path !== requestedPath && process.platform !== 'win32') || !within(manifestRoot, path)) invalid(`host component ${component.id} escaped its source root`);
       const hashed = await fileHash(path);
       if (hashed.sha256 !== component.moduleSha256) invalid(`host component ${component.id} artifact drifted from its certification`);
       modules.push(Object.freeze({ id: component.id, sourcePath: path, installedPath: `host-components/${component.id}.mjs`, ...hashed }));

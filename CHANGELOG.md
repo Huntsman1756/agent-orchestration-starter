@@ -17,6 +17,9 @@ host qualification.
   certification workflow.
 - Release workflow that validates the tag, emits an npm tarball, checksum,
   SBOM and build provenance.
+- Portable test discovery and Windows path canonicalization that preserves
+  rejection of symbolic links/reparse points while accepting equivalent 8.3
+  path spellings on the supported platform matrix.
 
 ### Migration
 

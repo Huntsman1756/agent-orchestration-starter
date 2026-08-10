@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -31,7 +31,7 @@ test('capsule exposes only broker-owned roots and a declarative repo mount', asy
     assert.deepEqual(JSON.parse(await readFile(join(capsule.root, 'config', 'mount-manifest.json'), 'utf8')), {
       base_sha: 'a'.repeat(40),
       instruction_manifest_hash: 'b'.repeat(64),
-      mounts: [{ capsule_path: 'repo', host_path: worktree, mode: 'rw' }],
+      mounts: [{ capsule_path: 'repo', host_path: await realpath(worktree), mode: 'rw' }],
       run_id: 'run_fixture',
       schema_version: 4,
     });
