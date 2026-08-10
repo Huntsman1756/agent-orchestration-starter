@@ -20,12 +20,15 @@ import {
 } from '../src/runtime/sandbox-certification.js';
 
 const imageId = process.env.AO_SANDBOX_IMAGE;
-const dockerIntegration = imageId?.startsWith('sha256:') ? test : test.skip;
+const dockerConfigured = imageId?.startsWith('sha256:') ?? false;
+const dockerIntegration = dockerConfigured ? test : test.skip;
 const fixtureDirectory = dirname(fileURLToPath(new URL('./fixtures/sandbox/hostile-child.mjs', import.meta.url)));
 const execFileAsync = promisify(execFile);
-const dockerExecutable = process.env.AO_DOCKER_EXECUTABLE ?? (process.platform === 'win32'
-  ? execFileSync('where.exe', ['docker.exe'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]!
-  : execFileSync('which', ['docker'], { encoding: 'utf8' }).trim());
+const dockerExecutable = dockerConfigured
+  ? process.env.AO_DOCKER_EXECUTABLE ?? (process.platform === 'win32'
+    ? execFileSync('where.exe', ['docker.exe'], { encoding: 'utf8' }).trim().split(/\r?\n/)[0]!
+    : execFileSync('which', ['docker'], { encoding: 'utf8' }).trim())
+  : '';
 
 async function docker(...argv: string[]): Promise<string> {
   const { stdout } = await execFileAsync('docker', argv, { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 });
