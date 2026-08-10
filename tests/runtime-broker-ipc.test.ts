@@ -338,12 +338,14 @@ function synchronouslyConnectingSocketForTest(): Socket {
   return socket;
 }
 
-async function ipcFixture() {
+async function ipcFixture(options: { controlPlane?: boolean } = {}) {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'runner-v4-ipc-'));
   const endpoint = process.platform === 'win32'
     ? `\\\\.\\pipe\\runner-v4-ipc-${stateDirectory.replace(/[^A-Za-z0-9]/g, '')}`
     : join(stateDirectory, 'broker.sock');
   const submitted: BrokerCommandV4[] = [];
+  const controls: string[] = [];
+  const controlCommandIds: string[] = [];
   const status = {
     ...validRuntimeResult(),
     state: 'READY_FOR_EXECUTOR',
@@ -376,6 +378,11 @@ async function ipcFixture() {
   };
   const server = await createBrokerIpcServer({
     daemon,
+    ...(options.controlPlane === false ? {} : { controlPlane: {
+      repair: async (input) => { controlCommandIds.push(input.command_id); controls.push(`repair:${input.run_id}:${input.findings[0]!.id}`); return { request_id: status.request_id, run_id: status.run_id, state: status.state, status_token: hashCanonicalV4({ run_id: status.run_id, state: status.state, artifact_manifest_hash: status.artifact_manifest_hash }) }; },
+      finalize: async (input) => { controlCommandIds.push(input.command_id); controls.push(`finalize:${input.run_id}`); return { request_id: status.request_id, run_id: status.run_id, state: status.state, status_token: hashCanonicalV4({ run_id: status.run_id, state: status.state, artifact_manifest_hash: status.artifact_manifest_hash }) }; },
+      abort: async (input) => { controlCommandIds.push(input.command_id); controls.push(`abort:${input.run_id}`); return { request_id: status.request_id, run_id: status.run_id, state: status.state, status_token: hashCanonicalV4({ run_id: status.run_id, state: status.state, artifact_manifest_hash: status.artifact_manifest_hash }) }; },
+    } }),
     stateDirectory,
     endpoint,
     platform: process.platform,
@@ -386,7 +393,7 @@ async function ipcFixture() {
     ...unixPhysicalServerTestDeps(),
   });
   const token = (await readFile(join(stateDirectory, 'broker.token'), 'utf8')).trim();
-  return { stateDirectory, submitted, server, token };
+  return { stateDirectory, submitted, controls, controlCommandIds, server, token };
 }
 
 function request(token: string): BrokerIpcRequestV4 {
@@ -411,6 +418,38 @@ test('round-trips an authenticated canonical request over a length-prefixed fram
   assert.equal(fixture.submitted.length, 1);
   await client.close();
   await fixture.server.close();
+});
+
+test('authenticates status, repair, finalize, and abort over the same bounded control plane', async () => {
+  const fixture = await ipcFixture();
+  const client = createBrokerIpcClient({ endpoint: fixture.server.endpoint, token: fixture.token, requestDeadlineMs: 1_000, platform: process.platform, serverIdentityVerifier: clientVerifier(fixture.server.endpoint), ...unixPhysicalClientTestDeps(fixture.stateDirectory) });
+  const runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
+
+  assert.equal((await client.status(runId)).run_id, runId);
+  const repair = { run_id: runId, findings: [{ id: 'finding-1', evidence_hash: 'a'.repeat(64) }] };
+  assert.equal((await client.repair(repair)).run_id, runId);
+  assert.equal((await client.repair(repair)).run_id, runId);
+  assert.equal((await client.finalize(runId)).run_id, runId);
+  assert.equal((await client.abort(runId)).run_id, runId);
+  assert.deepEqual(fixture.controls, [`repair:${runId}:finding-1`, `repair:${runId}:finding-1`, `finalize:${runId}`, `abort:${runId}`]);
+  assert.equal(fixture.controlCommandIds[0], fixture.controlCommandIds[1]);
+  assert.equal(fixture.submitted.length, 0);
+
+  await client.close();
+  await fixture.server.close();
+});
+
+test('rejects malformed control requests and missing mutating control composition', async () => {
+  const fixture = await ipcFixture();
+  const malformed = Buffer.from(canonicalJsonV4({ token: fixture.token, command: { type: 'REPAIR_CODING_TASK', command_id: 'repair-1', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', findings: [] } }), 'utf8');
+  assert.equal((await fixture.server.exchangeFrameForTest(malformed)).error, 'INVALID_CONTRACT: request contract rejected');
+  await fixture.server.close();
+
+  const withoutControl = await ipcFixture({ controlPlane: false });
+  const controlPayload = Buffer.from(canonicalJsonV4({ token: withoutControl.token, command: { type: 'FINALIZE_CODING_TASK', command_id: 'finalize-1', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1' } }), 'utf8');
+  const response = await withoutControl.server.exchangeFrameForTest(controlPayload);
+  assert.equal(response.error, 'CAPABILITY_UNVERIFIED: required capability is unverified');
+  await withoutControl.server.close();
 });
 
 test('rejects an invalid token before submitting to the daemon', async () => {

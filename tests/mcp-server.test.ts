@@ -4,9 +4,10 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-import { createMcpStdioAdapter, V4_MCP_INSTRUCTIONS, type McpBrokerControlClientV4 } from '../src/mcp/stdio-adapter.js';
+import { createIpcMcpControlClientV4, createMcpStdioAdapter, V4_MCP_INSTRUCTIONS, type McpBrokerControlClientV4 } from '../src/mcp/stdio-adapter.js';
 import { V4_MCP_TOOLS } from '../src/mcp/tools.js';
 import type { RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
+import type { BrokerIpcClientV4 } from '../src/runtime/broker-ipc.js';
 
 const runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
 const requestId = 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
@@ -90,4 +91,24 @@ test('disconnect and replay preserve daemon idempotency while unavailability is 
   assert.equal(failed.isError, true);
   assert.match(JSON.stringify(failed.content), /AUTHENTICATION_FAILED.*broker control call failed/);
   await third.client.close(); await third.server.close();
+});
+
+test('bridges all five MCP controls to the authenticated IPC client', async () => {
+  const calls: string[] = [];
+  const ipc: BrokerIpcClientV4 = {
+    submit: async (command) => { calls.push(`run:${command.type === 'RUN_CODING_TASK' ? command.request.request_id : 'invalid'}`); return reply; },
+    repair: async (input) => { calls.push(`repair:${input.run_id}:${input.findings[0]!.id}`); return reply; },
+    finalize: async (value) => { calls.push(`finalize:${value}`); return reply; },
+    abort: async (value) => { calls.push(`abort:${value}`); return reply; },
+    status: async (value) => { calls.push(`status:${value}`); return reply; },
+    close: async () => { calls.push('close'); },
+  };
+  const bridge = createIpcMcpControlClientV4(ipc);
+  await bridge.run(request());
+  await bridge.repair({ run_id: runId, findings: [{ id: 'finding-1', evidence_hash: 'b'.repeat(64) }] });
+  await bridge.finalize(runId);
+  await bridge.abort(runId);
+  await bridge.status(runId);
+  await bridge.close();
+  assert.deepEqual(calls, [`run:${requestId}`, `repair:${runId}:finding-1`, `finalize:${runId}`, `abort:${runId}`, `status:${runId}`, 'close']);
 });

@@ -4,6 +4,7 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import type { RuntimeTaskRequestV4 } from '../runtime/contracts.js';
 import type { BrokerReplyV4 } from '../runtime/broker-daemon.js';
+import type { BrokerIpcClientV4 } from '../runtime/broker-ipc.js';
 import { mcpReplySchemaV4, V4_MCP_INPUT_SCHEMAS } from './tools.js';
 
 export const V4_MCP_INSTRUCTIONS = `MANDATORY SOURCE-MUTATION RULE
@@ -23,6 +24,17 @@ export interface McpBrokerControlClientV4 {
 
 export interface McpAdapterDependenciesV4 { readonly client: McpBrokerControlClientV4; }
 export type McpServerV4 = McpServer;
+
+export function createIpcMcpControlClientV4(client: BrokerIpcClientV4): McpBrokerControlClientV4 {
+  return Object.freeze({
+    run: (request: RuntimeTaskRequestV4) => client.submit({ type: 'RUN_CODING_TASK', command_id: `mcp-run-${randomBytes(16).toString('hex')}`, request }),
+    repair: (input: RepairControlV4) => client.repair(input),
+    finalize: (runId: string) => client.finalize(runId),
+    abort: (runId: string) => client.abort(runId),
+    status: (runId: string) => client.status(runId),
+    close: () => client.close(),
+  });
+}
 
 function publicFailure(error: unknown): never {
   const match = error instanceof Error ? /^([A-Z_]+):/.exec(error.message) : null;
@@ -62,3 +74,4 @@ export async function runMcpStdioAdapter(deps: McpAdapterDependenciesV4): Promis
   transport.onclose = () => { void deps.client.close(); };
   await server.connect(transport);
 }
+import { randomBytes } from 'node:crypto';
