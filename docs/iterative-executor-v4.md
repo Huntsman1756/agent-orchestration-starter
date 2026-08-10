@@ -70,3 +70,5 @@ Public interchange schemas:
 - `contracts/runtime-story-iteration-v4.schema.json`
 
 This module is a provider-neutral runtime primitive. A trusted host driver must compose it; the schemas do not turn an unqualified harness into a safe autonomous worker.
+
+See [`delegation-practice-packs-v4.md`](delegation-practice-packs-v4.md) for the deterministic instruction layering, frontend/backend examples, full-stack decomposition and escalation checklist expected from that host integration.
