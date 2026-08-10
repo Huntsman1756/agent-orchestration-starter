@@ -9,21 +9,78 @@ import {
   DOGFOOD_STOP_CONDITIONS_V1,
   freezeDogfoodManifestV1,
   freezeDogfoodRunRecordV1,
+  freezeDogfoodStopEventV1,
   verifyDogfoodRunSetV1,
   loadDogfoodManifestV1,
   loadDogfoodRunRecordV1,
   verifyDogfoodManifestV1,
   verifyDogfoodRunRecordV1,
+  verifyDogfoodStopEventV1,
   type DogfoodManifestInputV1,
   type DogfoodManifestV1,
   type DogfoodRunRecordInputV1,
 } from '../src/pilot/dogfood-manifest.js';
 import { hashCanonical } from '../src/pilot/canonical-json.js';
+import type { BindingRegistryV3, PricingSnapshotV3, UsageRecordedV3 } from '../src/pilot/usage-cost.js';
 
 const hash = (character: string) => character.repeat(64);
 const sha = (character: string) => character.repeat(40);
 const uniqueHash = (index: number) => `${index.toString(16).padStart(2, '0')}${'0'.repeat(62)}`;
 const timestamp = '2026-08-10T12:00:00.000Z';
+const timestampAt = (seconds: number) => new Date(Date.parse(timestamp) + seconds * 1_000).toISOString();
+
+function pricingSnapshot(): PricingSnapshotV3 {
+  const content: Omit<PricingSnapshotV3, 'pricing_snapshot_hash'> = {
+    pricing_snapshot_id: 'pricing-v1',
+    currency: 'USD',
+    unit_scale: 1_000_000,
+    effective_at: timestamp,
+    tariffs: [
+      { binding_ref: 'binding-orchestrated', input_token_micro_units_per_token: 1, output_token_micro_units_per_token: 0, cached_input_token_micro_units_per_token: null, reasoning_token_micro_units_per_token: null, authoritative_charge_supported: false },
+      { binding_ref: 'binding-frontier', input_token_micro_units_per_token: 1, output_token_micro_units_per_token: 0, cached_input_token_micro_units_per_token: null, reasoning_token_micro_units_per_token: null, authoritative_charge_supported: false },
+      { binding_ref: 'binding-reviewer', input_token_micro_units_per_token: 1, output_token_micro_units_per_token: 0, cached_input_token_micro_units_per_token: null, reasoning_token_micro_units_per_token: null, authoritative_charge_supported: false },
+    ],
+  };
+  return { ...content, pricing_snapshot_hash: hashCanonical(content) };
+}
+
+function providerRegistry(manifest: DogfoodManifestV1): BindingRegistryV3 {
+  const orchestrated = manifest.route_bindings.find(binding => binding.strategy === 'orchestrated')!;
+  const frontier = manifest.route_bindings.find(binding => binding.strategy === 'frontier_execution')!;
+  return [
+    { binding_ref: orchestrated.binding_ref, capability_class: 'cheap', profile_hash: orchestrated.profile_hash },
+    { binding_ref: frontier.binding_ref, capability_class: 'strong', profile_hash: frontier.profile_hash },
+    { binding_ref: manifest.reviewer.binding_ref, capability_class: 'strong', profile_hash: manifest.reviewer.binding_hash },
+  ];
+}
+
+function providerUsage(bindingRef: string, runId: string): UsageRecordedV3 {
+  return {
+    usage_id: `${runId}-usage`, attempt_number: 1, role: 'executor', binding_ref: bindingRef,
+    provider_usage_id: null, input_tokens_observed: 100, output_tokens_observed: 0,
+    cached_input_tokens_observed: null, reasoning_tokens_observed: null,
+    input_tokens_estimated: null, output_tokens_estimated: null, cached_input_tokens_estimated: null,
+    reasoning_tokens_estimated: null, token_estimator_id: null, token_estimator_version: null,
+    pricing_snapshot_id: 'pricing-v1', cost_observed: 100, cost_estimated: null, currency: 'USD',
+    cost_provenance: 'TARIFF_REPRODUCED', attempt_id: 'attempt-1', review_id: null,
+    orchestrator_operation_id: null,
+  };
+}
+
+function providerCostEvidence(manifest: DogfoodManifestV1, strategy: 'orchestrated' | 'frontier_execution', runId: string) {
+  const snapshot = pricingSnapshot();
+  const bindingRegistry = providerRegistry(manifest);
+  const routeBinding = manifest.route_bindings.find(binding => binding.strategy === strategy)!;
+  const usage = [providerUsage(routeBinding.binding_ref, runId)];
+  return {
+    evidence_schema_version: 3 as const,
+    pricing_snapshot: snapshot,
+    binding_registry: [...bindingRegistry],
+    usage,
+    usage_ledger_hash: hashCanonical(usage),
+    binding_registry_hash: hashCanonical([...bindingRegistry].sort((left, right) => left.binding_ref.localeCompare(right.binding_ref))),
+  };
+}
 
 function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifestInputV1 {
   return {
@@ -41,8 +98,9 @@ function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifest
     cost_policy: {
       reporting_currency: 'USD',
       human_cost_micro_units_per_second: 25,
-      conversion_policy_hash: hash('5'),
+      conversion_policy_hash: pricingSnapshot().pricing_snapshot_hash,
       observed_cost_in_reporting_currency: true,
+      usage_binding_refs: ['binding-orchestrated', 'binding-frontier', 'binding-reviewer'],
     },
     analysis_policy_hash: hash('6'),
     corpus_policy: {
@@ -107,6 +165,7 @@ function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifest
       same_validation_surface: true,
       fresh_worktree_per_run: true,
       cross_run_workspace_reuse: false,
+      execution_mode: 'STRICT_SERIAL',
       post_acceptance_window_seconds: 86_400,
     },
     scheduling: {
@@ -134,10 +193,13 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
   const scheduled = manifest.schedule.find(entry => entry.ordinal === scheduleOrdinal)!;
   const currentCase = manifest.cases.find(value => value.case_id === scheduled.case_id)!;
   const routeBinding = manifest.route_bindings.find(value => value.strategy === scheduled.strategy)!;
+  const runId = overrides.run_id ?? 'run-dogfood-0001';
+  const startedAt = timestampAt((scheduleOrdinal - 1) * 3);
+  const completedAt = timestampAt((scheduleOrdinal - 1) * 3 + 2);
   return {
     experiment_id: manifest.experiment_id,
     manifest_hash: manifest.manifest_hash,
-    run_id: 'run-dogfood-0001',
+    run_id: runId,
     schedule_ordinal: scheduled.ordinal,
     case_id: currentCase.case_id,
     task_id: currentCase.task_id,
@@ -147,6 +209,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     binding_hash: routeBinding.binding_hash,
     qualification_hash: routeBinding.qualification_hash,
     cost_policy_hash: hashCanonical(manifest.cost_policy),
+    provider_cost_evidence: providerCostEvidence(manifest, scheduled.strategy, runId),
     base_sha: currentCase.base_sha,
     contract_hash: currentCase.contract_hash,
     fixtures_hash: currentCase.fixtures_hash,
@@ -160,8 +223,8 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     host_certification_hash: manifest.baseline.host_certification_hash,
     installation_manifest_hash: manifest.baseline.installation_manifest_hash,
     validation_surface_hash: currentCase.validation_surface_hash,
-    started_at: timestamp,
-    completed_at: '2026-08-10T12:00:02.000Z',
+    started_at: startedAt,
+    completed_at: completedAt,
     outcome: 'ACCEPTED',
     first_pass_accepted: true,
     final_accepted: true,
@@ -176,6 +239,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     human_intervention_seconds: 0,
     human_intervention_cost_micro_units: 0,
     total_cost_to_accepted_result_micro_units: 100,
+    frontier_usage_calls: scheduled.strategy === 'frontier_execution' ? 1 : 0,
     changed_files: 1,
     changed_lines: 4,
     validation_failures: 0,
@@ -186,7 +250,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     evidence_hashes: [hash('2')],
     cross_run_contamination: false,
     publication_state: 'MANUAL_PENDING',
-    recorded_at: '2026-08-11T12:00:02.000Z',
+    recorded_at: timestampAt((scheduleOrdinal - 1) * 3 + 86_402),
     ...overrides,
   };
 }
@@ -230,7 +294,8 @@ test('run records prove exact manifest pairing and hash-bound evidence', () => {
   const manifest = freezeDogfoodManifestV1(input());
   const record = freezeDogfoodRunRecordV1(recordInput(manifest));
   assert.equal(loadDogfoodRunRecordV1(record).record_hash, record.record_hash);
-  assert.equal(verifyDogfoodRunRecordV1(manifest, record).ok, true);
+  const recordVerification = verifyDogfoodRunRecordV1(manifest, record);
+  assert.equal(recordVerification.ok, true, recordVerification.errors.join('; '));
 
   const changedBase = freezeDogfoodRunRecordV1(recordInput(manifest, { base_sha: sha('c') }));
   const result = verifyDogfoodRunRecordV1(manifest, changedBase);
@@ -274,7 +339,8 @@ test('run records recalculate human cost and total cost from the frozen cost pol
     human_intervention_cost_micro_units: 250,
     total_cost_to_accepted_result_micro_units: 350,
   }));
-  assert.equal(verifyDogfoodRunRecordV1(manifest, valid).ok, true);
+  const validResult = verifyDogfoodRunRecordV1(manifest, valid);
+  assert.equal(validResult.ok, true, validResult.errors.join('; '));
 
   const tampered = freezeDogfoodRunRecordV1(recordInput(manifest, {
     human_intervention_seconds: 10,
@@ -289,6 +355,20 @@ test('run records recalculate human cost and total cost from the frozen cost pol
   const currencyResult = verifyDogfoodRunRecordV1(manifest, wrongCurrency);
   assert.equal(currencyResult.ok, false);
   assert.match(currencyResult.errors.join('; '), /currency/u);
+
+  const validEvidence = providerCostEvidence(manifest, 'orchestrated', 'run-dogfood-0001');
+  const tamperedUsage = { ...validEvidence.usage[0]!, cost_observed: 101 };
+  const tamperedEvidence = {
+    ...validEvidence,
+    usage: [tamperedUsage],
+    usage_ledger_hash: hashCanonical([tamperedUsage]),
+  };
+  const tamperedProviderCost = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    provider_cost_evidence: tamperedEvidence,
+  }));
+  const providerResult = verifyDogfoodRunRecordV1(manifest, tamperedProviderCost);
+  assert.equal(providerResult.ok, false);
+  assert.match(providerResult.errors.join('; '), /provider observed pricing|reproduced provider cost/u);
 });
 
 test('run-set verification requires exactly one valid record per scheduled ordinal and route', () => {
@@ -296,7 +376,8 @@ test('run-set verification requires exactly one valid record per scheduled ordin
   const records = manifest.schedule.map((entry, index) => freezeDogfoodRunRecordV1(recordInput(manifest, {
     run_id: `run-dogfood-${String(index + 1).padStart(4, '0')}`,
   }, entry.ordinal)));
-  assert.equal(verifyDogfoodRunSetV1(manifest, records).ok, true);
+  const complete = verifyDogfoodRunSetV1(manifest, records);
+  assert.equal(complete.ok, true, complete.errors.join('; '));
 
   const missing = verifyDogfoodRunSetV1(manifest, records.slice(0, -1));
   assert.equal(missing.ok, false);
@@ -309,6 +390,59 @@ test('run-set verification requires exactly one valid record per scheduled ordin
   const extra = verifyDogfoodRunSetV1(manifest, [...records, records[0]]);
   assert.equal(extra.ok, false);
   assert.match(extra.errors.join('; '), /exactly|duplicate/u);
+
+  const overlapping = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    started_at: timestampAt(1),
+    completed_at: timestampAt(3),
+    recorded_at: timestampAt(86_403),
+  }, 2));
+  const serialResult = verifyDogfoodRunSetV1(manifest, [records[0]!, overlapping, ...records.slice(2)]);
+  assert.equal(serialResult.ok, false);
+  assert.match(serialResult.errors.join('; '), /strict serial/u);
+});
+
+test('run-set verification distinguishes a complete experiment from an operationally stopped prefix', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const records = manifest.schedule.slice(0, 3).map((entry, index) => freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: `run-stop-${String(index + 1).padStart(4, '0')}`,
+  }, entry.ordinal)));
+  const stopEvent = freezeDogfoodStopEventV1({
+    experiment_id: manifest.experiment_id,
+    manifest_hash: manifest.manifest_hash,
+    stop_condition: 'AUTHORITY_ESCAPE',
+    last_completed_schedule_ordinal: 3,
+    triggering_run_id: records[2]!.run_id,
+    observed_at: timestampAt(9),
+    evidence_hashes: [hash('c')],
+  });
+  assert.equal(verifyDogfoodStopEventV1(manifest, stopEvent).ok, true);
+  const stopped = verifyDogfoodRunSetV1(manifest, records, stopEvent);
+  assert.equal(stopped.ok, true, stopped.errors.join('; '));
+  assert.equal(stopped.status, 'STOPPED_OPERATIONAL_FAILURE');
+  assert.equal(verifyDogfoodRunSetV1(manifest, records).ok, false);
+  const afterStop = verifyDogfoodRunSetV1(manifest, [...records, freezeDogfoodRunRecordV1(recordInput(manifest, { run_id: 'run-after-stop' }, 4))], stopEvent);
+  assert.equal(afterStop.ok, false);
+  assert.match(afterStop.errors.join('; '), /after.*stop|exactly/u);
+});
+
+test('run records reject contradictory acceptance and defect semantics', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const rejectedAccepted = freezeDogfoodRunRecordV1(recordInput(manifest, { outcome: 'REJECTED', final_accepted: true }));
+  const rejectedAcceptedResult = verifyDogfoodRunRecordV1(manifest, rejectedAccepted);
+  assert.equal(rejectedAcceptedResult.ok, false);
+  assert.match(rejectedAcceptedResult.errors.join('; '), /outcome ACCEPTED/u);
+
+  const falseWithoutAcceptance = freezeDogfoodRunRecordV1(recordInput(manifest, { final_accepted: false, outcome: 'REJECTED', false_acceptance: true }));
+  const falseWithoutAcceptanceResult = verifyDogfoodRunRecordV1(manifest, falseWithoutAcceptance);
+  assert.equal(falseWithoutAcceptanceResult.ok, false);
+  assert.match(falseWithoutAcceptanceResult.errors.join('; '), /false_acceptance requires/u);
+
+  const criticalDefect = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    post_acceptance_defects: [{ defect_hash: hash('d'), severity: 'critical' }],
+  }));
+  const criticalDefectResult = verifyDogfoodRunRecordV1(manifest, criticalDefect);
+  assert.equal(criticalDefectResult.ok, false);
+  assert.match(criticalDefectResult.errors.join('; '), /critical false acceptance/u);
 });
 
 test('analysis policy is a canonical artifact bound into the manifest identity', async () => {
@@ -323,13 +457,25 @@ test('analysis policy is a canonical artifact bound into the manifest identity',
 test('dogfood schemas compile independently and reject provider/model fields', async () => {
   const manifestSchema = JSON.parse(await readFile(new URL('../contracts/dogfood-manifest-v1.schema.json', import.meta.url), 'utf8')) as object;
   const recordSchema = JSON.parse(await readFile(new URL('../contracts/dogfood-run-record-v1.schema.json', import.meta.url), 'utf8')) as object;
+  const stopSchema = JSON.parse(await readFile(new URL('../contracts/dogfood-stop-event-v1.schema.json', import.meta.url), 'utf8')) as object;
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   const validateManifest = ajv.compile(manifestSchema);
   const validateRecord = ajv.compile(recordSchema);
+  const validateStop = ajv.compile(stopSchema);
   const manifest = freezeDogfoodManifestV1(input());
   const record = freezeDogfoodRunRecordV1(recordInput(manifest));
+  const stop = freezeDogfoodStopEventV1({ experiment_id: manifest.experiment_id, manifest_hash: manifest.manifest_hash, stop_condition: 'AUTHORITY_ESCAPE', last_completed_schedule_ordinal: 1, triggering_run_id: record.run_id, observed_at: timestampAt(3), evidence_hashes: [hash('e')] });
   assert.equal(validateManifest(manifest), true, JSON.stringify(validateManifest.errors));
   assert.equal(validateRecord(record), true, JSON.stringify(validateRecord.errors));
+  assert.equal(validateStop(stop), true, JSON.stringify(validateStop.errors));
+  const invalidUsageRecord = {
+    ...record,
+    provider_cost_evidence: {
+      ...record.provider_cost_evidence,
+      usage: [{ ...record.provider_cost_evidence.usage[0]!, attempt_id: null, review_id: null, orchestrator_operation_id: null }],
+    },
+  };
+  assert.equal(validateRecord(invalidUsageRecord), false);
   assert.equal(validateManifest({ ...manifest, model: 'must-not-be-in-the-manifest' }), false);
   assert.equal(validateManifest({ ...manifest, baseline: { ...manifest.baseline, worker_capability_hash: hash('0') } }), false);
 });

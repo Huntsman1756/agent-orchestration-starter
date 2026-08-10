@@ -67,8 +67,8 @@
     "authority": { "$ref": "#/$defs/authority" },
     "required_metrics": {
       "type": "array",
-      "minItems": 17,
-      "maxItems": 17,
+      "minItems": 19,
+      "maxItems": 19,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/metric" }
     },
@@ -109,12 +109,13 @@
     "costPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["reporting_currency", "human_cost_micro_units_per_second", "conversion_policy_hash", "observed_cost_in_reporting_currency"],
+      "required": ["reporting_currency", "human_cost_micro_units_per_second", "conversion_policy_hash", "observed_cost_in_reporting_currency", "usage_binding_refs"],
       "properties": {
         "reporting_currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
         "human_cost_micro_units_per_second": { "$ref": "#/$defs/nonnegativeInteger" },
         "conversion_policy_hash": { "$ref": "#/$defs/hash" },
-        "observed_cost_in_reporting_currency": { "const": true }
+        "observed_cost_in_reporting_currency": { "const": true },
+        "usage_binding_refs": { "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } }
       }
     },
     "corpusPolicy": {
@@ -218,13 +219,14 @@
     "runPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["same_base_sha", "same_fixtures", "same_validation_surface", "fresh_worktree_per_run", "cross_run_workspace_reuse", "post_acceptance_window_seconds"],
+      "required": ["same_base_sha", "same_fixtures", "same_validation_surface", "fresh_worktree_per_run", "cross_run_workspace_reuse", "execution_mode", "post_acceptance_window_seconds"],
       "properties": {
         "same_base_sha": { "const": true },
         "same_fixtures": { "const": true },
         "same_validation_surface": { "const": true },
         "fresh_worktree_per_run": { "const": true },
         "cross_run_workspace_reuse": { "const": false },
+        "execution_mode": { "const": "STRICT_SERIAL" },
         "post_acceptance_window_seconds": { "$ref": "#/$defs/positiveInteger" }
       }
     },
@@ -264,7 +266,7 @@
       }
     },
     "metric": {
-      "enum": ["first_pass_accepted", "final_accepted", "reviewer_rejection", "repairs", "escalations", "attempts", "duration_ms", "observed_cost", "changed_files", "changed_lines", "validation_failures", "false_acceptance", "post_acceptance_defects", "human_intervention_rate", "total_cost_to_accepted_result", "evidence_reconstructible", "cross_run_contamination"]
+      "enum": ["first_pass_accepted", "final_accepted", "reviewer_rejection", "repairs", "escalations", "attempts", "duration_ms", "observed_cost", "changed_files", "changed_lines", "validation_failures", "false_acceptance", "post_acceptance_defects", "human_intervention_rate", "total_cost_to_accepted_result", "all_scheduled_run_cost", "frontier_usage", "evidence_reconstructible", "cross_run_contamination"]
     },
     "stopCondition": {
       "enum": ["AUTHORITY_ESCAPE", "DURABLE_STATE_INCONSISTENCY", "CRITICAL_FALSE_ACCEPTANCE", "CROSS_RUN_CONTAMINATION", "UNRECONSTRUCTABLE_EVIDENCE"]

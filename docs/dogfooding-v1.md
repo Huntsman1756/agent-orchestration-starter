@@ -59,10 +59,16 @@ The manifest also freezes `cost_policy`:
 - `conversion_policy_hash` identifies the provider-cost conversion rules;
 - `observed_cost_in_reporting_currency: true` means route, repair and escalation
   costs are already converted before recording them.
+- `usage_binding_refs` freezes every binding allowed to appear in the provider
+  usage ledger, including both route bindings and the reviewer binding.
 
 The verifier recomputes human cost as
 `human_intervention_seconds × human_cost_micro_units_per_second` and total cost
 as `observed_cost_micro_units + human_intervention_cost_micro_units`.
+`conversion_policy_hash` must equal the self-hash of the V3 pricing snapshot in
+each run's `provider_cost_evidence`. That evidence retains the pricing snapshot,
+binding registry and usage ledger; the verifier reuses V3 `aggregateUsage`/
+`priceUsage` logic to reproduce observed cost and frontier usage calls.
 
 Changing any one of these starts a new experiment. Do not edit a frozen
 manifest in place and do not reinterpret a record under a later binding.
@@ -91,7 +97,11 @@ Every case is executed exactly twice from the same case record:
 The manifest's `hash-interleave-v1` schedule deterministically ranks cases and
 varies which route runs first within each pair. It contains every case/route
 combination exactly once and bounds consecutive runs of the same strategy to
-two. Do not replace it with “all orchestrated, then all frontier”.
+two. `run_policy.execution_mode` is `STRICT_SERIAL`: the next ordinal may not
+start before the previous ordinal has completed. The run-set verifier checks
+the recorded timestamps, so assigning ordinals after running all of one route
+cannot make a non-interleaved execution valid. Do not replace it with “all
+orchestrated, then all frontier”.
 
 The 20–30 cases are the first operational sample only. Do not use them to
 promote routing or to change thresholds. Future promotion evidence must still
@@ -119,8 +129,8 @@ treated as a model success.
 ## Run records and metrics
 
 Emit one hash-bound `DogfoodRunRecordV1` per scheduled execution. Records are
-sanitized metrics and hashes, not prompts, source code, raw model output,
-credentials or secrets. At minimum record:
+sanitized metrics, hashes and structured provider-usage evidence, not prompts,
+source code, raw model output, credentials or secrets. At minimum record:
 
 - first-pass acceptance and final acceptance;
 - reviewer rejection;
@@ -134,14 +144,16 @@ credentials or secrets. At minimum record:
 - evidence reconstructibility;
 - cross-run contamination;
 - human interventions and intervention time;
-- total cost to an accepted result.
+- total cost to an accepted result;
+- total cost across every scheduled run, including failed/unaccepted runs;
+- reproducible frontier usage calls.
 
 `total_cost_to_accepted_result_micro_units` must equal the verifier's frozen
-calculation: observed route cost (including repairs and escalations) plus the
-declared human-intervention cost. Report token/provider cost separately from
-operational human cost so a cheap worker cannot appear cheaper merely because
-intervention is omitted. A record with a manipulated currency, human rate or
-total is invalid.
+calculation: reproduced provider route cost (including repairs and escalations)
+plus the declared human-intervention cost. Report token/provider cost separately
+from operational human cost so a cheap worker cannot appear cheaper merely
+because intervention is omitted. A record with a manipulated currency, pricing
+snapshot, usage ledger, human rate or total is invalid.
 
 The manifest freezes `post_acceptance_window_seconds`. A final run record is
 valid only when `started_at ≤ completed_at ≤ recorded_at`, `duration_ms` equals
@@ -149,16 +161,26 @@ the timestamp difference, and `recorded_at` is at least
 `completed_at + post_acceptance_window_seconds`. Defects are then classified
 against the same window for both routes.
 
-Do not build the report by checking records one at a time. Call
-`verifyDogfoodRunSetV1(manifest, records)` and require exactly one valid record
-for every schedule ordinal, with both routes present for every case. A missing,
-duplicated or extra record invalidates the experiment rather than silently
-changing its denominator.
+Do not build the report by checking records one at a time. For a completed
+pilot, call `verifyDogfoodRunSetV1(manifest, records)` and require exactly one
+valid record for every schedule ordinal, with both routes present for every
+case. A missing, duplicated or extra record invalidates the experiment rather
+than silently changing its denominator.
+
+If a frozen stop condition occurs, persist a hash-bound
+`DogfoodStopEventV1` and call `verifyDogfoodRunSetV1(manifest, records,
+stopEvent)`. The result is then `STOPPED_OPERATIONAL_FAILURE`, not `COMPLETE`:
+records must be exactly the prefix `1..N`, the triggering run must be ordinal
+`N`, and no record after `N` is allowed. A stopped prefix does not need to
+contain both routes for every case. Without a stop event, the only valid result
+is `COMPLETE` with the full schedule.
 
 The aggregate `human_intervention_rate` is the proportion of runs requiring at
 least one human action. The aggregate `total_cost_to_accepted_result` is the
 sum of route, recovery and human costs for runs that reach an accepted result;
-unaccepted work remains visible in a separate failure population.
+unaccepted work remains visible in a separate failure population. The report
+also computes mean/total cost over all scheduled runs and frontier usage calls;
+it must not describe cost reduction using only successful runs.
 
 ## Frozen stop conditions
 
@@ -175,10 +197,12 @@ Stop the entire pilot on the first occurrence of any of these conditions:
 5. `UNRECONSTRUCTABLE_EVIDENCE` — a run cannot be replayed or audited from its
    frozen manifest, record hashes and retained evidence.
 
-On a stop, preserve the manifest and all records, mark the pilot stopped in an
-external append-only log, and do not retry the failed case under changed
-conditions. A fix requires a new commit, new exact binding qualification and
-new manifest hash.
+On a stop, preserve the manifest, the triggering run and all prefix records,
+then persist `dogfood-stop-event-v1` in an external append-only log. Do not
+retry the failed case under changed conditions. A fix requires a new commit,
+new exact binding qualification and new manifest hash. `operational_failure`
+has precedence over `insufficient_evidence`; a stopped pilot is never relabeled
+as ordinary sample insufficiency.
 
 ## Analysis boundary
 
@@ -190,13 +214,19 @@ The first question is:
 > Does `orchestrated` preserve quality while reducing frontier usage or total
 > operating cost without introducing new operational failures?
 
-Do not modify thresholds, omit difficult cases, collapse human intervention,
+The record verifier also enforces semantic invariants: `outcome: ACCEPTED` is
+equivalent to `final_accepted`, `false_acceptance` requires final acceptance,
+and a critical post-acceptance defect is a critical false acceptance. Do not
+modify thresholds, omit difficult cases, collapse human intervention,
 or count a frontier rescue as an orchestrated first-pass success after seeing
-the results. If the pilot is inconclusive, record `insufficient_evidence` and
-design the next evidence phase separately.
+the results. Record `insufficient_evidence` only for a complete run set whose
+denominators are insufficient; an operationally stopped run set is always
+`operational_failure`.
 
 The manifest and record contracts are published as
 [`dogfood-manifest-v1.schema.json`](../contracts/dogfood-manifest-v1.schema.json)
 and [`dogfood-run-record-v1.schema.json`](../contracts/dogfood-run-record-v1.schema.json).
+The operational stop event is defined by
+[`dogfood-stop-event-v1.schema.json`](../contracts/dogfood-stop-event-v1.schema.json).
 The report formulas are frozen in
 [`dogfood-analysis-policy-v1.json`](../contracts/dogfood-analysis-policy-v1.json).

@@ -6,7 +6,7 @@
     "baseline_strategy": "frontier_execution",
     "candidate_strategy": "orchestrated",
     "pair_key": "pair_id",
-    "minimum_valid_run_set": "exactly one verified record for every manifest schedule ordinal"
+    "minimum_valid_run_set": "COMPLETE requires exactly one verified record for every manifest schedule ordinal; STOPPED_OPERATIONAL_FAILURE requires exactly one verified record for the prefix through the hash-bound stop ordinal"
   },
   "run_metrics": {
     "first_pass_acceptance_rate": "count(first_pass_accepted = true) / count(records)",
@@ -17,16 +17,21 @@
     "human_intervention_rate": "count(human_interventions > 0) / count(records)",
     "mean_duration_ms": "sum(duration_ms) / count(records)",
     "mean_total_cost_to_accepted_result_micro_units": "sum(total_cost_to_accepted_result_micro_units where final_accepted = true) / count(records where final_accepted = true)",
-    "post_acceptance_defect_incidence_rate": "count(post_acceptance_defects is not empty) / count(records where final_accepted = true)",
+    "all_scheduled_run_cost_total_micro_units": "sum(total_cost_to_accepted_result_micro_units over every scheduled record)",
+    "all_scheduled_run_cost_mean_micro_units": "sum(total_cost_to_accepted_result_micro_units over every scheduled record) / count(records)",
+    "frontier_usage_calls": "sum(frontier_usage_calls over every scheduled record)",
+    "post_acceptance_defect_incidence_rate": "count(final_accepted = true AND post_acceptance_defects is not empty) / count(final_accepted = true)",
     "false_acceptance_rate": "count(false_acceptance = true) / count(records)"
   },
   "paired_interpretation": {
     "quality_preserved": "candidate.final_acceptance_rate >= baseline.final_acceptance_rate AND candidate.false_acceptance_rate <= baseline.false_acceptance_rate AND candidate.post_acceptance_defect_incidence_rate <= baseline.post_acceptance_defect_incidence_rate",
-    "cost_reduced": "candidate.mean_total_cost_to_accepted_result_micro_units < baseline.mean_total_cost_to_accepted_result_micro_units",
-    "operational_failure": "any authority escape, durable state inconsistency, critical false acceptance, cross-run contamination or unreconstructable evidence",
-    "insufficient_evidence": "run-set incomplete, an operational failure occurred, or either route has no final accepted result denominator"
+    "cost_reduced": "candidate.all_scheduled_run_cost_mean_micro_units < baseline.all_scheduled_run_cost_mean_micro_units",
+    "frontier_usage_reduced": "candidate.frontier_usage_calls < baseline.frontier_usage_calls",
+    "operational_failure": "run_set_status = STOPPED_OPERATIONAL_FAILURE OR any authority escape, durable state inconsistency, critical false acceptance, cross-run contamination or unreconstructable evidence",
+    "insufficient_evidence": "run_set_status = COMPLETE AND (run-set incomplete OR either route has no final accepted result denominator)"
   },
   "decision_policy": {
+    "decision_precedence": ["operational_failure", "insufficient_evidence", "preserved_quality_and_lower_cost", "quality_regression", "no_cost_reduction"],
     "automatic_route_promotion": false,
     "threshold_mutation_after_observation": false,
     "allowed_report_outcomes": ["preserved_quality_and_lower_cost", "quality_regression", "no_cost_reduction", "operational_failure", "insufficient_evidence"]

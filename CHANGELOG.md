@@ -48,6 +48,10 @@ host qualification.
   recalculates human and total cost from a frozen policy, validates complete
   run sets, binds execution identities per route, and freezes the report
   formulas through an analysis-policy hash.
+- Dogfood evidence hardening with verified `STRICT_SERIAL` execution, a
+  hash-bound `DogfoodStopEventV1` for operationally stopped prefixes, explicit
+  run-record semantic invariants, and V3 pricing/usage reproduction for
+  provider cost and frontier-usage metrics, including all scheduled runs.
 - A packaged delegation-practice runbook covering deterministic frontend/backend stack guidance, full-stack story decomposition, validation evidence and fail-closed escalation without provider-specific core policy.
 - Provider-neutral worker capability snapshots that bind plans to exact model, endpoint, harness, parser, tool, instruction/skill and qualification identities plus qualified story limits.
 - Hash-verified structured repair packets and normalized no-progress detection for bounded iterative execution.
