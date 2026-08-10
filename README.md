@@ -119,6 +119,8 @@ This is not yet a production-ready one-command runner. The current branch delibe
 
 Publication policy is repository-owned and model-neutral. The broker durably advances the accepted commit through exact push, PR, required checks and head-bound merge; `FINALIZED` is reached only after the merge is verified or publication is explicitly skipped by policy. Models never receive GitHub credentials or choose those settings. See [`docs/publication-v4.md`](docs/publication-v4.md).
 
+For larger economy-route changes, Runtime V4 also exposes a bounded iterative executor inspired by Ralph: one dependency-ready story per fresh coding context, deterministic validation, independent review, and retry from the last accepted tree. Unlike a free-running loop, only hash-bound accepted receipts cross contexts, the coding model cannot mark its own story complete, and tree promotion plus event persistence is a broker-owned atomic operation. See [`docs/iterative-executor-v4.md`](docs/iterative-executor-v4.md).
+
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos
