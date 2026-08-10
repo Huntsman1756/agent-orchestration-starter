@@ -546,17 +546,27 @@ test('terminate aborts blocked Docker identity commands and releases the executi
   const root = await makeTrustedFixtureRoot('ao-cli-block-');
   const previousCwd = process.cwd();
   try {
-    await Promise.all([
-      mkdir(join(root, 'active')),
-      mkdir(join(root, 'broker')),
-      copyFile(process.execPath, join(root, process.platform === 'win32' ? 'docker.exe' : 'docker')),
-      writeFile(join(root, 'info'), "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});writeFileSync('info-child.pid',String(child.pid));setInterval(()=>{},2147483647);"),
-      writeFile(join(root, 'image'), "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});writeFileSync('image-child.pid',String(child.pid));setInterval(()=>{},2147483647);"),
-    ]);
+    await Promise.all([mkdir(join(root, 'active')), mkdir(join(root, 'broker'))]);
+    const dockerExecutable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
+    const blockedCommand = (pidPath: string) => [
+      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});",
+      `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+    ].join('');
+    if (process.platform === 'win32') {
+      await Promise.all([
+        copyFile(process.execPath, dockerExecutable),
+        writeFile(join(root, 'info'), blockedCommand(join(root, 'info-child.pid'))),
+        writeFile(join(root, 'image'), blockedCommand(join(root, 'image-child.pid'))),
+      ]);
+    } else {
+      await writeFile(dockerExecutable, `#!${process.execPath}\n${blockedCommand(join(root, 'info-child.pid'))}\n`, 'utf8');
+      await chmod(dockerExecutable, 0o700);
+    }
     process.chdir(root);
     const backend = createDockerProcessSandboxV4({
       ...config,
-      docker_executable: join(root, process.platform === 'win32' ? 'docker.exe' : 'docker'),
+      docker_executable: dockerExecutable,
       allowed_mount_roots: [root],
       active_worktree: join(root, 'active'),
       broker_state_directory: join(root, 'broker'),
