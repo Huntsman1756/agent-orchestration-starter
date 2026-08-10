@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/a2a-runtime-task-projection-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "contextId", "status", "metadata"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
+    "contextId": { "type": "string", "pattern": "^req_[A-Za-z0-9_-]{16,96}$" },
+    "status": { "type": "object", "additionalProperties": false, "required": ["state", "timestamp"], "properties": { "state": { "enum": ["TASK_STATE_SUBMITTED", "TASK_STATE_WORKING", "TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED"] }, "timestamp": { "type": "string", "format": "date-time" } } },
+    "metadata": { "type": "object", "additionalProperties": false, "required": ["agentOrchestration"], "properties": { "agentOrchestration": { "$ref": "#/$defs/evidence" } } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "evidence": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "protocolVersion", "runtimeState", "contractHash", "artifactManifestHash", "statusToken", "projectionHash"], "properties": { "schemaVersion": { "const": 4 }, "protocolVersion": { "const": "1.0" }, "runtimeState": { "type": "string", "minLength": 1, "maxLength": 128 }, "contractHash": { "$ref": "#/$defs/hash" }, "artifactManifestHash": { "$ref": "#/$defs/hash" }, "statusToken": { "$ref": "#/$defs/hash" }, "projectionHash": { "$ref": "#/$defs/hash" } } }
+  }
+}

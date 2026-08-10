@@ -123,6 +123,8 @@ For larger economy-route changes, Runtime V4 also exposes a bounded iterative ex
 
 Portable inspection adds explicit role/adapter capability matching, bounded story graphs, safe hash-bound trace export and deterministic trajectory evaluation. These surfaces contain no provider/model policy and cannot alter runtime gates or routing. See [`docs/portable-runtime-inspection-v4.md`](docs/portable-runtime-inspection-v4.md).
 
+Cross-system interoperability can use the optional, version-pinned A2A v1 task projection. It exports bounded status evidence only and is intentionally not an HTTP server or a replacement for the broker state machine. See [`docs/a2a-adapter-v1.md`](docs/a2a-adapter-v1.md).
+
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos
