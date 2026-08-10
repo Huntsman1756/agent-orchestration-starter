@@ -23,6 +23,8 @@ import {
 import { verifyManifest } from '../pilot/manifest.js';
 import { reduceEvents } from '../pilot/reducer.js';
 import type { PilotEventV3 } from '../pilot/contracts.js';
+import { activateRuntimeRepositoryV4, installRuntimeHostV4, verifyRuntimeHostInstallationV4, loadRuntimeHostInstallationV4 } from '../runtime/host-installation.js';
+import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -37,6 +39,18 @@ export interface CliIo {
 function option(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] : undefined;
+}
+
+function exactOptions(argv: string[], allowed: readonly string[], required: readonly string[]): ReadonlyMap<string, string> {
+  const values = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 2) {
+    const name = argv[index];
+    const value = argv[index + 1];
+    if (!allowed.includes(name) || value === undefined || value.startsWith('--') || values.has(name)) throw new Error('INVALID_CONTRACT: runtime options are unknown, duplicated, or missing values');
+    values.set(name, value);
+  }
+  if (required.some((name) => !values.has(name))) throw new Error(`INVALID_CONTRACT: required runtime options are missing`);
+  return values;
 }
 
 function harnesses(argv: string[]): Harness[] {
@@ -184,17 +198,49 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
     const command = argv[0];
     if (command === 'runtime') {
       const subcommand = argv[1];
-      if (subcommand === 'daemon' && argv.length === 2) {
-        if (io.runtimeDaemon === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime daemon composition is unavailable');
-        await io.runtimeDaemon();
+      if (subcommand === 'install') {
+        const values = exactOptions(argv.slice(2), ['--source-root','--host-root','--host-driver','--installed-at'], ['--source-root','--host-root']);
+        const manifest = await installRuntimeHostV4({ sourceRoot: values.get('--source-root')!, hostRoot: values.get('--host-root')!, hostDriver: values.get('--host-driver'), installedAt: values.get('--installed-at') ?? new Date().toISOString() });
+        stdout(JSON.stringify(manifest));
         return 0;
       }
-      if (subcommand === 'mcp-stdio' && argv.length === 2) {
-        if (io.runtimeMcpStdio === undefined) throw new Error('CAPABILITY_UNVERIFIED: authenticated MCP composition is unavailable');
-        await io.runtimeMcpStdio();
+      if (subcommand === 'verify-installation') {
+        const values = exactOptions(argv.slice(2), ['--manifest'], ['--manifest']);
+        const manifest = loadRuntimeHostInstallationV4(JSON.parse(await readFile(values.get('--manifest')!, 'utf8')));
+        stdout(await verifyRuntimeHostInstallationV4(manifest));
+        return 0;
+      }
+      if (subcommand === 'activate') {
+        const allowed = ['--repository-root','--policy','--profile','--worktree-parent','--installation-manifest','--host-root','--target','--activated-at'];
+        const values = exactOptions(argv.slice(2), allowed, allowed.filter((name) => name !== '--activated-at'));
+        const activation = await activateRuntimeRepositoryV4({
+          repositoryRoot: values.get('--repository-root')!, policyPath: values.get('--policy')!, profilePath: values.get('--profile')!,
+          worktreeParent: values.get('--worktree-parent')!, installationManifest: values.get('--installation-manifest')!, hostRoot: values.get('--host-root')!,
+          target: values.get('--target')! as 'ANALYSIS_ONLY'|'ISOLATED_EXECUTION'|'AUTONOMOUS_PUBLICATION', activatedAt: values.get('--activated-at') ?? new Date().toISOString(),
+        });
+        stdout(JSON.stringify(activation));
+        return 0;
+      }
+      if (subcommand === 'daemon') {
+        if (argv.length === 2 && io.runtimeDaemon !== undefined) { await io.runtimeDaemon(); return 0; }
+        if (argv.length === 2) throw new Error('CAPABILITY_UNVERIFIED: runtime daemon composition is unavailable');
+        const values = exactOptions(argv.slice(2), ['--activation'], ['--activation']);
+        await (await loadRuntimeHostDriverV4(values.get('--activation')!)).daemon();
+        return 0;
+      }
+      if (subcommand === 'mcp-stdio') {
+        if (argv.length === 2 && io.runtimeMcpStdio !== undefined) { await io.runtimeMcpStdio(); return 0; }
+        if (argv.length === 2) throw new Error('CAPABILITY_UNVERIFIED: authenticated MCP composition is unavailable');
+        const values = exactOptions(argv.slice(2), ['--activation'], ['--activation']);
+        await (await loadRuntimeHostDriverV4(values.get('--activation')!)).mcpStdio();
         return 0;
       }
       if (subcommand === 'doctor') {
+        if (argv.includes('--activation')) {
+          const values = exactOptions(argv.slice(2), ['--activation'], ['--activation']);
+          for (const line of await (await loadRuntimeHostDriverV4(values.get('--activation')!)).doctor()) stdout(line);
+          return 0;
+        }
         const repositoryPolicy = option(argv, '--repository-policy');
         const profile = option(argv, '--profile');
         if (repositoryPolicy === undefined || profile === undefined || argv.length !== 6) throw new Error('INVALID_CONTRACT: runtime doctor requires exact --repository-policy and --profile options');
@@ -204,9 +250,12 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       }
       if (subcommand === 'status') {
         const runId = option(argv, '--run-id');
-        if (runId === undefined || !/^run_[A-Za-z0-9_-]{16,96}$/.test(runId) || argv.length !== 4) throw new Error('INVALID_CONTRACT: runtime status requires one exact --run-id');
-        if (io.runtimeStatus === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime status composition is unavailable');
-        stdout(JSON.stringify(await io.runtimeStatus(runId)));
+        if (runId === undefined || !/^run_[A-Za-z0-9_-]{16,96}$/.test(runId)) throw new Error('INVALID_CONTRACT: runtime status requires one exact --run-id');
+        if (argv.length === 4 && io.runtimeStatus !== undefined) stdout(JSON.stringify(await io.runtimeStatus(runId)));
+        else {
+          const values = exactOptions(argv.slice(2), ['--run-id','--activation'], ['--run-id','--activation']);
+          stdout(JSON.stringify(await (await loadRuntimeHostDriverV4(values.get('--activation')!)).status(runId)));
+        }
         return 0;
       }
       throw new Error('INVALID_CONTRACT: unsupported runtime command');

@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4 } from './contracts.js';
-import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
+import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureV4 } from './failures.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import { inspectAllowedChanges, type InspectedChangeV4, type PathInspectionInputV4 } from './path-policy.js';
@@ -34,6 +34,9 @@ export interface BrokerDaemonV4 {
   recordAttempt(runId: string, attempt: { attempt: number; executor_binding_ref: string; result_hash: string }): Promise<void>;
   reinspect(runId: string): Promise<void>;
   recordExternalProcessStarted(runId: string, process: ExternalProcessIdentityV4): Promise<void>;
+  recordAcceptedCandidate?(event: Extract<BrokerCommandV4, { type: 'CANDIDATE_ACCEPTED' }>): Promise<void>;
+  recordFailure?(runId: string, failure: RuntimeFailureV4, commandId?: string): Promise<void>;
+  recordAbort?(runId: string, commandId?: string): Promise<void>;
   recordCommitCreated?(event: Extract<BrokerCommandV4, { type: 'COMMIT_CREATED' }>): Promise<void>;
   recordPublication?(event: Extract<BrokerCommandV4, { type: 'BRANCH_PUSHED' | 'PULL_REQUEST_RECORDED' | 'REQUIRED_CHECKS_PASSED' | 'RUN_MERGED' | 'PUBLICATION_SKIPPED' }>): Promise<void>;
 }
@@ -232,6 +235,21 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     return run.result;
   };
 
+  const releaseForRun = async (runId: string): Promise<void> => {
+    const run = state?.runs[runId];
+    if (run === undefined) return;
+    const repositoryLock = locks.get(run.contract.repository_id);
+    if (repositoryLock !== undefined) {
+      await repositoryLock.release();
+      locks.delete(run.contract.repository_id);
+    }
+    const runLock = runLocks.get(runId);
+    if (runLock !== undefined) {
+      await runLock.release();
+      runLocks.delete(runId);
+    }
+  };
+
   const replyFor = (runId: string): BrokerReplyV4 => {
     const result = resultFor(runId);
     return {
@@ -327,6 +345,24 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       await ensureRecovered();
       await persist({ type: 'EXTERNAL_PROCESS_STARTED', command_id: commandId('external-started'), run_id: runId, process });
     }),
+    recordAcceptedCandidate: (event) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await persist(event);
+    }),
+    recordFailure: (runId, failure, suppliedCommandId) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await persist({ type: 'RUN_FAILED', command_id: suppliedCommandId ?? `run-failed:${runId}:${hashCanonicalV4(failure)}`, run_id: runId, failure });
+      await releaseForRun(runId);
+    }),
+    recordAbort: (runId, suppliedCommandId) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      const failure: RuntimeFailureV4 = { code: 'ABORTED', message: 'ABORTED: run was aborted by authenticated control', retryable: false, evidence_hashes: [] };
+      await persist({ type: 'RUN_ABORTED', command_id: suppliedCommandId ?? `run-aborted:${runId}`, run_id: runId, failure });
+      await releaseForRun(runId);
+    }),
     recordCommitCreated: (event) => serialize(async () => {
       requireOpen();
       await ensureRecovered();
@@ -336,6 +372,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       requireOpen();
       await ensureRecovered();
       await persist(event);
+      if (event.type === 'RUN_MERGED' || event.type === 'PUBLICATION_SKIPPED') await releaseForRun(event.run_id);
     }),
     close: () => serialize(async () => {
       if (closed) return;

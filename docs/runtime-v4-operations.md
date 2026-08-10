@@ -2,12 +2,12 @@
 
 ## Current readiness
 
-Runtime V4 is a fail-closed implementation framework, not yet a production-ready unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, telemetry, and orchestration scheduling have automated coverage. No code path deploys or changes routing automatically.
+Runtime V4 is a fail-closed implementation framework with a portable host bootstrap, not a universal pre-certified unattended service. Its local contracts, routing, capability qualification, worktree/capsule isolation, OpenCode and Codex runners, deterministic validation, fresh review, local Git finalization, broker-owned GitHub publication, MCP surface, lifecycle persistence, telemetry, orchestration scheduling, immutable installation and repository activation have automated coverage. No code path deploys or changes routing automatically.
 
 Production activation remains blocked until all of these are supplied and certified for the target host:
 
-- a native host composition for the now-complete authenticated MCP/IPC control plane, including exact repair, finalize and abort handlers plus certified platform verifiers/coordinators;
-- an immutable project-local runtime bundle at `.agent-orchestration/runtime/dist/cli/main.js`;
+- a trusted host driver which uses the supplied native composition factory and provides exact pipeline, repair, finalize and abort operations plus certified platform verifiers/coordinators;
+- installation and verification of the supplied immutable central runtime bundle;
 - a credential adapter that keeps saved ChatGPT/Codex authentication and provider API keys outside repository-controlled descendants;
 - a trusted GitHub credential lease plus certified empty Git hooks and global-config paths for the publication adapter;
 - a provider gateway compatible with each selected harness protocol (the current gateway only permits `/v1/chat/completions` with an API key);
@@ -15,6 +15,8 @@ Production activation remains blocked until all of these are supplied and certif
 - Docker sandbox certification on the deployment host.
 
 Use `assessRuntimeActivationV4` to produce a strict machine-readable assessment for `ANALYSIS_ONLY`, `ISOLATED_EXECUTION`, or `AUTONOMOUS_PUBLICATION`. It reports route collapse and missing evidence without weakening private-source policy. See [`activation-readiness-v4.md`](activation-readiness-v4.md).
+
+Install once per machine and activate each repository by reference. Installation, activation, driver migration and future provider changes are documented in [`host-installation-v4.md`](host-installation-v4.md). Activation records intended authority but does not manufacture host certification.
 
 If any item is absent, startup or execution returns a typed failure. There is no direct-write fallback.
 
@@ -32,7 +34,7 @@ agent-orchestration runtime doctor --repository-policy policies/repository-polic
 agent-orchestration runtime status --run-id run_...
 ```
 
-The STDIO MCP adapter performs short authenticated control calls only. The durable daemon owns idempotency, model execution, validation, review, repair/escalation, finalization, journal recovery, and locks. Replaying a canonical `request_id` returns its original `run_id`.
+The STDIO MCP adapter performs short authenticated control calls only. `createRuntimeHostCompositionV4` binds it to the durable daemon and exact host operations. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.
 
 The IPC wire contract now carries all five MCP operations and binds replies back to authoritative daemon status. Mutating retries reuse deterministic command IDs. See [`control-plane-v4.md`](control-plane-v4.md). This protocol completion does not by itself certify a production host.
 

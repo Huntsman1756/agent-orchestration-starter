@@ -55,6 +55,40 @@ test('pure replay requires reinspection after an executor attempt', () => {
   assert.equal(readyAgain.runs[acceptedCommand.run_id].inspection_required, false);
 });
 
+test('durably reaches review acceptance only from exact post-reinspection evidence', () => {
+  const acceptedCommand = accepted();
+  const ready = reduceBrokerStateV4(initialBrokerStateV4(), acceptedCommand);
+  const executing = reduceBrokerStateV4(ready, { type: 'EXTERNAL_PROCESS_STARTED', command_id: 'started', run_id: acceptedCommand.run_id, process: { pid: 42, boot_nonce: 'process-boot' } });
+  const waiting = reduceBrokerStateV4(executing, { type: 'ATTEMPT_RECORDED', command_id: 'attempt', run_id: acceptedCommand.run_id, attempt: { attempt: 1, executor_binding_ref: 'fixture-executor', result_hash: 'b'.repeat(64) } });
+  const reinspected = reduceBrokerStateV4(waiting, { type: 'PATHS_REINSPECTED', command_id: 'reinspect', run_id: acceptedCommand.run_id, inspection_epoch: 2 });
+  const evidence = {
+    type: 'CANDIDATE_ACCEPTED' as const,
+    command_id: 'candidate-accepted',
+    run_id: acceptedCommand.run_id,
+    validation_results: [{ validation_id: 'test', exit_code: 0, result_hash: 'c'.repeat(64) }],
+    diff_hash: 'd'.repeat(64),
+    tree_hash: 'e'.repeat(64),
+    changed_files: ['src/greeting.ts'],
+    review_attestation_hash: 'f'.repeat(64),
+  };
+  const reviewed = reduceBrokerStateV4(reinspected, evidence);
+  assert.equal(reviewed.runs[acceptedCommand.run_id].result.state, 'REVIEW_ACCEPTED');
+  assert.deepEqual(reviewed.runs[acceptedCommand.run_id].result.validation_results, evidence.validation_results);
+  assert.throws(() => reduceBrokerStateV4(ready, evidence), /BROKER_STATE_CORRUPT/);
+  assert.throws(() => reduceBrokerStateV4(reinspected, { ...evidence, validation_results: [] }), /BROKER_STATE_CORRUPT/);
+  assert.throws(() => reduceBrokerStateV4(reinspected, { ...evidence, changed_files: ['outside.ts'] }), /BROKER_STATE_CORRUPT/);
+});
+
+test('records authenticated abort as a distinct terminal transition', () => {
+  const acceptedCommand = accepted();
+  const ready = reduceBrokerStateV4(initialBrokerStateV4(), acceptedCommand);
+  const aborted = reduceBrokerStateV4(ready, { type: 'RUN_ABORTED', command_id: 'abort', run_id: acceptedCommand.run_id, failure: { code: 'ABORTED', message: 'ABORTED: authenticated control', retryable: false, evidence_hashes: [] } });
+  assert.equal(aborted.runs[acceptedCommand.run_id].result.state, 'ABORTED');
+  assert.equal(aborted.runs[acceptedCommand.run_id].result.failure?.code, 'ABORTED');
+  assert.throws(() => reduceBrokerStateV4(ready, { type: 'RUN_ABORTED', command_id: 'abort', run_id: acceptedCommand.run_id, failure: { code: 'UNKNOWN_FAILURE', message: 'wrong', retryable: false, evidence_hashes: [] } }), /BROKER_STATE_CORRUPT/);
+  assert.throws(() => reduceBrokerStateV4(aborted, { type: 'RUN_ABORTED', command_id: 'abort-again', run_id: acceptedCommand.run_id, failure: { code: 'ABORTED', message: 'ABORTED: again', retryable: false, evidence_hashes: [] } }), /BROKER_STATE_CORRUPT/);
+});
+
 test('rejects every lifecycle transition that bypasses execution, reinspection, or terminal gates', () => {
   const acceptedCommand = accepted();
   const ready = reduceBrokerStateV4(initialBrokerStateV4(), acceptedCommand);
