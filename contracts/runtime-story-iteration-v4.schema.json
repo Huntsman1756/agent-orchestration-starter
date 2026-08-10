@@ -3,7 +3,7 @@
   "$id": "https://example.invalid/agent-orchestration/runtime-story-iteration-v4.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "type", "run_id", "plan_hash", "story_id", "iteration", "attempt", "session_id", "input_tree_hash", "candidate_tree_hash", "outcome", "changes", "execution_result_hash", "validation_manifest_hash", "review_attestation_hash", "finding_hashes", "event_hash"],
+  "required": ["schema_version", "type", "run_id", "plan_hash", "story_id", "iteration", "attempt", "session_id", "input_tree_hash", "candidate_tree_hash", "outcome", "changes", "changed_lines", "execution_result_hash", "validation_manifest_hash", "review_attestation_hash", "finding_hashes", "repair_packet_hash", "failure_signature_hash", "escalation_reason", "event_hash"],
   "properties": {
     "schema_version": { "const": 4 },
     "type": { "const": "STORY_ITERATION_RECORDED" },
@@ -17,10 +17,14 @@
     "candidate_tree_hash": { "$ref": "#/$defs/hash" },
     "outcome": { "enum": ["ACCEPTED", "RETRY", "ESCALATE"] },
     "changes": { "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": { "type": "object", "additionalProperties": false, "required": ["path", "operation"], "properties": { "path": { "$ref": "#/$defs/path" }, "operation": { "enum": ["CREATE", "MODIFY", "DELETE"] } } } },
+    "changed_lines": { "type": "integer", "minimum": 1, "maximum": 100000 },
     "execution_result_hash": { "$ref": "#/$defs/hash" },
     "validation_manifest_hash": { "$ref": "#/$defs/hash" },
     "review_attestation_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
     "finding_hashes": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } },
+    "repair_packet_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "failure_signature_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "escalation_reason": { "anyOf": [{ "enum": ["ATTEMPT_LIMIT", "NO_PROGRESS"] }, { "type": "null" }] },
     "event_hash": { "$ref": "#/$defs/hash" }
   },
   "$defs": {

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { hashCanonicalV4 } from './canonical.js';
 import { normalizedRepositoryRelativePathV4Schema } from './contract-schemas.js';
 import type { RuntimeWorkContractV4 } from './contracts.js';
+import { loadRepairPacketV4, type RepairPacketV4 } from './repair-packet.js';
+import { loadWorkerCapabilityV4, type WorkerCapabilityV4 } from './worker-capability.js';
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
@@ -22,6 +24,10 @@ const storyBodySchema = z.object({
   allowed_changes: unique(z.object({ path, operations: unique(operation, 3, 1) }).strict(), 64, 1),
   validation_ids: unique(z.string().min(1).max(128), 32, 1),
   acceptance_criteria: unique(z.string().min(1).max(512), 32, 1),
+  required_capabilities: unique(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/), 32, 1),
+  context_budget_bytes: z.number().int().min(1_024).max(16 * 1024 * 1024),
+  max_changed_lines: z.number().int().min(1).max(100_000),
+  max_steps: z.number().int().min(1).max(128),
   max_attempts: z.number().int().min(1).max(3),
 }).strict();
 
@@ -31,6 +37,7 @@ const planBodySchema = z.object({
   run_id: z.string().regex(/^run_[A-Za-z0-9_-]{16,96}$/),
   contract_hash: hash,
   base_sha: sha,
+  worker_capability_hash: hash,
   max_iterations: z.number().int().min(1).max(64),
   stories: z.array(storySchema).min(1).max(64),
 }).strict();
@@ -49,15 +56,19 @@ const iterationBodySchema = z.object({
   candidate_tree_hash: hash,
   outcome: z.enum(['ACCEPTED', 'RETRY', 'ESCALATE']),
   changes: unique(candidateChangeSchema, 256, 1),
+  changed_lines: z.number().int().min(1).max(100_000),
   execution_result_hash: hash,
   validation_manifest_hash: hash,
   review_attestation_hash: hash.nullable(),
   finding_hashes: unique(hash, 128),
+  repair_packet_hash: hash.nullable(),
+  failure_signature_hash: hash.nullable(),
+  escalation_reason: z.enum(['ATTEMPT_LIMIT', 'NO_PROGRESS']).nullable(),
 }).strict();
 const iterationSchema = iterationBodySchema.extend({ event_hash: hash }).strict();
-const executionCandidateSchema = z.object({ candidate_tree_hash: hash, changes: unique(candidateChangeSchema, 256, 1), result_hash: hash }).strict();
-const validationResultSchema = z.object({ passed: z.boolean(), manifest_hash: hash, finding_hashes: unique(hash, 128) }).strict();
-const reviewResultSchema = z.object({ accepted: z.boolean(), attestation_hash: hash, finding_hashes: unique(hash, 128) }).strict();
+const executionCandidateSchema = z.object({ candidate_tree_hash: hash, changes: unique(candidateChangeSchema, 256, 1), changed_lines: z.number().int().min(1).max(100_000), result_hash: hash }).strict();
+const validationResultSchema = z.object({ passed: z.boolean(), manifest_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
+const reviewResultSchema = z.object({ accepted: z.boolean(), attestation_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
 
 export type IterativeStoryV4 = z.infer<typeof storySchema>;
 export type IterativeStoryPlanV4 = z.infer<typeof planSchema>;
@@ -73,6 +84,7 @@ export interface AcceptedStoryReceiptV4 {
 
 export interface IterativeExecutionRequestV4 {
   readonly contract: RuntimeWorkContractV4;
+  readonly worker: WorkerCapabilityV4;
   readonly plan: IterativeStoryPlanV4;
   readonly initial_tree_hash: string;
   readonly prior_events: readonly StoryIterationEventV4[];
@@ -83,9 +95,15 @@ export interface IterativeExecutionRequestV4 {
     session_id: string;
     input_tree_hash: string;
     accepted_receipts: readonly AcceptedStoryReceiptV4[];
-  }) => Promise<{ candidate_tree_hash: string; changes: readonly { readonly path: string; readonly operation: 'CREATE' | 'MODIFY' | 'DELETE' }[]; result_hash: string }>;
-  readonly validate: (input: { story: IterativeStoryV4; candidate_tree_hash: string }) => Promise<{ passed: boolean; manifest_hash: string; finding_hashes: readonly string[] }>;
-  readonly review: (input: { story: IterativeStoryV4; candidate_tree_hash: string; validation_manifest_hash: string }) => Promise<{ accepted: boolean; attestation_hash: string; finding_hashes: readonly string[] }>;
+    repair_packet: RepairPacketV4 | null;
+  }) => Promise<{ candidate_tree_hash: string; changes: readonly { readonly path: string; readonly operation: 'CREATE' | 'MODIFY' | 'DELETE' }[]; changed_lines: number; result_hash: string }>;
+  readonly load_repair_packet: (input: {
+    story: IterativeStoryV4;
+    failed_attempt: number;
+    finding_hashes: readonly string[];
+  }) => Promise<RepairPacketV4>;
+  readonly validate: (input: { story: IterativeStoryV4; candidate_tree_hash: string }) => Promise<{ passed: boolean; manifest_hash: string; finding_hashes: readonly string[]; failure_signature_hash: string | null }>;
+  readonly review: (input: { story: IterativeStoryV4; candidate_tree_hash: string; validation_manifest_hash: string }) => Promise<{ accepted: boolean; attestation_hash: string; finding_hashes: readonly string[]; failure_signature_hash: string | null }>;
   /** Atomically records the event and, when present, promotes the accepted tree. */
   readonly persist_iteration: (input: {
     event: StoryIterationEventV4;
@@ -100,6 +118,7 @@ export interface IterativeExecutionResultV4 {
   readonly accepted_receipts: readonly AcceptedStoryReceiptV4[];
   readonly events: readonly StoryIterationEventV4[];
   readonly escalation_story_id: string | null;
+  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | null;
 }
 
 export interface IterativeTrajectorySnapshotV4 {
@@ -109,6 +128,7 @@ export interface IterativeTrajectorySnapshotV4 {
   readonly attempts_by_story: Readonly<Record<string, number>>;
   readonly session_count: number;
   readonly escalation_story_id: string | null;
+  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | null;
   readonly events: readonly StoryIterationEventV4[];
 }
 
@@ -142,13 +162,16 @@ function assertDag(stories: readonly IterativeStoryV4[]): void {
   for (const story of stories) visit(story.story_id);
 }
 
-export function loadIterativeStoryPlanV4(value: unknown, contract: RuntimeWorkContractV4): IterativeStoryPlanV4 {
+export function loadIterativeStoryPlanV4(value: unknown, contract: RuntimeWorkContractV4, workerInput: WorkerCapabilityV4): IterativeStoryPlanV4 {
   exactHash(contract as unknown as Record<string, unknown>, 'contract_hash', 'work contract');
   const plan = planSchema.parse(structuredClone(value));
   exactHash(plan as unknown as Record<string, unknown>, 'plan_hash', 'plan');
   if (plan.run_id !== contract.run_id || plan.contract_hash !== contract.contract_hash || plan.base_sha !== contract.base_sha) invalid('plan identity does not match the work contract');
   const allowed = new Map(contract.allowed_changes.map((change) => [change.path, new Set(change.operations)]));
   const validationIds = new Set(contract.allowed_validation_ids);
+  const worker = loadWorkerCapabilityV4(workerInput);
+  if (plan.worker_capability_hash !== worker.worker_capability_hash) invalid('plan worker capability does not match the active worker');
+  const workerCapabilities = new Set(worker.capabilities);
   for (const story of plan.stories) {
     exactHash(story as unknown as Record<string, unknown>, 'story_hash', `story ${story.story_id}`);
     for (const change of story.allowed_changes) {
@@ -156,9 +179,27 @@ export function loadIterativeStoryPlanV4(value: unknown, contract: RuntimeWorkCo
       if (operations === undefined || change.operations.some((operation) => !operations.has(operation))) invalid(`story ${story.story_id} exceeds allowed changes`);
     }
     if (story.validation_ids.some((id) => !validationIds.has(id))) invalid(`story ${story.story_id} uses an unapproved validation`);
+    if (story.allowed_changes.length > contract.max_files_changed) invalid(`story file budget exceeds the work contract for ${story.story_id}`);
+    if (story.allowed_changes.length > worker.limits.max_story_files) invalid(`story files exceed worker capability for ${story.story_id}`);
+    if (story.max_changed_lines > worker.limits.max_story_changed_lines || story.max_changed_lines > contract.max_changed_lines) invalid(`story changed-line budget exceeds worker capability for ${story.story_id}`);
+    if (story.context_budget_bytes > worker.limits.max_story_context_bytes) invalid(`story context budget exceeds worker capability for ${story.story_id}`);
+    if (story.acceptance_criteria.length > worker.limits.max_acceptance_criteria) invalid(`story acceptance criteria exceed worker capability for ${story.story_id}`);
+    if (story.max_steps > worker.limits.max_steps_per_attempt) invalid(`story step budget exceeds worker capability for ${story.story_id}`);
+    if (story.max_attempts > worker.limits.max_attempts) invalid(`story attempts exceed worker capability for ${story.story_id}`);
+    if (story.required_capabilities.some((capability) => !workerCapabilities.has(capability))) invalid(`story requires an unsupported worker capability for ${story.story_id}`);
   }
   assertDag(plan.stories);
-  return Object.freeze({ ...plan, stories: Object.freeze(plan.stories.map((story) => Object.freeze({ ...story, depends_on: Object.freeze([...story.depends_on]), allowed_changes: Object.freeze(story.allowed_changes.map((change) => Object.freeze({ ...change, operations: Object.freeze([...change.operations]) }))), validation_ids: Object.freeze([...story.validation_ids]), acceptance_criteria: Object.freeze([...story.acceptance_criteria]) }))) }) as unknown as IterativeStoryPlanV4;
+  const byId = new Map(plan.stories.map((story) => [story.story_id, story]));
+  const depths = new Map<string, number>();
+  const depth = (id: string): number => {
+    const cached = depths.get(id);
+    if (cached !== undefined) return cached;
+    const value = Math.max(0, ...byId.get(id)!.depends_on.map((dependency) => depth(dependency) + 1));
+    depths.set(id, value);
+    return value;
+  };
+  if (plan.stories.some((story) => depth(story.story_id) > worker.limits.max_dependency_depth)) invalid('story dependency depth exceeds worker capability');
+  return Object.freeze({ ...plan, stories: Object.freeze(plan.stories.map((story) => Object.freeze({ ...story, depends_on: Object.freeze([...story.depends_on]), allowed_changes: Object.freeze(story.allowed_changes.map((change) => Object.freeze({ ...change, operations: Object.freeze([...change.operations]) }))), validation_ids: Object.freeze([...story.validation_ids]), acceptance_criteria: Object.freeze([...story.acceptance_criteria]), required_capabilities: Object.freeze([...story.required_capabilities]) }))) }) as unknown as IterativeStoryPlanV4;
 }
 
 function nextStory(plan: IterativeStoryPlanV4, accepted: ReadonlyMap<string, AcceptedStoryReceiptV4>): IterativeStoryV4 | undefined {
@@ -184,7 +225,7 @@ export function loadStoryIterationEventV4(value: unknown): StoryIterationEventV4
   return Object.freeze({ ...event, changes: Object.freeze(event.changes.map((change) => Object.freeze({ ...change }))), finding_hashes: Object.freeze([...event.finding_hashes]) }) as unknown as StoryIterationEventV4;
 }
 
-function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: readonly StoryIterationEventV4[]) {
+function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: readonly StoryIterationEventV4[], worker: WorkerCapabilityV4) {
   if (!/^[a-f0-9]{64}$/.test(initialTreeHash)) invalid('initial tree hash is invalid');
   if (supplied.length > plan.max_iterations) invalid('iteration history exceeds the plan budget');
   const events = supplied.map(loadStoryIterationEventV4);
@@ -193,33 +234,51 @@ function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: r
   const sessions = new Set<string>();
   let treeHash = initialTreeHash;
   let escalationStoryId: string | null = null;
+  let escalationReason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | null = null;
   for (const [index, event] of events.entries()) {
     if (event.run_id !== plan.run_id || event.plan_hash !== plan.plan_hash || event.iteration !== index + 1 || event.input_tree_hash !== treeHash || sessions.has(event.session_id)) invalid('iteration history is not a contiguous plan-bound replay');
     const story = nextStory(plan, accepted);
     if (story === undefined || story.story_id !== event.story_id) invalid('iteration story selection is invalid');
     if (!changesAreAuthorized(story, event.changes)) invalid('iteration event exceeds the active story change authority');
+    if (event.candidate_tree_hash === event.input_tree_hash) invalid('iteration candidate did not change the accepted tree');
+    if (event.changed_lines > story.max_changed_lines) invalid('iteration exceeds the story changed-line budget');
     const attempt = (attempts.get(story.story_id) ?? 0) + 1;
     if (event.attempt !== attempt || attempt > story.max_attempts) invalid('iteration attempt sequence is invalid');
+    if (attempt === 1 && event.repair_packet_hash !== null || attempt > 1 && event.repair_packet_hash === null) invalid('iteration repair packet binding is invalid');
     attempts.set(story.story_id, attempt);
     sessions.add(event.session_id);
     if (event.outcome === 'ACCEPTED') {
-      if (event.review_attestation_hash === null || event.finding_hashes.length !== 0 || event.candidate_tree_hash === event.input_tree_hash) invalid('accepted iteration evidence is inconsistent');
+      if (event.review_attestation_hash === null || event.finding_hashes.length !== 0
+        || event.failure_signature_hash !== null || event.escalation_reason !== null) invalid('accepted iteration evidence is inconsistent');
       treeHash = event.candidate_tree_hash;
       accepted.set(story.story_id, Object.freeze({ story_id: story.story_id, output_tree_hash: treeHash, changes: event.changes, validation_manifest_hash: event.validation_manifest_hash, review_attestation_hash: event.review_attestation_hash }));
     } else {
-      if (event.finding_hashes.length === 0) invalid('rejected iteration lacks findings');
+      if (event.finding_hashes.length === 0 || event.failure_signature_hash === null) invalid('rejected iteration lacks findings');
+      let repeats = 1;
+      for (let prior = index - 1; prior >= 0; prior -= 1) {
+        const previous = events[prior]!;
+        if (previous.story_id !== event.story_id || previous.outcome === 'ACCEPTED' || previous.failure_signature_hash !== event.failure_signature_hash) break;
+        repeats += 1;
+      }
+      const expectedEscalationReason = repeats >= worker.limits.no_progress_repeat_limit
+        ? 'NO_PROGRESS' as const
+        : attempt >= story.max_attempts ? 'ATTEMPT_LIMIT' as const : null;
       if (event.outcome === 'ESCALATE') {
-        if (attempt !== story.max_attempts || index !== events.length - 1) invalid('escalation must terminate history at the attempt limit');
+        if (event.escalation_reason !== expectedEscalationReason || expectedEscalationReason === null || index !== events.length - 1) invalid('escalation evidence is invalid');
         escalationStoryId = story.story_id;
+        escalationReason = event.escalation_reason;
+      } else if (event.escalation_reason !== null || expectedEscalationReason !== null) {
+        invalid('retry should have escalated');
       }
     }
   }
-  return { events, attempts, accepted, sessions, treeHash, escalationStoryId };
+  return { events, attempts, accepted, sessions, treeHash, escalationStoryId, escalationReason };
 }
 
-export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContractV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[] }): IterativeTrajectorySnapshotV4 {
-  const plan = loadIterativeStoryPlanV4(input.plan, input.contract);
-  const state = replay(plan, input.initial_tree_hash, input.events);
+export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[] }): IterativeTrajectorySnapshotV4 {
+  const worker = loadWorkerCapabilityV4(input.worker);
+  const plan = loadIterativeStoryPlanV4(input.plan, input.contract, worker);
+  const state = replay(plan, input.initial_tree_hash, input.events, worker);
   const complete = state.accepted.size === plan.stories.length;
   return Object.freeze({
     status: complete ? 'COMPLETE' : state.escalationStoryId === null ? 'IN_PROGRESS' : 'ESCALATE',
@@ -228,31 +287,45 @@ export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContr
     attempts_by_story: Object.freeze(Object.fromEntries(state.attempts)),
     session_count: state.sessions.size,
     escalation_story_id: state.escalationStoryId,
+    escalation_reason: state.escalationReason,
     events: Object.freeze([...state.events]),
   });
 }
 
 export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4): Promise<IterativeExecutionResultV4> {
-  const plan = loadIterativeStoryPlanV4(input.plan, input.contract);
-  const state = replay(plan, input.initial_tree_hash, input.prior_events);
+  const worker = loadWorkerCapabilityV4(input.worker);
+  const plan = loadIterativeStoryPlanV4(input.plan, input.contract, worker);
+  const state = replay(plan, input.initial_tree_hash, input.prior_events, worker);
   const events = [...state.events];
-  if (state.escalationStoryId !== null) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: state.escalationStoryId });
+  if (state.escalationStoryId !== null) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: state.escalationStoryId, escalation_reason: state.escalationReason });
   while (events.length < plan.max_iterations) {
     const story = nextStory(plan, state.accepted);
     if (story === undefined) {
       if (state.accepted.size !== plan.stories.length) violation('story graph has no executable pending story');
-      return Object.freeze({ status: 'COMPLETE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null });
+      return Object.freeze({ status: 'COMPLETE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
     }
     const attempt = (state.attempts.get(story.story_id) ?? 0) + 1;
-    if (attempt > story.max_attempts) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id });
+    if (attempt > story.max_attempts) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id, escalation_reason: 'ATTEMPT_LIMIT' });
     const iteration = events.length + 1;
     const session = input.create_session_id({ run_id: plan.run_id, story_id: story.story_id, iteration, attempt });
     if (!sessionId.safeParse(session).success || state.sessions.has(session)) violation('executor session must be fresh and valid');
-    const candidateResult = executionCandidateSchema.safeParse(await input.execute({ story, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]) }));
+    const previousFailure = [...events].reverse().find((event) => event.story_id === story.story_id && event.outcome !== 'ACCEPTED');
+    let repairPacket: RepairPacketV4 | null = null;
+    if (attempt > 1) {
+      if (previousFailure === undefined || previousFailure.attempt !== attempt - 1) violation('retry lacks contiguous failure evidence');
+      repairPacket = loadRepairPacketV4(await input.load_repair_packet({ story, failed_attempt: previousFailure.attempt, finding_hashes: previousFailure.finding_hashes }));
+      if (repairPacket.story_id !== story.story_id || repairPacket.failed_attempt !== previousFailure.attempt
+        || repairPacket.findings.length !== previousFailure.finding_hashes.length
+        || repairPacket.findings.some((finding) => !previousFailure.finding_hashes.includes(finding.evidence_hash))) {
+        violation('repair packet differs from persisted failure evidence');
+      }
+    }
+    const candidateResult = executionCandidateSchema.safeParse(await input.execute({ story, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), repair_packet: repairPacket }));
     if (!candidateResult.success) violation('executor returned invalid evidence');
     const candidate = candidateResult.data;
     if (candidate.candidate_tree_hash === state.treeHash) violation('executor candidate must differ from the accepted tree');
     if (!changesAreAuthorized(story, candidate.changes)) violation('executor exceeded the active story change authority');
+    if (candidate.changed_lines > story.max_changed_lines) violation('executor exceeded the story changed-line budget');
     const validationResult = validationResultSchema.safeParse(await input.validate({ story, candidate_tree_hash: candidate.candidate_tree_hash }));
     if (!validationResult.success) violation('validation returned invalid evidence');
     const validation = validationResult.data;
@@ -260,10 +333,23 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
     if (reviewResult !== null && !reviewResult.success) violation('review returned invalid evidence');
     const review = reviewResult?.data ?? null;
     const accepted = validation.passed && review?.accepted === true;
+    if (validation.passed !== (validation.finding_hashes.length === 0 && validation.failure_signature_hash === null)) violation('validation failure evidence is inconsistent');
+    if (review !== null && review.accepted !== (review.finding_hashes.length === 0 && review.failure_signature_hash === null)) violation('review failure evidence is inconsistent');
     const findingHashes = [...new Set([...validation.finding_hashes, ...(review?.finding_hashes ?? [])])];
     if ((!accepted && findingHashes.length === 0) || (accepted && findingHashes.length !== 0)) violation('acceptance decision and findings are inconsistent');
-    const outcome = accepted ? 'ACCEPTED' : attempt >= story.max_attempts ? 'ESCALATE' : 'RETRY';
-    const event = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: plan.run_id, plan_hash: plan.plan_hash, story_id: story.story_id, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash, outcome, changes: candidate.changes.map((change) => ({ ...change })), execution_result_hash: candidate.result_hash, validation_manifest_hash: validation.manifest_hash, review_attestation_hash: review?.attestation_hash ?? null, finding_hashes: findingHashes });
+    const failureSignatureHash = accepted ? null : hashCanonicalV4({ validation: validation.failure_signature_hash, review: review?.failure_signature_hash ?? null });
+    let repeats = accepted ? 0 : 1;
+    if (failureSignatureHash !== null) {
+      for (let prior = events.length - 1; prior >= 0; prior -= 1) {
+        const previous = events[prior]!;
+        if (previous.story_id !== story.story_id || previous.outcome === 'ACCEPTED' || previous.failure_signature_hash !== failureSignatureHash) break;
+        repeats += 1;
+      }
+    }
+    const noProgress = repeats >= worker.limits.no_progress_repeat_limit;
+    const escalationReason = accepted ? null : noProgress ? 'NO_PROGRESS' as const : attempt >= story.max_attempts ? 'ATTEMPT_LIMIT' as const : null;
+    const outcome = accepted ? 'ACCEPTED' : escalationReason === null ? 'RETRY' : 'ESCALATE';
+    const event = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: plan.run_id, plan_hash: plan.plan_hash, story_id: story.story_id, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash, outcome, changes: candidate.changes.map((change) => ({ ...change })), changed_lines: candidate.changed_lines, execution_result_hash: candidate.result_hash, validation_manifest_hash: validation.manifest_hash, review_attestation_hash: review?.attestation_hash ?? null, finding_hashes: findingHashes, repair_packet_hash: repairPacket?.packet_hash ?? null, failure_signature_hash: failureSignatureHash, escalation_reason: escalationReason });
     await input.persist_iteration({ event, promotion: accepted ? { story, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash } : null });
     events.push(event);
     state.attempts.set(story.story_id, attempt);
@@ -272,8 +358,8 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
       state.treeHash = candidate.candidate_tree_hash;
       state.accepted.set(story.story_id, Object.freeze({ story_id: story.story_id, output_tree_hash: state.treeHash, changes: event.changes, validation_manifest_hash: event.validation_manifest_hash, review_attestation_hash: event.review_attestation_hash! }));
     } else if (outcome === 'ESCALATE') {
-      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id });
+      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id, escalation_reason: escalationReason });
     }
   }
-  return Object.freeze({ status: state.accepted.size === plan.stories.length ? 'COMPLETE' : 'ITERATION_LIMIT', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null });
+  return Object.freeze({ status: state.accepted.size === plan.stories.length ? 'COMPLETE' : 'ITERATION_LIMIT', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
 }

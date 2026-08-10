@@ -34,3 +34,9 @@ Sources: [OpenAI model guidance](https://developers.openai.com/api/docs/guides/l
 7. Keep the prior profile available for rollback. Never reuse its qualification record after a model or guidance change.
 
 Prompt guidance does not grant authority. It cannot add tools, paths, network access, attempts, merge rights, or deployment rights beyond the frozen repository policy and sandbox.
+
+## Worker capability and task sizing
+
+Model guidance is also not evidence that a worker can handle an arbitrarily large coding task. For iterative execution, the broker materializes a separate `WorkerCapabilityV4` from the activated binding and its qualification evidence. The snapshot binds the exact provider/model revision, endpoint, harness, tool parser, tool bundle and instruction/skill bundle. Its limits cap files, changed lines, context, acceptance criteria, dependency depth, steps and attempts.
+
+The frontier planner sees those provider-neutral capabilities and limits and must emit smaller stories that fit them. It must select another qualified route when the task cannot be decomposed safely. A profile change invalidates the capability hash and all plans bound to it. This makes model replacement explicit without hard-coding Qwen, Luna, Codex or any other current model into repository policy.

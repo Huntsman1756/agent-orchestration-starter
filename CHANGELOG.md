@@ -4,6 +4,8 @@
 
 ### Added
 
+- Provider-neutral worker capability snapshots that bind plans to exact model, endpoint, harness, parser, tool, instruction/skill and qualification identities plus qualified story limits.
+- Hash-verified structured repair packets and normalized no-progress detection for bounded iterative execution.
 - Broker-owned host composition that starts the authenticated IPC daemon, schedules one pipeline flight per run and persists accepted, failed and aborted terminal evidence.
 - A self-contained host bundle and content-addressed central installer with per-file SHA-256 verification.
 - Portable, hash-bound repository activation and a central repository registry.
@@ -12,6 +14,7 @@
 
 ### Changed
 
+- Iterative stories now declare required capabilities and explicit file, line, context, step, dependency and attempt budgets; worker drift or an oversized story fails before execution.
 - Fresh autonomous dispatcher state now starts in `PAUSED`; admission requires an explicit durable transition to `RUNNING`. Circuit reset requires `PAUSED` and cannot resume admission by itself.
 - Generated Codex MCP configuration can point to a central immutable entrypoint and exact activation manifest while retaining the legacy project-local rendering API for compatibility.
 - Run state now records candidate acceptance and explicit abort durably. Terminal completion releases the repository lock.
@@ -23,6 +26,7 @@
 
 ### Migration
 
+- Existing iterative story plans and persisted iteration events predate the required worker, budget, repair and failure-signature bindings and must start a new run. Host adapters must now provide the active worker snapshot, measured changed lines, normalized failure signatures and hash-verified repair-packet loading.
 - Existing dispatcher state keeps its persisted mode. Before upgrading a host whose state is `RUNNING`, explicitly switch it to `PAUSED` if the deployment must remain inactive after restart; only newly created state adopts the new paused default.
 - Existing generated project-local runtime paths remain supported but are not a certified production deployment.
 - Build a new host bundle, install it centrally, then activate each repository explicitly. Existing unmanaged Codex configuration is never overwritten.
