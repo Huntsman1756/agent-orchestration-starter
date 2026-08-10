@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, win32 as win32Path } from 'node:path';
+import { join, posix as posixPath, win32 as win32Path } from 'node:path';
 import test from 'node:test';
 
 import { inspectAllowedChanges, type PathMetadataProviderV4 } from '../src/runtime/path-policy.js';
@@ -104,24 +104,45 @@ test('rejects a missing path below a symlinked parent before launch', async () =
   assert.equal(launched, false);
 });
 
-test('rejects every lexical unsafe path before the executor launches', async () => {
+test('rejects alternate data stream syntax before the executor launches', async () => {
   const root = fixture();
-  const unsafeChanges = [
-    [{ path: 'src/normal.ts:stream', operations: ['MODIFY'] }],
-    [
-      { path: 'src/Normal.ts', operations: ['MODIFY'] },
-      { path: 'src/normal.ts', operations: ['MODIFY'] },
-    ],
-  ] as const;
+  let launched = false;
 
-  for (const changes of unsafeChanges) {
-    let launched = false;
-    await assert.rejects(
-      () => launchAfterInspection(root, changes, () => { launched = true; }),
-      /OUT_OF_SCOPE_CHANGE/,
-    );
-    assert.equal(launched, false);
-  }
+  await assert.rejects(
+    () => launchAfterInspection(root, [{ path: 'src/normal.ts:stream', operations: ['MODIFY'] }], () => { launched = true; }),
+    /OUT_OF_SCOPE_CHANGE/,
+  );
+  assert.equal(launched, false);
+});
+
+test('rejects portable case-fold collisions before the executor launches', async () => {
+  let launched = false;
+  const entry = {
+    isDirectory: () => true,
+    isSymbolicLink: () => false,
+    dev: 7,
+  };
+  const metadata: PathMetadataProviderV4 = {
+    realpath: async (value) => value,
+    lstat: async () => entry,
+    stat: async () => entry,
+    mountIdentity: async () => 'mount-a',
+    isReparsePoint: async () => false,
+  };
+
+  await assert.rejects(
+    () => launchAfterInspection(
+      '/repo',
+      [
+        { path: 'src/Normal.ts', operations: ['MODIFY'] },
+        { path: 'src/normal.ts', operations: ['MODIFY'] },
+      ],
+      () => { launched = true; },
+      { platform: 'linux', pathApi: posixPath, metadata },
+    ),
+    /OUT_OF_SCOPE_CHANGE/,
+  );
+  assert.equal(launched, false);
 });
 
 test('rejects a same-device mount identity change before the executor launches', async () => {
