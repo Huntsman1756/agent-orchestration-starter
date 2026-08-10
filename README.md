@@ -125,6 +125,8 @@ Portable inspection adds explicit role/adapter capability matching, bounded stor
 
 Cross-system interoperability can use the optional, version-pinned A2A v1 task projection. It exports bounded status evidence only and is intentionally not an HTTP server or a replacement for the broker state machine. See [`docs/a2a-adapter-v1.md`](docs/a2a-adapter-v1.md).
 
+Before activation in another repository, `assessRuntimeActivationV4` reports portable route coverage and host readiness for analysis-only, isolated execution, or autonomous publication. It does not infer project-specific production rules. See [`docs/activation-readiness-v4.md`](docs/activation-readiness-v4.md).
+
 See `docs/runtime-v4-operations.md` for the verified surface, deployment gates and typed failures.
 
 ## Límites conocidos

@@ -8,6 +8,7 @@
     "contracts/**",
     "dist/**",
     "docs/runtime-broker-quarantine-remediation.md",
+    "docs/activation-readiness-v4.md",
     "docs/model-guidance-v4.md",
     "docs/publication-v4.md",
     "docs/runtime-v4-operations.md",
