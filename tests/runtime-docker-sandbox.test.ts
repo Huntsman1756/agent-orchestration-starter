@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -20,6 +21,8 @@ import {
 } from '../src/runtime/docker-sandbox.js';
 import type { SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
 import { createBrokerOwnedDockerContainerV4 } from '../src/runtime/docker-container-transaction.js';
+import { dockerCliEnvironmentV4, registerOrReproveDockerLauncherV4 } from '../src/runtime/docker-launcher.js';
+import { settleBoundedProcessAndCleanupV4, startBoundedProcessV4 } from '../src/runtime/bounded-process.js';
 import {
   isProviderEgressAddressAllowedV4,
   validateProviderGatewayOriginV4,
@@ -113,6 +116,56 @@ test('Docker config rejects mutable images and non-canonical provider origins', 
     () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['127.0.0.1'] }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
+});
+
+test('Docker config rejects every ambient host or context retarget', () => {
+  const previousHost = process.env.DOCKER_HOST;
+  const previousContext = process.env.DOCKER_CONTEXT;
+  try {
+    process.env.DOCKER_HOST = 'tcp://127.0.0.1:2375';
+    assert.throws(() => validateDockerSandboxConfigV4(config), /PROCESS_SANDBOX_UNAVAILABLE/);
+    delete process.env.DOCKER_HOST;
+    process.env.DOCKER_CONTEXT = 'same-name-attacker-context';
+    assert.throws(() => validateDockerSandboxConfigV4(config), /PROCESS_SANDBOX_UNAVAILABLE/);
+  } finally {
+    if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
+    if (previousContext === undefined) delete process.env.DOCKER_CONTEXT; else process.env.DOCKER_CONTEXT = previousContext;
+  }
+});
+
+test('Docker launcher freezes the default endpoint and rejects isolated config mutation', async () => {
+  const previousHost = process.env.DOCKER_HOST;
+  const previousContext = process.env.DOCKER_CONTEXT;
+  delete process.env.DOCKER_HOST;
+  delete process.env.DOCKER_CONTEXT;
+  const root = await mkdtemp(join(tmpdir(), 'ao-docker-endpoint-'));
+  const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
+  const brokerState = join(root, 'broker');
+  await copyFile(process.execPath, executable);
+  await chmod(executable, 0o700);
+  await mkdir(brokerState);
+  try {
+    const identity = await registerOrReproveDockerLauncherV4(executable, undefined, brokerState);
+    const environment = await dockerCliEnvironmentV4(executable);
+    const expectedEndpoint = process.platform === 'win32'
+      ? 'npipe:////./pipe/docker_engine'
+      : 'unix:///var/run/docker.sock';
+    assert.equal(identity.endpoint_context, null);
+    assert.equal(identity.endpoint_host, expectedEndpoint);
+    assert.equal(environment.DOCKER_HOST, expectedEndpoint);
+    assert.equal(environment.DOCKER_CONTEXT, undefined);
+    assert.equal(environment.DOCKER_CONFIG, join(brokerState, 'docker-cli-v4-empty'));
+
+    await mkdir(join(brokerState, 'docker-cli-v4-empty'));
+    await assert.rejects(
+      () => registerOrReproveDockerLauncherV4(executable),
+      /PROCESS_SANDBOX_UNAVAILABLE/,
+    );
+  } finally {
+    if (previousHost !== undefined) process.env.DOCKER_HOST = previousHost;
+    if (previousContext !== undefined) process.env.DOCKER_CONTEXT = previousContext;
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('production gateway accepts only the exact lower-case ArliAI TLS origin', () => {
@@ -494,6 +547,115 @@ test('terminate aborts blocked Docker identity commands and releases the executi
   }
 });
 
+test('Windows bounded termination waits for every detached descendant to be absent', { timeout: 30_000, skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-windows-tree-'));
+  try {
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      const pidPath = join(root, `descendant-${iteration}.pid`);
+      const source = [
+        "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+        "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+        `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+      ].join('');
+      const handle = startBoundedProcessV4({
+        executable: process.execPath,
+        argv: ['-e', source],
+        environment: { ...process.env },
+        deadline_ms: 20_000,
+        max_output_bytes: 4_096,
+      });
+      let descendantPid: number | undefined;
+      const deadline = Date.now() + 5_000;
+      while (descendantPid === undefined && Date.now() < deadline) {
+        descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
+        if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.notEqual(descendantPid, undefined);
+      await handle.terminate();
+      assert.throws(() => process.kill(descendantPid!, 0), { code: 'ESRCH' }, `iteration ${iteration} descendant survived`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  }
+});
+
+test('Windows bounded termination propagates taskkill failure even when the main process closes', { timeout: 15_000, skip: process.platform !== 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-taskkill-failure-'));
+  const previousCwd = process.cwd();
+  const previousSystemRoot = process.env.SystemRoot;
+  let descendantPid: number | undefined;
+  try {
+    await mkdir(join(root, 'System32'));
+    await copyFile(process.execPath, join(root, 'System32', 'taskkill.exe'));
+    process.chdir(root);
+    const pidPath = join(root, 'descendant.pid');
+    const source = [
+      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+      `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setTimeout(()=>process.exit(0),300);`,
+    ].join('');
+    const handle = startBoundedProcessV4({
+      executable: process.execPath,
+      argv: ['-e', source],
+      environment: { ...process.env },
+      deadline_ms: 10_000,
+      max_output_bytes: 4_096,
+    });
+    const pidDeadline = Date.now() + 5_000;
+    while (descendantPid === undefined && Date.now() < pidDeadline) {
+      descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
+      if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.notEqual(descendantPid, undefined);
+    process.env.SystemRoot = root;
+    await assert.rejects(() => handle.terminate(), /PROCESS_SANDBOX_UNAVAILABLE/);
+  } finally {
+    process.chdir(previousCwd);
+    if (previousSystemRoot === undefined) delete process.env.SystemRoot;
+    else process.env.SystemRoot = previousSystemRoot;
+    if (descendantPid !== undefined) {
+      try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already absent */ }
+    }
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  }
+});
+
+test('bounded attach cleanup kills the local tree even when immutable-ID removal fails', { timeout: 15_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-attach-cleanup-'));
+  let descendantPid: number | undefined;
+  try {
+    const pidPath = join(root, 'descendant.pid');
+    const source = [
+      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+      `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+    ].join('');
+    const handle = startBoundedProcessV4({
+      executable: process.execPath,
+      argv: ['-e', source],
+      environment: { ...process.env },
+      deadline_ms: 10_000,
+      max_output_bytes: 4_096,
+    });
+    const deadline = Date.now() + 5_000;
+    while (descendantPid === undefined && Date.now() < deadline) {
+      descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
+      if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.notEqual(descendantPid, undefined);
+    await assert.rejects(
+      () => settleBoundedProcessAndCleanupV4(handle, async () => { throw new Error('removal denied'); }),
+      /removal denied/,
+    );
+    assert.throws(() => process.kill(descendantPid!, 0), { code: 'ESRCH' });
+  } finally {
+    if (descendantPid !== undefined) {
+      try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already absent */ }
+    }
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+  }
+});
+
 test('network retry classification accepts only Docker subnet-overlap failures', async () => {
   const runtime = await import('../src/runtime/docker-sandbox.js') as unknown as {
     isDockerNetworkSubnetOverlapV4?: (stderr: string) => boolean;
@@ -501,6 +663,7 @@ test('network retry classification accepts only Docker subnet-overlap failures',
   const classify = runtime.isDockerNetworkSubnetOverlapV4;
   assert.equal(typeof classify, 'function');
   assert.equal(classify!('Error response from daemon: Pool overlaps with other one on this address space\n'), true);
+  assert.equal(classify!('Error response from daemon: invalid pool request: Pool overlaps with other one on this address space\n'), true);
   for (const error of [
     'permission denied',
     'Cannot connect to the Docker daemon',
@@ -519,13 +682,14 @@ test('network absence classification accepts only the exact immutable ID not-fou
   assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', `Error response from daemon: network ${'d'.repeat(64)} not found\n`), false);
 });
 
-test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 10_000 }, async () => {
+test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'ao-container-transaction-'));
   const previousCwd = process.cwd();
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const statePath = join(root, 'state.json');
   const queryPath = join(root, 'queries.log');
   const removedPath = join(root, 'removed.log');
+  const transientInspectPath = join(root, 'transient-inspect');
   try {
     await copyFile(process.execPath, executable);
     if (process.platform !== 'win32') await chmod(executable, 0o755);
@@ -534,14 +698,15 @@ test('broker container transaction recovers partial and delayed create effects a
       "const args=process.argv.slice(2),id='d'.repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7);",
       "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
       "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
-      `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),200)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
+      `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),2500)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
       `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setInterval(()=>{},2147483647);}`,
       `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
     ].join(''));
     await writeFile(join(root, 'container'), [
-      "const{appendFileSync,existsSync,readFileSync}=require('node:fs'),args=process.argv.slice(2);",
+      "const{appendFileSync,existsSync,readFileSync,writeFileSync}=require('node:fs'),args=process.argv.slice(2);",
       `appendFileSync(${JSON.stringify(queryPath)},args.join(' ')+'\\n');if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);`,
       `const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
+      `if(args[0]==='inspect'&&record.Config.Labels['agent-orchestration.container-kind']==='gateway'&&!existsSync(${JSON.stringify(transientInspectPath)})){writeFileSync(${JSON.stringify(transientInspectPath)},'failed');process.stderr.write('transient inspect failure');process.exit(2);}`,
       "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
     ].join(''));
     await writeFile(join(root, 'rm'), [
@@ -553,6 +718,7 @@ test('broker container transaction recovers partial and delayed create effects a
     for (const kind of ['gateway', 'tls-fixture'] as const) {
       await assert.rejects(() => createBrokerOwnedDockerContainerV4({
         docker_executable: executable,
+        broker_state_directory: root,
         image_id: imageId,
         execution_id: `exec_transaction_${kind.replace('-', '_')}_0001`,
         kind,
@@ -562,6 +728,7 @@ test('broker container transaction recovers partial and delayed create effects a
     const abort = new AbortController();
     const cancelled = assert.rejects(() => createBrokerOwnedDockerContainerV4({
       docker_executable: executable,
+      broker_state_directory: root,
       image_id: imageId,
       execution_id: 'exec_transaction_cancelled_0001',
       kind: 'executor',
@@ -580,5 +747,90 @@ test('broker container transaction recovers partial and delayed create effects a
   } finally {
     process.chdir(previousCwd);
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test('fresh process reconciles a durable owned container transaction before new create authority', { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ao-container-restart-'));
+  const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
+  const statePath = join(root, 'state.json');
+  const countPath = join(root, 'count');
+  const removedPath = join(root, 'removed.log');
+  const previousCwd = process.cwd();
+  await copyFile(process.execPath, executable);
+  if (process.platform !== 'win32') await chmod(executable, 0o755);
+  await writeFile(join(root, 'create'), [
+    "const{existsSync,readFileSync,writeFileSync}=require('node:fs');const args=process.argv.slice(2);",
+    `const n=existsSync(${JSON.stringify(countPath)})?Number(readFileSync(${JSON.stringify(countPath)},'utf8'))+1:1;writeFileSync(${JSON.stringify(countPath)},String(n));`,
+    "const id=(n===1?'d':'e').repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7),labels={};",
+    "for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
+    "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v));",
+    `writeFileSync(${JSON.stringify(statePath)},JSON.stringify({Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}}));process.stdout.write(id);`,
+  ].join(''));
+  await writeFile(join(root, 'container'), [
+    "const{existsSync,readFileSync}=require('node:fs'),args=process.argv.slice(2);",
+    `if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
+    "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
+  ].join(''));
+  await writeFile(join(root, 'rm'), [
+    "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
+    `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
+  ].join(''));
+  const request = {
+    docker_executable: executable,
+    broker_state_directory: root,
+    image_id: imageId,
+    execution_id: 'exec_restart_owned_0001',
+    kind: 'executor' as const,
+    create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
+  };
+  const nonce = 'f'.repeat(32);
+  const name = `ao-executor-${'a'.repeat(32)}`;
+  const transactionDirectory = join(
+    root,
+    'container-transactions-v4',
+    createHash('sha256').update(executable).digest('hex'),
+  );
+  const launcherKey = createHash('sha256').update(executable).digest('hex');
+  const source = [
+    '(async()=>{',
+    "const{mkdir,writeFile}=require('node:fs/promises');",
+    `const request=${JSON.stringify(request)},nonce=${JSON.stringify(nonce)},name=${JSON.stringify(name)},id='d'.repeat(64);`,
+    `await mkdir(${JSON.stringify(transactionDirectory)},{recursive:true});`,
+    `await writeFile(${JSON.stringify(statePath)},JSON.stringify({Id:id,Name:'/'+name,Config:{Image:request.image_id,Labels:{'agent-orchestration.execution':request.execution_id,'agent-orchestration.nonce':nonce,'agent-orchestration.image':request.image_id,'agent-orchestration.launcher':${JSON.stringify(launcherKey)},'agent-orchestration.container-kind':request.kind}}}),{flush:true});`,
+    `await writeFile(${JSON.stringify(countPath)},'1',{flush:true});`,
+    `await writeFile(${JSON.stringify(join(transactionDirectory, `${nonce}.json`))},JSON.stringify({request,name,nonce,container_id:id,owner_pid:process.pid}),{flush:true});`,
+    '})().catch((error)=>{console.error(error);process.exit(1)});',
+  ].join('');
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      let stderr = '';
+      const child = spawn(process.execPath, ['-e', source], {
+        cwd: root,
+        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'DOCKER_HOST' && key !== 'DOCKER_CONTEXT')),
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.once('error', reject);
+      child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`child exited ${code}: ${stderr}`)));
+    });
+    process.chdir(root);
+    await new Promise<void>((resolvePromise, reject) => {
+      let output = '';
+      let errorOutput = '';
+      const probe = spawn(executable, ['container', 'ls'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      probe.stdout?.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
+      probe.stderr?.setEncoding('utf8').on('data', (chunk: string) => { errorOutput += chunk; });
+      probe.once('error', reject);
+      probe.once('exit', (code) => code === 0 && output.trim() === 'd'.repeat(64)
+        ? resolvePromise()
+        : reject(new Error(`fake Docker preflight ${code}: ${output} ${errorOutput}`)));
+    });
+    const owned = await createBrokerOwnedDockerContainerV4({ ...request, execution_id: 'exec_restart_owned_0002' });
+    await owned.removal.remove();
+    assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'e'.repeat(64)]);
+  } finally {
+    process.chdir(previousCwd);
+    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });

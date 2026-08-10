@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { join } from 'node:path';
 
 export interface BoundedProcessResultV4 {
   readonly exit_code: number | null;
@@ -55,6 +56,8 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
   let settled = false;
   let termination: BoundedProcessResultV4['termination'] = null;
   let settlementTimer: NodeJS.Timeout | null = null;
+  let terminationWork: Promise<void> | null = null;
+  let closeOutcome: { exitCode: number | null; signal: NodeJS.Signals | null } | null = null;
   let resolveCompletion!: (result: BoundedProcessResultV4) => void;
   let rejectCompletion!: (error: Error) => void;
   const completion = new Promise<BoundedProcessResultV4>((resolvePromise, reject) => {
@@ -72,27 +75,79 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
     cleanup();
     rejectCompletion(new Error('PROCESS_SANDBOX_UNAVAILABLE: process tree did not settle'));
   };
-  const killTree = () => {
-    if (child.pid === undefined) return;
-    if (process.platform === 'win32') {
-      const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
-        shell: false, windowsHide: true, stdio: 'ignore',
-      });
-      const killerDeadline = setTimeout(() => killer.kill('SIGKILL'), 1_000);
-      killerDeadline.unref();
-      killer.once('close', () => clearTimeout(killerDeadline));
-      killer.once('error', () => child.kill('SIGKILL'));
-    } else {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+  const pidAbsent = (pid: number): boolean => {
+    try { process.kill(pid, 0); return false; } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'ESRCH';
     }
+  };
+  const terminateTree = async (): Promise<void> => {
+    if (child.pid === undefined) throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process PID is unavailable');
+    if (process.platform !== 'win32') {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      return;
+    }
+    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+    if (systemRoot === undefined || systemRoot.includes('\0')) {
+      throw new Error('PROCESS_SANDBOX_UNAVAILABLE: Windows taskkill path is unavailable');
+    }
+    const killer = spawn(join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], {
+      shell: false, windowsHide: true, stdio: 'ignore',
+    });
+    const exitCode = await new Promise<number | null>((resolvePromise, reject) => {
+      const timer = setTimeout(() => {
+        killer.kill('SIGKILL');
+        reject(new Error('PROCESS_SANDBOX_UNAVAILABLE: taskkill timed out'));
+      }, 2_000);
+      timer.unref();
+      killer.once('error', () => {
+        clearTimeout(timer);
+        reject(new Error('PROCESS_SANDBOX_UNAVAILABLE: taskkill failed'));
+      });
+      killer.once('close', (code) => {
+        clearTimeout(timer);
+        resolvePromise(code);
+      });
+    });
+    if (exitCode !== 0) throw new Error('PROCESS_SANDBOX_UNAVAILABLE: taskkill failed');
+    const absenceDeadline = Date.now() + 1_500;
+    while (!pidAbsent(child.pid) && Date.now() < absenceDeadline) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    }
+    if (!pidAbsent(child.pid)) throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process tree remained present');
+  };
+  const settleAfterClose = async () => {
+    if (settled || closeOutcome === null) return;
+    if (stopping) {
+      try { await terminationWork; } catch (error) {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        rejectCompletion(error instanceof Error ? error : new Error('PROCESS_SANDBOX_UNAVAILABLE: process tree termination failed'));
+        return;
+      }
+    }
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolveCompletion(Object.freeze({
+      exit_code: closeOutcome.exitCode,
+      signal: closeOutcome.signal,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+      stdout_truncated: stdoutTruncated,
+      stderr_truncated: stderrTruncated,
+      termination,
+    }));
   };
   const stop = (reason: Exclude<BoundedProcessResultV4['termination'], null>) => {
     if (stopping || settled) return;
     stopping = true;
     termination = reason;
-    killTree();
-    settlementTimer = setTimeout(failSettlement, 1_500);
+    terminationWork = terminateTree();
+    void terminationWork.catch(() => undefined);
+    settlementTimer = setTimeout(failSettlement, 5_000);
     settlementTimer.unref();
+    void settleAfterClose();
   };
   const abort = () => stop('ABORT');
   const deadline = setTimeout(() => stop('TIMEOUT'), request.deadline_ms);
@@ -118,18 +173,8 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
     rejectCompletion(new Error('PROCESS_SANDBOX_UNAVAILABLE: process spawn failed'));
   });
   child.once('close', (exitCode, signal) => {
-    if (settled) return;
-    settled = true;
-    cleanup();
-    resolveCompletion(Object.freeze({
-      exit_code: exitCode,
-      signal,
-      stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'),
-      stdout_truncated: stdoutTruncated,
-      stderr_truncated: stderrTruncated,
-      termination,
-    }));
+    closeOutcome = { exitCode, signal };
+    void settleAfterClose();
   });
   return Object.freeze({
     child,
@@ -145,4 +190,16 @@ export async function runBoundedProcessV4(request: BoundedProcessRequestV4): Pro
   const handle = startBoundedProcessV4(request);
   handle.child.stdin.end();
   return await handle.completion;
+}
+
+export async function settleBoundedProcessAndCleanupV4(
+  handle: BoundedProcessHandleV4,
+  cleanup: () => Promise<void>,
+): Promise<void> {
+  const results = await Promise.allSettled([handle.terminate(), cleanup()]);
+  const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) {
+    throw new AggregateError(errors, `PROCESS_SANDBOX_UNAVAILABLE: ${errors.map(String).join('; ')}`);
+  }
 }

@@ -58,8 +58,12 @@ async function waitForExecutionContainer(executionId: string): Promise<{ id: str
 
 async function waitForCertificationContainer(): Promise<void> {
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const output = await docker('ps', '--all', '--quiet', '--filter=name=ao-exec-cert-').catch(() => '');
-    if (output !== '') return;
+    const output = await docker(
+      'ps', '--all',
+      '--filter=label=agent-orchestration.container-kind=executor',
+      '--format', '{{.Label "agent-orchestration.execution"}}',
+    ).catch(() => '');
+    if (output.split('\n').some((executionId) => executionId.startsWith('exec_cert_'))) return;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error('hostile certification did not begin');
@@ -114,13 +118,14 @@ async function writeNetworkRemovalForwarder(directory: string): Promise<void> {
   ].map(async (command) => await writeFile(join(directory, command), source)));
 }
 
-async function waitForJsonFile<T>(path: string): Promise<T> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+async function waitForJsonFile<T>(path: string, timeoutMs = 10_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     const value = await readFile(path, 'utf8').then((raw) => JSON.parse(raw) as T, () => null);
     if (value !== null) return value;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error('expected JSON evidence was not written');
+  throw new Error(`expected JSON evidence was not written within ${timeoutMs}ms`);
 }
 
 async function createTlsCertificate(directory: string, hostname: string): Promise<void> {
@@ -347,6 +352,7 @@ dockerIntegration('networked executor reaches only the authenticated TLS gateway
 
     lease = await startProviderEgressGatewayV4({
       docker_executable: dockerExecutable,
+      broker_state_directory: config().broker_state_directory,
       image_id: config().image_id,
       execution_id: executionId,
       internal_network: internalNetwork,
@@ -662,9 +668,16 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
       );
 
       if (mode === 'AMBIGUOUS') {
-        const created = await waitForJsonFile<{ id: string; name: string; execution: string }>(
-          join(wrapperRoot, 'created-network.json'),
-        );
+        let created: { id: string; name: string; execution: string };
+        try {
+          created = await waitForJsonFile<{ id: string; name: string; execution: string }>(
+            join(wrapperRoot, 'created-network.json'),
+            30_000,
+          );
+        } catch (error) {
+          const commands = await readFile(join(wrapperRoot, 'commands.log'), 'utf8').catch(() => '<no commands>');
+          throw new Error(`${String(error)}\nforwarder transcript:\n${commands}`);
+        }
         replacementName = created.name;
         await rejected;
         await assert.rejects(() => docker('network', 'inspect', created.id), 'the exact ambiguous network ID must be absent');
@@ -690,7 +703,7 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
     } finally {
       process.chdir(originalCwd);
       if (replacementName !== '') await docker('network', 'rm', replacementName).catch(() => undefined);
-      await rm(wrapperRoot, { recursive: true, force: true });
+      await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
     }
   }
 });

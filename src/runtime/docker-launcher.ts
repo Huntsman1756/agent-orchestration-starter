@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, parse, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, resolve } from 'node:path';
 
 import { hashCanonicalV4 } from './canonical.js';
 
@@ -13,7 +13,9 @@ interface PhysicalIdentityV4 {
 export interface DockerLauncherIdentityV4 {
   readonly executable: string;
   readonly endpoint_context: string | null;
-  readonly endpoint_host: string | null;
+  readonly endpoint_host: string;
+  readonly docker_config_directory: string;
+  readonly docker_config_state: 'ABSENT';
   readonly chain: readonly PhysicalIdentityV4[];
   readonly file: PhysicalIdentityV4 & {
     readonly bytes: string;
@@ -36,8 +38,30 @@ export function dockerLauncherIdentityHashV4(identity: DockerLauncherIdentityV4)
   return hashCanonicalV4(identity);
 }
 
-async function inspect(executable: string, signal?: AbortSignal): Promise<DockerLauncherIdentityV4> {
+function fixedDockerEndpoint(): string {
+  return process.platform === 'win32'
+    ? 'npipe:////./pipe/docker_engine'
+    : 'unix:///var/run/docker.sock';
+}
+
+function rejectAmbientDockerEndpoint(): void {
+  if (process.env.DOCKER_HOST !== undefined || process.env.DOCKER_CONTEXT !== undefined) unavailable();
+}
+
+async function assertIsolatedConfigAbsent(path: string): Promise<void> {
+  try {
+    await lstat(path);
+    unavailable();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') unavailable();
+  }
+}
+
+async function inspect(executable: string, dockerConfigDirectory: string, signal?: AbortSignal): Promise<DockerLauncherIdentityV4> {
   if (signal?.aborted) unavailable();
+  rejectAmbientDockerEndpoint();
+  if (!isAbsolute(dockerConfigDirectory) || resolve(dockerConfigDirectory) !== dockerConfigDirectory) unavailable();
+  await assertIsolatedConfigAbsent(dockerConfigDirectory);
   if (!isAbsolute(executable) || resolve(executable) !== executable || !/^docker(?:\.exe)?$/i.test(basename(executable))) unavailable();
   const parents: string[] = [];
   let current = dirname(executable);
@@ -69,13 +93,12 @@ async function inspect(executable: string, signal?: AbortSignal): Promise<Docker
   }
   if (normalized(await realpath(executable).catch(() => unavailable())) !== normalized(executable)) unavailable();
   const bytes = await readFile(executable, { signal }).catch(() => unavailable());
-  const endpointHost = process.env.DOCKER_HOST ?? null;
-  const endpointContext = process.env.DOCKER_CONTEXT ?? null;
-  if (endpointHost?.includes('\0') === true || endpointContext?.includes('\0') === true) unavailable();
   return Object.freeze({
     executable,
-    endpoint_context: endpointContext,
-    endpoint_host: endpointHost,
+    endpoint_context: null,
+    endpoint_host: fixedDockerEndpoint(),
+    docker_config_directory: dockerConfigDirectory,
+    docker_config_state: 'ABSENT',
     chain: Object.freeze(chain),
     file: Object.freeze({
       path: executable,
@@ -90,10 +113,25 @@ async function inspect(executable: string, signal?: AbortSignal): Promise<Docker
 export async function registerOrReproveDockerLauncherV4(
   executable: string,
   signal?: AbortSignal,
+  brokerStateDirectory?: string,
 ): Promise<DockerLauncherIdentityV4> {
-  const observed = await inspect(executable, signal);
   const existing = registered.get(executable);
+  const dockerConfigDirectory = existing?.docker_config_directory
+    ?? (brokerStateDirectory === undefined ? unavailable() : join(brokerStateDirectory, 'docker-cli-v4-empty'));
+  if (brokerStateDirectory !== undefined
+    && dockerConfigDirectory !== join(brokerStateDirectory, 'docker-cli-v4-empty')) unavailable();
+  const observed = await inspect(executable, dockerConfigDirectory, signal);
   if (existing !== undefined && dockerLauncherIdentityHashV4(existing) !== dockerLauncherIdentityHashV4(observed)) unavailable();
   if (existing === undefined) registered.set(executable, observed);
   return existing ?? observed;
+}
+
+export async function dockerCliEnvironmentV4(executable: string, signal?: AbortSignal): Promise<NodeJS.ProcessEnv> {
+  const identity = await registerOrReproveDockerLauncherV4(executable, signal);
+  const allowed = ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP'];
+  return {
+    ...Object.fromEntries(allowed.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+    DOCKER_HOST: identity.endpoint_host,
+    DOCKER_CONFIG: identity.docker_config_directory,
+  };
 }

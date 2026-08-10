@@ -5,8 +5,13 @@ import { isIP } from 'node:net';
 import { createInterface } from 'node:readline';
 
 import { createDockerContainerRemovalControllerV4 } from './process-sandbox.js';
-import { runBoundedProcessV4, startBoundedProcessV4, type BoundedProcessHandleV4 } from './bounded-process.js';
-import { registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
+import {
+  runBoundedProcessV4,
+  settleBoundedProcessAndCleanupV4,
+  startBoundedProcessV4,
+  type BoundedProcessHandleV4,
+} from './bounded-process.js';
+import { dockerCliEnvironmentV4, registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
 import { createBrokerOwnedDockerContainerV4 } from './docker-container-transaction.js';
 
 export interface ProviderGatewayLeaseV4 {
@@ -18,6 +23,7 @@ export interface ProviderGatewayLeaseV4 {
 
 export interface ProviderGatewayStartRequestV4 {
   readonly docker_executable: string;
+  readonly broker_state_directory: string;
   readonly image_id: `sha256:${string}`;
   readonly execution_id: string;
   readonly internal_network: string;
@@ -44,18 +50,13 @@ function unavailable(): never {
   throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process sandbox is unavailable');
 }
 
-function dockerEnvironment(): NodeJS.ProcessEnv {
-  const allowed = ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'TEMP', 'TMP'];
-  return Object.fromEntries(allowed.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]]));
-}
-
 async function docker(executable: string, argv: readonly string[]): Promise<string> {
   try {
     await registerOrReproveDockerLauncherV4(executable);
     const result = await runBoundedProcessV4({
       executable,
       argv,
-      environment: dockerEnvironment(),
+      environment: await dockerCliEnvironmentV4(executable),
       deadline_ms: 10_000,
       max_output_bytes: 512 * 1024,
     });
@@ -180,6 +181,11 @@ export async function startProviderEgressGatewayV4(
   request: ProviderGatewayStartRequestV4,
 ): Promise<ProviderGatewayLeaseV4> {
   validateStartRequest(request);
+  await registerOrReproveDockerLauncherV4(
+    request.docker_executable,
+    undefined,
+    request.broker_state_directory,
+  );
   await Promise.all([
     validateNetwork(request.docker_executable, request.internal_network, request.execution_id, true),
     validateNetwork(request.docker_executable, request.outbound_network, request.execution_id, false),
@@ -197,6 +203,7 @@ export async function startProviderEgressGatewayV4(
   ];
   const owned = await createBrokerOwnedDockerContainerV4({
     docker_executable: request.docker_executable,
+    broker_state_directory: request.broker_state_directory,
     image_id: request.image_id,
     execution_id: request.execution_id,
     kind: 'gateway',
@@ -206,8 +213,8 @@ export async function startProviderEgressGatewayV4(
   let attach: BoundedProcessHandleV4 | null = null;
   const removal = owned.removal;
   const cleanup = async (): Promise<void> => {
-    await removal.remove();
-    if (attach !== null) await attach.terminate().catch(() => unavailable());
+    if (attach === null) await removal.remove();
+    else await settleBoundedProcessAndCleanupV4(attach, async () => await removal.remove());
   };
   try {
     await docker(request.docker_executable, ['network', 'disconnect', 'none', containerId]);
@@ -217,7 +224,7 @@ export async function startProviderEgressGatewayV4(
     attach = startBoundedProcessV4({
       executable: request.docker_executable,
       argv: ['start', '--attach', '--interactive', containerId],
-      environment: dockerEnvironment(),
+      environment: await dockerCliEnvironmentV4(request.docker_executable),
       deadline_ms: 3_600_000,
       max_output_bytes: 4 * 1024 * 1024,
     });
