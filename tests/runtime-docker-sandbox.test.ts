@@ -595,7 +595,7 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     assert.notEqual(descendantPid, undefined, 'the fake Docker identity command must reach its blocked descendant');
     const started = Date.now();
     await backend.terminate(request.execution_id);
-    assert.equal(Date.now() - started < 1_000, true, 'terminate must abort the blocked CLI rather than await its natural exit');
+    assert.equal(Date.now() - started < 5_000, true, 'terminate must abort the blocked CLI within the bounded cleanup contract rather than await its natural exit');
     await firstRun;
     await assertProcessNotRunning(
       descendantPid!,
