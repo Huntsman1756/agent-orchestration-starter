@@ -24,7 +24,7 @@ const riskClass = z.enum(['low', 'medium', 'high', 'restricted']);
 const comparativeRiskClass = z.enum(['low', 'medium', 'high']);
 const severity = z.enum(['low', 'medium', 'high', 'critical']);
 
-const bindingSchema = z.object({
+export const bindingV3Schema = z.object({
   binding_ref: identifier,
   capability_class: capabilityClass,
   profile_hash: hash,
@@ -57,7 +57,7 @@ const postAcceptanceWindowSchema = z.object({
   window_policy_version: identifier,
 }).strict();
 
-const pricingSnapshotSchema = z.object({
+export const pricingSnapshotV3Schema = z.object({
   pricing_snapshot_id: identifier,
   pricing_snapshot_hash: hash,
   currency: z.string().length(3).regex(/^[A-Z]{3}$/),
@@ -114,7 +114,7 @@ export const pilotManifestV3Schema = z.object({
   assignment_algorithm_version: identifier,
   arm_assignments: boundedArray(z.object({ block_id: identifier, pilot_arm: pilotArm }).strict()).min(1),
   binding_policy_version: identifier,
-  binding_registry: boundedArray(bindingSchema).min(1),
+  binding_registry: boundedArray(bindingV3Schema).min(1),
   routing_reviewer_binding_ref: identifier,
   routing_reviewer_capability: capabilityClass,
   review_mode: z.literal('incremental_diff'),
@@ -127,7 +127,7 @@ export const pilotManifestV3Schema = z.object({
   volatile_paths_policy_hash: hash,
   stage_thresholds: stageThresholdsSchema,
   post_acceptance_window: postAcceptanceWindowSchema,
-  pricing_snapshot: pricingSnapshotSchema,
+  pricing_snapshot: pricingSnapshotV3Schema,
 }).strict();
 
 const eventBase = {
@@ -229,7 +229,7 @@ const usagePayloadVariants = usageOwnerShapes.flatMap(owner => [
   ...usageObservedCostShapes.flatMap(cost => usageEstimatorShapes.map(estimator => z.object({ ...usagePayloadBaseShape, ...owner, ...cost, ...estimator }).strict())),
   z.object({ ...usagePayloadBaseShape, ...owner, ...estimatedTariffShape }).strict(),
 ]);
-const usagePayload = z.union(usagePayloadVariants as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) as z.ZodType<UsagePayloadV3>;
+export const usageRecordedV3Schema = z.union(usagePayloadVariants as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) as z.ZodType<UsagePayloadV3>;
 
 type PilotArmV3 = 'A_STRONG_BASELINE' | 'B_CHEAP_NO_EARLY_ESCALATION' | 'C_ADAPTIVE_EARLY_ESCALATION';
 type PilotEventBaseV3 = {
@@ -279,7 +279,7 @@ const pilotEventVariants = [
   ...event('REVIEW_COMPLETED', reviewPayload),
   ...event('VALIDATION_RECORDED', z.object({ validation_id: identifier, attempt_id: identifier, validation_surface: boundedArray(identifier).min(1), passed: z.boolean(), tests_failing: nonnegativeInteger, tests_passing: nonnegativeInteger, evidence_hashes: boundedArray(hash).min(1) }).strict()),
   ...event('ORCHESTRATOR_OPERATION_RECORDED', z.object({ orchestrator_operation_id: identifier, attempt_number: positiveInteger, binding_ref: identifier, evidence_hash: hash }).strict(), false),
-  ...event('USAGE_RECORDED', usagePayload),
+  ...event('USAGE_RECORDED', usageRecordedV3Schema),
   ...event('PARENT_REWORK_RECORDED', z.object({ review_id: identifier, attempt_id: identifier, files_production: boundedArray(identifier), files_tests: boundedArray(identifier), files_docs: boundedArray(identifier), lines_production: nonnegativeInteger, lines_tests: nonnegativeInteger, lines_docs: nonnegativeInteger, diff_hash: hash, actor_role: z.enum(['orchestrator', 'reviewer', 'human']), reason_code: identifier }).strict()),
   ...event('BLOCK_ACCEPTED', z.object({ accepted_revision: hash, accepted_tree_hash: hash, accepted_at: timestamp }).strict()),
   ...event('BLOCK_FAILED', z.object({ reason_code: identifier, evidence_hash: hash }).strict()),

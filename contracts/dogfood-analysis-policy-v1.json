@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "policy_version": 1,
+  "policy_id": "dogfood-analysis-v1",
+  "comparison": {
+    "baseline_strategy": "frontier_execution",
+    "candidate_strategy": "orchestrated",
+    "pair_key": "pair_id",
+    "minimum_valid_run_set": "COMPLETE requires exactly one verified record for every manifest schedule ordinal; STOPPED_OPERATIONAL_FAILURE requires exactly one verified record for the prefix through the hash-bound stop ordinal"
+  },
+  "run_metrics": {
+    "first_pass_acceptance_rate": "count(first_pass_accepted = true) / count(records)",
+    "final_acceptance_rate": "count(final_accepted = true) / count(records)",
+    "reviewer_rejection_rate": "count(reviewer_rejected = true) / count(records)",
+    "repair_rate": "count(repairs > 0) / count(records)",
+    "escalation_rate": "count(escalations > 0) / count(records)",
+    "human_intervention_rate": "count(human_interventions > 0) / count(records)",
+    "mean_duration_ms": "sum(duration_ms) / count(records)",
+    "mean_total_cost_to_accepted_result_micro_units": "sum(total_cost_to_accepted_result_micro_units where final_accepted = true) / count(records where final_accepted = true)",
+    "all_scheduled_run_cost_total_micro_units": "sum(total_cost_to_accepted_result_micro_units over every scheduled record)",
+    "all_scheduled_run_cost_mean_micro_units": "sum(total_cost_to_accepted_result_micro_units over every scheduled record) / count(records)",
+    "frontier_usage_calls": "count(all provider usage entries whose frozen binding capability_class = strong over every scheduled record)",
+    "frontier_observed_tokens_by_category": "sum observed input, output, cached-input and reasoning token fields separately for all provider usage entries whose frozen binding capability_class = strong",
+    "frontier_observed_cost_micro_units": "sum(cost_observed for all provider usage entries whose frozen binding capability_class = strong over every scheduled record)",
+    "post_acceptance_defect_incidence_rate": "count(final_accepted = true AND post_acceptance_defects is not empty) / count(final_accepted = true)",
+    "false_acceptance_rate": "count(false_acceptance = true) / count(records)"
+  },
+  "field_semantics": {
+    "first_pass_accepted": "true only when final_accepted is true, attempts = 1, repairs = 0 and escalations = 0",
+    "reviewer_rejected": "true when any reviewer rejection occurred during the run; a later repair or escalation may still produce final acceptance",
+    "human_intervention_rate": "count(human_interventions > 0) / count(records), with human_intervention_seconds > 0 requiring human_interventions > 0",
+    "frontier_usage_calls": "all strong-capability orchestrator, executor and reviewer usage is counted; executor-only usage cannot support frontier_usage_reduced"
+  },
+  "paired_interpretation": {
+    "quality_preserved": "candidate.final_acceptance_rate >= baseline.final_acceptance_rate AND candidate.false_acceptance_rate <= baseline.false_acceptance_rate AND candidate.post_acceptance_defect_incidence_rate <= baseline.post_acceptance_defect_incidence_rate",
+    "cost_reduced": "candidate.all_scheduled_run_cost_mean_micro_units < baseline.all_scheduled_run_cost_mean_micro_units",
+    "frontier_usage_reduced": "candidate.frontier_usage_calls < baseline.frontier_usage_calls",
+    "operational_failure": "run_set_status = STOPPED_OPERATIONAL_FAILURE OR any authority escape, durable state inconsistency, critical false acceptance, cross-run contamination or unreconstructable evidence",
+    "insufficient_evidence": "run_set_status = COMPLETE AND (run-set incomplete OR either route has no final accepted result denominator)"
+  },
+  "decision_policy": {
+    "decision_precedence": ["operational_failure", "insufficient_evidence", "preserved_quality_and_lower_cost", "quality_regression", "no_cost_reduction"],
+    "automatic_route_promotion": false,
+    "threshold_mutation_after_observation": false,
+    "allowed_report_outcomes": ["preserved_quality_and_lower_cost", "quality_regression", "no_cost_reduction", "operational_failure", "insufficient_evidence"]
+  }
+}

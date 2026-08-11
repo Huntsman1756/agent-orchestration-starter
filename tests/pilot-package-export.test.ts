@@ -17,11 +17,27 @@ test('pilot-v3 public barrel exposes every stable V3 runtime function without in
   for (const name of expected) assert.equal(typeof pilot[name as keyof typeof pilot], 'function', name);
 });
 
+test('pilot barrel exposes the provider-neutral dogfood freeze and verification functions', () => {
+  for (const name of [
+    'freezeDogfoodManifestV1', 'freezeDogfoodRunRecordV1',
+    'loadDogfoodManifestV1', 'loadDogfoodRunRecordV1',
+    'verifyDogfoodManifestV1', 'verifyDogfoodRunRecordV1',
+  ]) assert.equal(typeof pilot[name as keyof typeof pilot], 'function', name);
+});
+
 test('package publishes the pilot-v3 barrel with explicit types and import targets', async () => {
   const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
   assert.deepEqual(packageJson.exports['./pilot-v3'], {
     types: './dist/pilot/index.d.ts',
     import: './dist/pilot/index.js',
+  });
+});
+
+test('package publishes the dogfood-v1 evidence contract with explicit types and import targets', async () => {
+  const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+  assert.deepEqual(packageJson.exports['./dogfood-v1'], {
+    types: './dist/pilot/dogfood-manifest.d.ts',
+    import: './dist/pilot/dogfood-manifest.js',
   });
 });
 

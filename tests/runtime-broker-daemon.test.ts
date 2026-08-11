@@ -179,7 +179,18 @@ test('serializes mutation ownership with a distinct per-run lock', async () => {
 
 test('serializes stale-lock reclamation so a second contender cannot unlink the new owner', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'runner-v4-lock-race-'));
-  const reclamationCoordinator = createInProcessReclamationCoordinatorV4('race-test');
+  const baseCoordinator = createInProcessReclamationCoordinatorV4('race-test');
+  let exclusiveCalls = 0;
+  let secondQueued!: () => void;
+  const secondQueuedPromise = new Promise<void>((resolve) => { secondQueued = resolve; });
+  const reclamationCoordinator: ReclamationCoordinatorV4 = {
+    certification: baseCoordinator.certification,
+    runExclusive: async <T>(key: string, operation: () => Promise<T>) => {
+      exclusiveCalls += 1;
+      if (exclusiveCalls === 2) secondQueued();
+      return baseCoordinator.runExclusive(key, operation);
+    },
+  };
   await writeFile(join(directory, 'fixture-repo.lock'), JSON.stringify({ repository_id: 'fixture-repo', pid: 100, boot_nonce: 'old-nonce', boot_id: 'old-boot', process_start_id: 'old-start' }));
   let releaseFirst!: () => void;
   const firstPaused = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -208,6 +219,7 @@ test('serializes stale-lock reclamation so a second contender cannot unlink the 
     }),
     /REPOSITORY_BUSY/,
   );
+  await secondQueuedPromise;
   releaseFirst();
   const winner = await first;
   await secondRejected;
