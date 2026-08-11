@@ -42,6 +42,13 @@ intervention and total cost to an accepted result. These results are evidence
 for future policy decisions, not permission for the model to promote routes or
 publish autonomously.
 
+After that experiment closes, the retained corpus may seed the separately
+governed evidence-compounding phase described in
+[`2026-08-11-evidence-compounding-design.md`](2026-08-11-evidence-compounding-design.md).
+That phase may accumulate learning candidates automatically, but it must not
+activate instructions, routing, publication or authority automatically. No
+candidate may affect the frozen Dogfood V1 schedule or bindings.
+
 ## Intentionally deferred
 
 ### Incremental strict TypeScript hardening
