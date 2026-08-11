@@ -149,7 +149,10 @@ const providerUsagePolicySchema = z.object({
     }).strict(),
     reviewer: usageRoleBindingsSchema,
   }).strict(),
-  required_usage_roles: z.array(usageRole).min(1).max(3),
+  required_usage_roles: z.object({
+    orchestrated: z.array(usageRole).length(3),
+    frontier_execution: z.array(usageRole).min(2).max(3),
+  }).strict(),
 }).strict();
 
 const runPolicySchema = z.object({
@@ -430,8 +433,14 @@ function manifestErrors(manifest: DogfoodManifestV1): string[] {
   }
   const allRoleRefs = new Set([...orchestratorRefs, ...reviewerRefs, ...executorRefs]);
   for (const bindingRef of topologyRefs) if (!allRoleRefs.has(bindingRef)) errors.push(`provider usage registry contains an unassigned binding: ${bindingRef}`);
-  for (const requiredRole of ['executor', 'reviewer'] as const) if (!topology.required_usage_roles.includes(requiredRole)) errors.push(`provider usage policy must require the ${requiredRole} usage role`);
-  if (new Set(topology.required_usage_roles).size !== topology.required_usage_roles.length) errors.push('provider usage policy required roles must be unique');
+  for (const currentStrategy of ['orchestrated', 'frontier_execution'] as const) {
+    const requiredRoles = topology.required_usage_roles[currentStrategy];
+    if (new Set(requiredRoles).size !== requiredRoles.length) errors.push(`${currentStrategy} provider usage required roles must be unique`);
+    for (const requiredRole of ['executor', 'reviewer'] as const) {
+      if (!requiredRoles.includes(requiredRole)) errors.push(`${currentStrategy} provider usage policy must require the ${requiredRole} role`);
+    }
+  }
+  if (!topology.required_usage_roles.orchestrated.includes('orchestrator')) errors.push('orchestrated provider usage policy must require the orchestrator role');
   const routeBindingByStrategy = new Map(manifest.route_bindings.map(binding => [binding.strategy, binding]));
   for (const currentStrategy of ['orchestrated', 'frontier_execution'] as const) {
     const routeBinding = routeBindingByStrategy.get(currentStrategy);
@@ -556,7 +565,7 @@ function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): st
     if (!allowedBindingRefs.has(usage.binding_ref)) errors.push(`provider usage references an unapproved binding: ${usage.binding_ref}`);
     if (!allowedUsageRefs(usage.role).includes(usage.binding_ref)) errors.push(`provider ${usage.role} usage does not match the frozen role binding: ${usage.binding_ref}`);
   }
-  for (const requiredRole of topology.required_usage_roles) if (!usageRoles.has(requiredRole)) errors.push(`provider usage evidence is missing required role: ${requiredRole}`);
+  for (const requiredRole of topology.required_usage_roles[record.strategy]) if (!usageRoles.has(requiredRole)) errors.push(`provider usage evidence is missing required ${record.strategy} role: ${requiredRole}`);
 
   let aggregate: ReturnType<typeof aggregateUsage> | null = null;
   try {
@@ -573,7 +582,7 @@ function costErrors(manifest: DogfoodManifestV1, record: DogfoodRunRecordV1): st
       }
     }
     if (aggregate.cost_observed.value !== record.observed_cost_micro_units) errors.push('observed_cost_micro_units does not match reproduced provider cost');
-    const frontierUsageCalls = aggregate.priced_usage.filter(usage => usage.role === 'executor' && providerEvidence.binding_registry.find(binding => binding.binding_ref === usage.binding_ref)?.capability_class === 'strong').length;
+    const frontierUsageCalls = aggregate.priced_usage.filter(usage => providerEvidence.binding_registry.find(binding => binding.binding_ref === usage.binding_ref)?.capability_class === 'strong').length;
     if (record.frontier_usage_calls !== frontierUsageCalls) errors.push('frontier_usage_calls does not match reproduced provider usage');
   }
 

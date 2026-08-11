@@ -74,7 +74,9 @@ host qualification.
 - Dogfood run-set verification now derives the first observable hard stop from
   run evidence, rejects a `COMPLETE` result without its hash-bound stop event,
   and freezes the provider usage registry, role-to-binding topology, required
-  usage roles and run/event identity references.
+  usage roles per strategy and run/event identity references. Frontier usage
+  now counts all strong-capability planner, executor and reviewer calls rather
+  than only strong executor calls.
 
 ### Fixed
 

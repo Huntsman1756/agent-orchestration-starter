@@ -66,10 +66,13 @@ The manifest also freezes `cost_policy`:
 `provider_usage_policy` is the execution-topology boundary. It freezes the
 canonical binding registry and its hash, maps the executor binding separately
 for `orchestrated` and `frontier_execution`, declares the bindings allowed for
-the orchestrator and reviewer roles, and requires the executor and reviewer
-usage roles for every valid dogfood record. The run verifier compares every
-run's registry to this manifest registry; changing a capability class,
-profile hash, role binding or allowed binding therefore invalidates the run.
+the orchestrator and reviewer roles, and freezes required usage roles per
+strategy. `orchestrated` always requires `orchestrator`, `executor` and
+`reviewer`; `frontier_execution` requires `executor` and `reviewer`, plus
+`orchestrator` when that exact host route really plans before execution. The
+run verifier compares every run's registry and strategy topology to this
+manifest; changing a capability class, profile hash, role binding or allowed
+binding therefore invalidates the run.
 Each usage entry also has a hash-bound `usage_event_bindings` reference with
 the record's `run_id`, event id and event hash. The event hash must be present
 in the run evidence packet, so a provider can no longer report an unrelated or
@@ -81,8 +84,10 @@ as `observed_cost_micro_units + human_intervention_cost_micro_units`.
 `conversion_policy_hash` must equal the self-hash of the V3 pricing snapshot in
 each run's `provider_cost_evidence`. That evidence retains the pricing snapshot,
 binding registry, usage ledger and event references; the verifier reuses V3
-`aggregateUsage`/`priceUsage` logic to reproduce observed cost and executor
-frontier usage calls.
+`aggregateUsage`/`priceUsage` logic to reproduce observed cost and total
+frontier usage calls across orchestrator, executor and reviewer roles. A call
+is frontier usage whenever its frozen binding has `capability_class: strong`;
+an executor-only count cannot support a `frontier_usage_reduced` conclusion.
 
 Changing any one of these starts a new experiment. Do not edit a frozen
 manifest in place and do not reinterpret a record under a later binding.
@@ -160,7 +165,7 @@ source code, raw model output, credentials or secrets. At minimum record:
 - human interventions and intervention time;
 - total cost to an accepted result;
 - total cost across every scheduled run, including failed/unaccepted runs;
-- reproducible frontier usage calls.
+- reproducible frontier usage calls across every provider role.
 
 `total_cost_to_accepted_result_micro_units` must equal the verifier's frozen
 calculation: reproduced provider route cost (including repairs and escalations)
@@ -215,8 +220,11 @@ The aggregate `human_intervention_rate` is the proportion of runs requiring at
 least one human action. The aggregate `total_cost_to_accepted_result` is the
 sum of route, recovery and human costs for runs that reach an accepted result;
 unaccepted work remains visible in a separate failure population. The report
-also computes mean/total cost over all scheduled runs and frontier usage calls;
-it must not describe cost reduction using only successful runs.
+also computes mean/total cost over all scheduled runs and total frontier usage
+calls. It reports frontier observed tokens by category and frontier observed
+cost as descriptive metrics, because calls of different roles can have very
+different sizes. It must not describe cost reduction using only successful
+runs or frontier reduction using only executor calls.
 
 ## Frozen stop conditions
 

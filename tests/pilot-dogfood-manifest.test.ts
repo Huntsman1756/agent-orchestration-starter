@@ -71,12 +71,20 @@ function providerCostEvidence(manifest: DogfoodManifestV1, strategy: 'orchestrat
   const snapshot = pricingSnapshot();
   const bindingRegistry = providerRegistry(manifest);
   const routeBinding = manifest.route_bindings.find(binding => binding.strategy === strategy)!;
-  const usage = [providerUsage(routeBinding.binding_ref, runId, 'executor'), providerUsage(manifest.reviewer.binding_ref, runId, 'reviewer')];
+  const usage = manifest.provider_usage_policy.required_usage_roles[strategy].map(role => providerUsage(
+    role === 'executor'
+      ? routeBinding.binding_ref
+      : role === 'reviewer'
+        ? manifest.reviewer.binding_ref
+        : manifest.provider_usage_policy.roles.orchestrator.allowed_binding_refs[0]!,
+    runId,
+    role,
+  ));
   const usageEventBindings = usage.map((entry, index) => ({
     usage_id: entry.usage_id,
     run_id: runId,
     event_id: `evt-${runId}-${entry.role}`,
-    event_hash: hash(index === 0 ? '3' : '4'),
+    event_hash: hash(String(index + 3)),
   }));
   return {
     evidence_schema_version: 3 as const,
@@ -125,7 +133,10 @@ function input(overrides: Partial<DogfoodManifestInputV1> = {}): DogfoodManifest
         executor: { orchestrated: 'binding-orchestrated', frontier_execution: 'binding-frontier' },
         reviewer: { allowed_binding_refs: ['binding-reviewer'] },
       },
-      required_usage_roles: ['executor', 'reviewer'],
+      required_usage_roles: {
+        orchestrated: ['orchestrator', 'executor', 'reviewer'],
+        frontier_execution: ['executor', 'reviewer'],
+      },
     },
     analysis_policy_hash: hash('6'),
     corpus_policy: {
@@ -222,6 +233,10 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
   const runId = overrides.run_id ?? 'run-dogfood-0001';
   const startedAt = timestampAt((scheduleOrdinal - 1) * 3);
   const completedAt = timestampAt((scheduleOrdinal - 1) * 3 + 2);
+  const providerEvidence = providerCostEvidence(manifest, scheduled.strategy, runId);
+  const registryByRef = new Map(providerEvidence.binding_registry.map(binding => [binding.binding_ref, binding]));
+  const observedProviderCost = providerEvidence.usage.reduce((total, usage) => total + (usage.cost_observed ?? 0), 0);
+  const frontierUsageCalls = providerEvidence.usage.filter(usage => registryByRef.get(usage.binding_ref)?.capability_class === 'strong').length;
   return {
     experiment_id: manifest.experiment_id,
     manifest_hash: manifest.manifest_hash,
@@ -235,7 +250,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     binding_hash: routeBinding.binding_hash,
     qualification_hash: routeBinding.qualification_hash,
     cost_policy_hash: hashCanonical(manifest.cost_policy),
-    provider_cost_evidence: providerCostEvidence(manifest, scheduled.strategy, runId),
+    provider_cost_evidence: providerEvidence,
     base_sha: currentCase.base_sha,
     contract_hash: currentCase.contract_hash,
     fixtures_hash: currentCase.fixtures_hash,
@@ -260,12 +275,12 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     attempts: 1,
     duration_ms: 2_000,
     currency: 'USD',
-    observed_cost_micro_units: 200,
+    observed_cost_micro_units: observedProviderCost,
     human_interventions: 0,
     human_intervention_seconds: 0,
     human_intervention_cost_micro_units: 0,
-    total_cost_to_accepted_result_micro_units: 200,
-    frontier_usage_calls: scheduled.strategy === 'frontier_execution' ? 1 : 0,
+    total_cost_to_accepted_result_micro_units: observedProviderCost,
+    frontier_usage_calls: frontierUsageCalls,
     changed_files: 1,
     changed_lines: 4,
     validation_failures: 0,
@@ -273,7 +288,7 @@ function recordInput(manifest: DogfoodManifestV1, overrides: Partial<DogfoodRunR
     post_acceptance_window_closed: true,
     post_acceptance_defects: [],
     evidence_reconstructible: true,
-    evidence_hashes: [hash('2'), hash('3'), hash('4')],
+    evidence_hashes: [hash('2'), ...providerEvidence.usage_event_bindings.map(eventRef => eventRef.event_hash)],
     cross_run_contamination: false,
     publication_state: 'MANUAL_PENDING',
     recorded_at: timestampAt((scheduleOrdinal - 1) * 3 + 86_402),
@@ -359,11 +374,12 @@ test('run records require a real closed post-acceptance window and consistent ti
 
 test('run records recalculate human cost and total cost from the frozen cost policy', () => {
   const manifest = freezeDogfoodManifestV1(input());
+  const observedProviderCost = recordInput(manifest).observed_cost_micro_units;
   const valid = freezeDogfoodRunRecordV1(recordInput(manifest, {
     human_interventions: 1,
     human_intervention_seconds: 10,
     human_intervention_cost_micro_units: 250,
-    total_cost_to_accepted_result_micro_units: 450,
+    total_cost_to_accepted_result_micro_units: observedProviderCost + 250,
   }));
   const validResult = verifyDogfoodRunRecordV1(manifest, valid);
   assert.equal(validResult.ok, true, validResult.errors.join('; '));
@@ -473,6 +489,79 @@ test('run-set verification derives the first observable hard stop instead of acc
   assert.match(wrongFirstStopResult.errors.join('; '), /first observable derived hard-stop|first observable derived hard-stop condition/u);
 });
 
+test('strategy topology requires the orchestrated planner and counts every strong-capability usage call', () => {
+  const manifest = freezeDogfoodManifestV1(input());
+  const orchestratedOrdinal = manifest.schedule.find(entry => entry.strategy === 'orchestrated')!.ordinal;
+  const orchestratedRecord = freezeDogfoodRunRecordV1(recordInput(manifest, { run_id: 'run-topology-orchestrated' }, orchestratedOrdinal));
+  assert.deepEqual(orchestratedRecord.provider_cost_evidence.usage.map(usage => usage.role), ['orchestrator', 'executor', 'reviewer']);
+  assert.equal(orchestratedRecord.frontier_usage_calls, 2);
+  assert.equal(verifyDogfoodRunRecordV1(manifest, orchestratedRecord).ok, true);
+
+  const retainedUsage = orchestratedRecord.provider_cost_evidence.usage.filter(usage => usage.role !== 'orchestrator');
+  const retainedUsageIds = new Set(retainedUsage.map(usage => usage.usage_id));
+  const retainedEventBindings = orchestratedRecord.provider_cost_evidence.usage_event_bindings.filter(eventRef => retainedUsageIds.has(eventRef.usage_id));
+  const missingPlannerEvidence = {
+    ...orchestratedRecord.provider_cost_evidence,
+    usage: retainedUsage,
+    usage_event_bindings: retainedEventBindings,
+    usage_ledger_hash: hashCanonical({
+      usage: [...retainedUsage].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+      usage_event_bindings: [...retainedEventBindings].sort((left, right) => left.usage_id.localeCompare(right.usage_id)),
+    }),
+  };
+  const missingPlannerRecord = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: orchestratedRecord.run_id,
+    provider_cost_evidence: missingPlannerEvidence,
+    observed_cost_micro_units: 200,
+    total_cost_to_accepted_result_micro_units: 200,
+    frontier_usage_calls: 1,
+  }, orchestratedOrdinal));
+  const missingPlannerResult = verifyDogfoodRunRecordV1(manifest, missingPlannerRecord);
+  assert.equal(missingPlannerResult.ok, false);
+  assert.match(missingPlannerResult.errors.join('; '), /missing required orchestrated role: orchestrator/u);
+
+  const executorOnlyFrontierCount = freezeDogfoodRunRecordV1(recordInput(manifest, {
+    run_id: 'run-topology-executor-only-count',
+    frontier_usage_calls: 0,
+  }, orchestratedOrdinal));
+  const executorOnlyResult = verifyDogfoodRunRecordV1(manifest, executorOnlyFrontierCount);
+  assert.equal(executorOnlyResult.ok, false);
+  assert.match(executorOnlyResult.errors.join('; '), /frontier_usage_calls/u);
+
+  const frontierOrdinal = manifest.schedule.find(entry => entry.strategy === 'frontier_execution')!.ordinal;
+  const frontierRecord = freezeDogfoodRunRecordV1(recordInput(manifest, { run_id: 'run-topology-frontier' }, frontierOrdinal));
+  assert.deepEqual(frontierRecord.provider_cost_evidence.usage.map(usage => usage.role), ['executor', 'reviewer']);
+  assert.equal(frontierRecord.frontier_usage_calls, 2);
+
+  const plannerConfig = input();
+  const frontierWithPlannerManifest = freezeDogfoodManifestV1({
+    ...plannerConfig,
+    provider_usage_policy: {
+      ...plannerConfig.provider_usage_policy,
+      required_usage_roles: {
+        ...plannerConfig.provider_usage_policy.required_usage_roles,
+        frontier_execution: ['orchestrator', 'executor', 'reviewer'],
+      },
+    },
+  });
+  const frontierWithPlannerOrdinal = frontierWithPlannerManifest.schedule.find(entry => entry.strategy === 'frontier_execution')!.ordinal;
+  const frontierWithPlannerRecord = freezeDogfoodRunRecordV1(recordInput(frontierWithPlannerManifest, { run_id: 'run-topology-frontier-planner' }, frontierWithPlannerOrdinal));
+  assert.equal(verifyDogfoodRunRecordV1(frontierWithPlannerManifest, frontierWithPlannerRecord).ok, true);
+  assert.equal(frontierWithPlannerRecord.frontier_usage_calls, 3);
+
+  const invalidConfig = input();
+  assert.throws(() => freezeDogfoodManifestV1({
+    ...invalidConfig,
+    provider_usage_policy: {
+      ...invalidConfig.provider_usage_policy,
+      required_usage_roles: {
+        ...invalidConfig.provider_usage_policy.required_usage_roles,
+        orchestrated: ['executor', 'reviewer', 'executor'],
+      },
+    },
+  }), /orchestrator|unique/u);
+});
+
 test('provider usage evidence is bound to the frozen topology, required roles and run events', () => {
   const manifest = freezeDogfoodManifestV1(input());
   const record = freezeDogfoodRunRecordV1(recordInput(manifest));
@@ -505,7 +594,7 @@ test('provider usage evidence is bound to the frozen topology, required roles an
   }));
   const missingReviewerResult = verifyDogfoodRunRecordV1(manifest, missingReviewerRecord);
   assert.equal(missingReviewerResult.ok, false);
-  assert.match(missingReviewerResult.errors.join('; '), /missing required role: reviewer/u);
+  assert.match(missingReviewerResult.errors.join('; '), /missing required .* role: reviewer/u);
 
   const wrongRunEventBindings = record.provider_cost_evidence.usage_event_bindings.map((eventRef, index) => index === 0
     ? { ...eventRef, run_id: 'another-run' }
