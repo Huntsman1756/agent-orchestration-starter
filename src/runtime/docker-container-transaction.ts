@@ -175,6 +175,7 @@ async function docker(
     executable,
     argv,
     environment: await dockerCliEnvironmentV4(executable, signal),
+    working_directory: dirname(executable),
     deadline_ms: deadlineMs,
     max_output_bytes: 256 * 1024,
     signal,

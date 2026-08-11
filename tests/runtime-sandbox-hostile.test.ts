@@ -597,7 +597,6 @@ dockerIntegration('independent hostile runners wait out fixed-subnet overlap wit
 dockerIntegration('an uncertified forwarding launcher cannot reach Docker create authority', { timeout: 120_000 }, async () => {
   const executionId = 'exec_ambiguous_create_0001';
   const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-docker-wrapper-'));
-  const originalCwd = process.cwd();
   const baseConfig = config();
   let originalId = '';
   let replacementId = '';
@@ -607,7 +606,6 @@ dockerIntegration('an uncertified forwarding launcher cannot reach Docker create
     const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
     await copyFile(process.execPath, wrapperExecutable);
     assert.equal((await createDockerProcessSandboxV4(baseConfig).probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
-    process.chdir(wrapperRoot);
     const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: wrapperExecutable });
     const warmed = await backend.probe('VALIDATION_UNTRUSTED');
     if (warmed.status !== 'SUPPORTED') {
@@ -648,7 +646,6 @@ dockerIntegration('an uncertified forwarding launcher cannot reach Docker create
     }
     assert.equal(await docker('inspect', '--format', '{{.Id}}', replacementId), replacementId);
   } finally {
-    process.chdir(originalCwd);
     await Promise.all([originalId, replacementId, replacementName, `${replacementName}-preserved`].filter(Boolean).map(async (target) => {
       await docker('rm', '--force', target).catch(() => undefined);
     }));
@@ -659,8 +656,6 @@ dockerIntegration('an uncertified forwarding launcher cannot reach Docker create
 dockerIntegration('ambiguous network create removes the exact effect, preserves its replacement, and unrelated errors do not retry', { timeout: 120_000 }, async () => {
   const baseConfig = config();
   const identity = await inspectDockerSandboxIdentityV4(baseConfig, 'VALIDATION_UNTRUSTED');
-  const originalCwd = process.cwd();
-
   for (const mode of ['AMBIGUOUS', 'UNRELATED_ERROR'] as const) {
     const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-network-wrapper-'));
     let replacementName = '';
@@ -668,7 +663,6 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
       await writeNetworkCreateForwarder(wrapperRoot, mode);
       const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
       await copyFile(process.execPath, wrapperExecutable);
-      process.chdir(wrapperRoot);
       const rejected = assert.rejects(
         () => runDockerSandboxHostileCertificationV4(
           { ...baseConfig, docker_executable: wrapperExecutable },
@@ -711,7 +705,6 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
         );
       }
     } finally {
-      process.chdir(originalCwd);
       if (replacementName !== '') await docker('network', 'rm', replacementName).catch(() => undefined);
       await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
     }
@@ -721,14 +714,12 @@ dockerIntegration('ambiguous network create removes the exact effect, preserves 
 dockerIntegration('network cleanup propagates permission denial and a later certification retries the exact retained ID', { timeout: 180_000 }, async () => {
   const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-network-cleanup-wrapper-'));
   const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
-  const originalCwd = process.cwd();
   const baseConfig = config();
   const identity = await inspectDockerSandboxIdentityV4(baseConfig, 'VALIDATION_UNTRUSTED');
   let retainedNetworkId = '';
   try {
     await writeNetworkRemovalForwarder(wrapperRoot);
     await copyFile(process.execPath, wrapperExecutable);
-    process.chdir(wrapperRoot);
     const wrapperConfig = { ...baseConfig, docker_executable: wrapperExecutable };
     await assert.rejects(
       () => runDockerSandboxHostileCertificationV4(wrapperConfig, identity),
@@ -751,7 +742,6 @@ dockerIntegration('network cleanup propagates permission denial and a later cert
     await assert.rejects(() => docker('network', 'inspect', retainedNetworkId), 'the retained exact ID must be absent after retry');
     retainedNetworkId = '';
   } finally {
-    process.chdir(originalCwd);
     if (retainedNetworkId !== '') await docker('network', 'rm', retainedNetworkId).catch(() => undefined);
     await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
@@ -760,8 +750,6 @@ dockerIntegration('network cleanup propagates permission denial and a later cert
 dockerIntegration('certification binds the immutable Docker launcher and rejects a weakening wrapper or executable replacement', { timeout: 120_000 }, async () => {
   const baseConfig = config();
   assert.equal((await createDockerProcessSandboxV4(baseConfig).probe('VALIDATION_UNTRUSTED')).status, 'SUPPORTED');
-  const originalCwd = process.cwd();
-
   for (const mode of ['WEAKENED', 'REPLACED'] as const) {
     const wrapperRoot = await mkdtemp(join(dirname(process.cwd()), 'ao-launcher-wrapper-'));
     const wrapperExecutable = join(wrapperRoot, process.platform === 'win32' ? 'docker.exe' : 'docker');
@@ -769,7 +757,6 @@ dockerIntegration('certification binds the immutable Docker launcher and rejects
     try {
       if (mode === 'WEAKENED') await writeDockerForwarder(wrapperRoot, 'exec_never_block_0001', true);
       await copyFile(mode === 'WEAKENED' ? process.execPath : dockerExecutable, wrapperExecutable);
-      process.chdir(wrapperRoot);
       const backend = createDockerProcessSandboxV4({ ...baseConfig, docker_executable: wrapperExecutable });
       const first = await backend.probe('VALIDATION_UNTRUSTED');
       if (mode === 'WEAKENED') {
@@ -789,7 +776,6 @@ dockerIntegration('certification binds the immutable Docker launcher and rejects
         );
       }
     } finally {
-      process.chdir(originalCwd);
       await rm(wrapperRoot, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
     }
   }

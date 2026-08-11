@@ -59,6 +59,11 @@ test('npm package contains every local README/documentation link', async () => {
 
   const packed = await readPackFileList();
   assert.ok(packed.has('README.md'));
+  assert.equal(
+    [...packed].some((path) => path.startsWith('docs/superpowers/') || path.startsWith('pilot/')),
+    false,
+    'published packages must exclude completed tool-specific plans and local pilot fixtures',
+  );
   for (const document of [resolve(root, 'README.md'), ...(await markdownFiles(resolve(root, 'docs')))]) {
     const content = await readFile(document, 'utf8');
     const links = [...content.matchAll(/\[[^\]]*\]\(([^)\n]+)\)/gu)]
