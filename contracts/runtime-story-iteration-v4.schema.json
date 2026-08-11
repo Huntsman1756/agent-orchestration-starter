@@ -23,6 +23,7 @@
     "review_attestation_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
     "finding_hashes": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } },
     "repair_packet_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "frontier_decision_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
     "failure_signature_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
     "escalation_reason": { "anyOf": [{ "enum": ["ATTEMPT_LIMIT", "NO_PROGRESS"] }, { "type": "null" }] },
     "event_hash": { "$ref": "#/$defs/hash" }

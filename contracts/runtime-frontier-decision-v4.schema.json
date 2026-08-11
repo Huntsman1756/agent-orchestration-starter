@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/runtime-frontier-decision-v4.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "type", "run_id", "plan_hash", "decision_index", "previous_decision_hash", "decision_id", "decision_owner_ref", "authority_evidence_hash", "rejected_event_hash", "action", "decision_hash"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "type": { "const": "FRONTIER_DECISION_RECORDED" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
+    "plan_hash": { "$ref": "#/$defs/hash" },
+    "decision_index": { "type": "integer", "minimum": 1, "maximum": 64 },
+    "previous_decision_hash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "decision_id": { "type": "string", "pattern": "^decision_[A-Za-z0-9_-]{16,96}$" },
+    "decision_owner_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" },
+    "authority_evidence_hash": { "$ref": "#/$defs/hash" },
+    "rejected_event_hash": { "$ref": "#/$defs/hash" },
+    "action": { "enum": ["RETRY", "ESCALATE"] },
+    "decision_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

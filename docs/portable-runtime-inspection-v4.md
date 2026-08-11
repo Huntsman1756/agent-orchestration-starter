@@ -10,7 +10,7 @@ Provider and model names do not appear in either document. Replacing a model mea
 
 ## Bounded execution graph
 
-`buildRuntimeExecutionGraphV4` projects a verified iterative plan and its receipts into at most 64 story nodes and 2,048 dependency edges. Nodes contain only story IDs, story hashes, status and attempt counts. Objectives, prompts, source and model reasoning are excluded.
+`buildRuntimeExecutionGraphV4` projects a verified iterative plan and its receipts into at most 64 story nodes and 2,048 dependency edges. Frontier-led trajectories must also supply their canonical decision chain; the graph verifies every retry binding and includes the ordered decision hashes in `graph_hash`. Nodes contain only story IDs, story hashes, status and attempt counts. Objectives, prompts, source and model reasoning are excluded.
 
 ## Safe trace export
 

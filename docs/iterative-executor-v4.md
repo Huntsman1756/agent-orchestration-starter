@@ -48,9 +48,21 @@ The host may set `review_control.mode` to `FRONTIER_LED` when a frontier model
 must coordinate and review while an economical model performs the bounded code
 work. In this mode a rejected attempt is persisted and the executor returns
 `AWAITING_FRONTIER_DECISION`. It does not create another worker session until
-the host resumes it with `RETRY` bound to the exact rejected `event_hash`.
-`ESCALATE` stops without another worker call. Missing, stale and cross-mode
-decisions fail closed.
+the host resumes it with `RETRY` bound to the exact rejected `event_hash`, a
+unique decision ID, the decision-owner reference and a hash of host-verified
+authority evidence. Before acting, the broker persists a canonical
+`FRONTIER_DECISION_RECORDED` event in a self-hashed, plan-bound decision chain.
+The next iteration binds that `decision_hash`. `ESCALATE` is persisted in the
+same way and stops without another worker call. Missing, altered, duplicate,
+stale and cross-mode decisions fail closed.
+
+A crash after decision persistence but before worker launch resumes from the
+pending durable decision; it neither requests a replacement decision nor
+creates a second authorization record. Replay requires every frontier-led
+attempt greater than one to consume the exact `RETRY` decision for the
+immediately preceding rejected event. `inspectIterativeTrajectoryV4` and the
+portable execution graph accept the same decision evidence and include its
+hashes in their verified output.
 
 This gate is deliberately separate from the worker receipt. The worker reports
 candidate bytes; deterministic validation and independent review create the
@@ -72,6 +84,13 @@ Validators and reviewers also emit normalized failure signatures. `createNormali
 
 `persist_iteration` is one broker-owned transaction. When `promotion` is non-null, compare the current accepted tree with `input_tree_hash`, promote exactly `candidate_tree_hash`, and append the hash-verified event atomically. A retry after a lost response must return the existing canonical result. Promotion and journaling must never be separate effects.
 
+In `FRONTIER_LED` mode, `persist_frontier_decision` is a second privileged host
+port. It must validate the referenced authority evidence outside the model and
+durably append the exact canonical decision before returning. A duplicate
+`decision_id` or rejected-event binding must return the existing identical
+record or fail; it must never create another authority effect. On restart the
+host supplies both `prior_events` and `prior_frontier_decisions`.
+
 The production host must also:
 
 - derive the worker snapshot from the activated, hash-verified profile and qualification record;
@@ -86,6 +105,7 @@ Public interchange schemas:
 - `contracts/runtime-story-plan-v4.schema.json`
 - `contracts/runtime-repair-packet-v4.schema.json`
 - `contracts/runtime-story-iteration-v4.schema.json`
+- `contracts/runtime-frontier-decision-v4.schema.json`
 
 This module is a provider-neutral runtime primitive. The thin trusted root must compose it from separately qualified host ports; the schemas do not turn an unqualified harness into a safe autonomous worker.
 

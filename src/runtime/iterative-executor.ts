@@ -10,6 +10,8 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const storyId = z.string().regex(/^story_[A-Za-z0-9_-]{4,96}$/);
 const sessionId = z.string().regex(/^session_[A-Za-z0-9_-]{16,96}$/);
+const decisionId = z.string().regex(/^decision_[A-Za-z0-9_-]{16,96}$/);
+const decisionOwnerRef = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/);
 const path = normalizedRepositoryRelativePathV4Schema.max(512);
 const unique = <T extends z.ZodTypeAny>(item: T, max: number, min = 0) => z.array(item).min(min).max(max).refine((values) => new Set(values.map((value) => JSON.stringify(value))).size === values.length, 'items must be unique');
 const operation = z.enum(['CREATE', 'MODIFY', 'DELETE']);
@@ -62,6 +64,7 @@ const iterationBodySchema = z.object({
   review_attestation_hash: hash.nullable(),
   finding_hashes: unique(hash, 128),
   repair_packet_hash: hash.nullable(),
+  frontier_decision_hash: hash.nullable().optional(),
   failure_signature_hash: hash.nullable(),
   escalation_reason: z.enum(['ATTEMPT_LIMIT', 'NO_PROGRESS']).nullable(),
 }).strict();
@@ -69,14 +72,31 @@ const iterationSchema = iterationBodySchema.extend({ event_hash: hash }).strict(
 const executionCandidateSchema = z.object({ candidate_tree_hash: hash, changes: unique(candidateChangeSchema, 256, 1), changed_lines: z.number().int().min(1).max(100_000), result_hash: hash }).strict();
 const validationResultSchema = z.object({ passed: z.boolean(), manifest_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
 const reviewResultSchema = z.object({ accepted: z.boolean(), attestation_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
+const frontierDecisionInputSchema = z.object({
+  decision_id: decisionId,
+  decision_owner_ref: decisionOwnerRef,
+  authority_evidence_hash: hash,
+  rejected_event_hash: hash,
+  action: z.enum(['RETRY', 'ESCALATE']),
+}).strict();
+const frontierDecisionBodySchema = frontierDecisionInputSchema.extend({
+  schema_version: z.literal(4),
+  type: z.literal('FRONTIER_DECISION_RECORDED'),
+  run_id: z.string().regex(/^run_[A-Za-z0-9_-]{16,96}$/),
+  plan_hash: hash,
+  decision_index: z.number().int().min(1).max(64),
+  previous_decision_hash: hash.nullable(),
+}).strict();
+const frontierDecisionSchema = frontierDecisionBodySchema.extend({ decision_hash: hash }).strict();
 const reviewControlSchema = z.object({
   mode: z.enum(['AUTONOMOUS_BROKER', 'FRONTIER_LED']),
-  frontier_decision: z.object({ rejected_event_hash: hash, action: z.enum(['RETRY', 'ESCALATE']) }).strict().optional(),
+  frontier_decision: frontierDecisionInputSchema.optional(),
 }).strict();
 
 export type IterativeStoryV4 = z.infer<typeof storySchema>;
 export type IterativeStoryPlanV4 = z.infer<typeof planSchema>;
 export type StoryIterationEventV4 = z.infer<typeof iterationSchema>;
+export type FrontierDecisionEventV4 = z.infer<typeof frontierDecisionSchema>;
 
 export interface AcceptedStoryReceiptV4 {
   readonly story_id: string;
@@ -92,6 +112,7 @@ export interface IterativeExecutionRequestV4 {
   readonly plan: IterativeStoryPlanV4;
   readonly initial_tree_hash: string;
   readonly prior_events: readonly StoryIterationEventV4[];
+  readonly prior_frontier_decisions?: readonly FrontierDecisionEventV4[];
   /**
    * FRONTIER_LED stops after every rejected attempt until the trusted host
    * supplies a decision bound to that exact persisted event.
@@ -99,6 +120,9 @@ export interface IterativeExecutionRequestV4 {
   readonly review_control?: {
     readonly mode: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED';
     readonly frontier_decision?: {
+      readonly decision_id: string;
+      readonly decision_owner_ref: string;
+      readonly authority_evidence_hash: string;
       readonly rejected_event_hash: string;
       readonly action: 'RETRY' | 'ESCALATE';
     };
@@ -124,6 +148,8 @@ export interface IterativeExecutionRequestV4 {
     event: StoryIterationEventV4;
     promotion: { story: IterativeStoryV4; input_tree_hash: string; candidate_tree_hash: string } | null;
   }) => Promise<void>;
+  /** Durably records a frontier authorization before its action can take effect. */
+  readonly persist_frontier_decision?: (input: { event: FrontierDecisionEventV4 }) => Promise<void>;
   readonly create_session_id: (input: { run_id: string; story_id: string; iteration: number; attempt: number }) => string;
 }
 
@@ -132,6 +158,7 @@ export interface IterativeExecutionResultV4 {
   readonly tree_hash: string;
   readonly accepted_receipts: readonly AcceptedStoryReceiptV4[];
   readonly events: readonly StoryIterationEventV4[];
+  readonly frontier_decisions: readonly FrontierDecisionEventV4[];
   readonly escalation_story_id: string | null;
   readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | 'FRONTIER_DECISION' | null;
 }
@@ -143,8 +170,9 @@ export interface IterativeTrajectorySnapshotV4 {
   readonly attempts_by_story: Readonly<Record<string, number>>;
   readonly session_count: number;
   readonly escalation_story_id: string | null;
-  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | null;
+  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | 'FRONTIER_DECISION' | null;
   readonly events: readonly StoryIterationEventV4[];
+  readonly frontier_decisions: readonly FrontierDecisionEventV4[];
 }
 
 function invalid(message: string): never { throw new Error(`INVALID_CONTRACT: ${message}`); }
@@ -240,6 +268,17 @@ export function loadStoryIterationEventV4(value: unknown): StoryIterationEventV4
   return Object.freeze({ ...event, changes: Object.freeze(event.changes.map((change) => Object.freeze({ ...change }))), finding_hashes: Object.freeze([...event.finding_hashes]) }) as unknown as StoryIterationEventV4;
 }
 
+export function createFrontierDecisionEventV4(body: z.input<typeof frontierDecisionBodySchema>): FrontierDecisionEventV4 {
+  const parsed = frontierDecisionBodySchema.parse(structuredClone(body));
+  return Object.freeze({ ...parsed, decision_hash: hashCanonicalV4(parsed) });
+}
+
+export function loadFrontierDecisionEventV4(value: unknown): FrontierDecisionEventV4 {
+  const event = frontierDecisionSchema.parse(structuredClone(value));
+  exactHash(event as unknown as Record<string, unknown>, 'decision_hash', 'frontier decision');
+  return Object.freeze({ ...event });
+}
+
 function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: readonly StoryIterationEventV4[], worker: WorkerCapabilityV4) {
   if (!/^[a-f0-9]{64}$/.test(initialTreeHash)) invalid('initial tree hash is invalid');
   if (supplied.length > plan.max_iterations) invalid('iteration history exceeds the plan budget');
@@ -290,59 +329,153 @@ function replay(plan: IterativeStoryPlanV4, initialTreeHash: string, supplied: r
   return { events, attempts, accepted, sessions, treeHash, escalationStoryId, escalationReason };
 }
 
-export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[] }): IterativeTrajectorySnapshotV4 {
+function replayFrontierDecisions(
+  plan: IterativeStoryPlanV4,
+  events: readonly StoryIterationEventV4[],
+  supplied: readonly FrontierDecisionEventV4[],
+  mode: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED',
+) {
+  if (supplied.length > plan.max_iterations) invalid('frontier decision history exceeds the plan budget');
+  const decisions = supplied.map(loadFrontierDecisionEventV4);
+  if (mode === 'AUTONOMOUS_BROKER' && decisions.length > 0) invalid('frontier decision history requires FRONTIER_LED review control');
+  const eventIndexByHash = new Map(events.map((event, index) => [event.event_hash, index]));
+  const decisionByHash = new Map<string, FrontierDecisionEventV4>();
+  const decisionIds = new Set<string>();
+  const decidedRejections = new Set<string>();
+  let previousDecisionHash: string | null = null;
+  let previousTargetIndex = -1;
+  let pendingRetry: FrontierDecisionEventV4 | null = null;
+  let escalationDecision: FrontierDecisionEventV4 | null = null;
+  for (const [index, decision] of decisions.entries()) {
+    if (decision.run_id !== plan.run_id || decision.plan_hash !== plan.plan_hash
+      || decision.decision_index !== index + 1 || decision.previous_decision_hash !== previousDecisionHash) {
+      invalid('frontier decision history is not a contiguous plan-bound chain');
+    }
+    if (decisionIds.has(decision.decision_id) || decidedRejections.has(decision.rejected_event_hash)) invalid('frontier decision is duplicated');
+    const targetIndex = eventIndexByHash.get(decision.rejected_event_hash);
+    if (targetIndex === undefined) invalid('frontier decision is stale or not bound to a rejected iteration');
+    const target = events[targetIndex];
+    if (target === undefined || target.outcome !== 'RETRY' || targetIndex <= previousTargetIndex) invalid('frontier decision is stale or not bound to a rejected iteration');
+    const following = events[targetIndex + 1];
+    if (decision.action === 'RETRY') {
+      if (following === undefined) {
+        if (index !== decisions.length - 1) invalid('pending frontier decision must be the end of the decision chain');
+        pendingRetry = decision;
+      } else if (following.frontier_decision_hash !== decision.decision_hash) {
+        invalid('retry iteration is not bound to its durable frontier decision');
+      }
+    } else {
+      if (following !== undefined || index !== decisions.length - 1) invalid('frontier escalation decision must terminate the trajectory');
+      escalationDecision = decision;
+    }
+    decisionIds.add(decision.decision_id);
+    decidedRejections.add(decision.rejected_event_hash);
+    decisionByHash.set(decision.decision_hash, decision);
+    previousDecisionHash = decision.decision_hash;
+    previousTargetIndex = targetIndex;
+  }
+  for (const [index, event] of events.entries()) {
+    if (event.attempt === 1) {
+      if (event.frontier_decision_hash !== undefined && event.frontier_decision_hash !== null) invalid('first attempt cannot consume a frontier retry decision');
+      continue;
+    }
+    if (mode === 'AUTONOMOUS_BROKER') {
+      if (event.frontier_decision_hash !== undefined && event.frontier_decision_hash !== null) invalid('autonomous retry cannot consume a frontier decision');
+      continue;
+    }
+    const prior = events[index - 1];
+    const decision = event.frontier_decision_hash === undefined || event.frontier_decision_hash === null
+      ? undefined
+      : decisionByHash.get(event.frontier_decision_hash);
+    if (prior === undefined || prior.story_id !== event.story_id || prior.outcome !== 'RETRY'
+      || decision?.action !== 'RETRY' || decision.rejected_event_hash !== prior.event_hash) {
+      invalid('frontier-led retry lacks its exact durable decision');
+    }
+  }
+  return { decisions, pendingRetry, escalationDecision };
+}
+
+export function inspectIterativeTrajectoryV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[]; review_control_mode?: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED'; frontier_decisions?: readonly FrontierDecisionEventV4[] }): IterativeTrajectorySnapshotV4 {
   const worker = loadWorkerCapabilityV4(input.worker);
   const plan = loadIterativeStoryPlanV4(input.plan, input.contract, worker);
   const state = replay(plan, input.initial_tree_hash, input.events, worker);
+  const frontierState = replayFrontierDecisions(plan, state.events, input.frontier_decisions ?? [], input.review_control_mode ?? 'AUTONOMOUS_BROKER');
   const complete = state.accepted.size === plan.stories.length;
   return Object.freeze({
-    status: complete ? 'COMPLETE' : state.escalationStoryId === null ? 'IN_PROGRESS' : 'ESCALATE',
+    status: complete ? 'COMPLETE' : state.escalationStoryId === null && frontierState.escalationDecision === null ? 'IN_PROGRESS' : 'ESCALATE',
     tree_hash: state.treeHash,
     accepted_story_ids: Object.freeze([...state.accepted.keys()]),
     attempts_by_story: Object.freeze(Object.fromEntries(state.attempts)),
     session_count: state.sessions.size,
-    escalation_story_id: state.escalationStoryId,
-    escalation_reason: state.escalationReason,
+    escalation_story_id: state.escalationStoryId ?? (frontierState.escalationDecision === null ? null : state.events.find((event) => event.event_hash === frontierState.escalationDecision?.rejected_event_hash)?.story_id ?? null),
+    escalation_reason: state.escalationReason ?? (frontierState.escalationDecision === null ? null : 'FRONTIER_DECISION'),
     events: Object.freeze([...state.events]),
+    frontier_decisions: Object.freeze([...frontierState.decisions]),
   });
 }
 
 export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4): Promise<IterativeExecutionResultV4> {
   const worker = loadWorkerCapabilityV4(input.worker);
   const plan = loadIterativeStoryPlanV4(input.plan, input.contract, worker);
-  const state = replay(plan, input.initial_tree_hash, input.prior_events, worker);
-  const events = [...state.events];
-  if (state.escalationStoryId !== null) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: state.escalationStoryId, escalation_reason: state.escalationReason });
   const parsedReviewControl = reviewControlSchema.safeParse(input.review_control ?? { mode: 'AUTONOMOUS_BROKER' });
   if (!parsedReviewControl.success) invalid('review control is invalid');
   const controlMode = parsedReviewControl.data.mode;
   const frontierDecision = parsedReviewControl.data.frontier_decision;
+  const state = replay(plan, input.initial_tree_hash, input.prior_events, worker);
+  const events = [...state.events];
+  const frontierState = replayFrontierDecisions(plan, events, input.prior_frontier_decisions ?? [], controlMode);
+  const frontierDecisions = [...frontierState.decisions];
+  if (state.escalationStoryId !== null) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: state.escalationStoryId, escalation_reason: state.escalationReason });
+  if (frontierState.escalationDecision !== null) {
+    const rejected = events.find((event) => event.event_hash === frontierState.escalationDecision?.rejected_event_hash)!;
+    return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: rejected.story_id, escalation_reason: 'FRONTIER_DECISION' });
+  }
   const pendingRejection = events.at(-1)?.outcome === 'RETRY' ? events.at(-1)! : null;
+  let activeFrontierDecisionHash: string | null = frontierState.pendingRetry?.decision_hash ?? null;
   if (controlMode === 'AUTONOMOUS_BROKER' && frontierDecision !== undefined) invalid('frontier decision requires FRONTIER_LED review control');
   if (controlMode === 'FRONTIER_LED') {
     if (pendingRejection === null && frontierDecision !== undefined) invalid('frontier decision has no pending rejected iteration');
-    if (pendingRejection !== null && frontierDecision === undefined) {
-      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
+    if (frontierState.pendingRetry !== null && frontierDecision !== undefined) invalid('frontier decision is duplicated');
+    if (pendingRejection !== null && frontierDecision === undefined && frontierState.pendingRetry === null) {
+      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: null, escalation_reason: null });
     }
-    if (pendingRejection !== null && frontierDecision?.rejected_event_hash !== pendingRejection.event_hash) invalid('frontier decision is not bound to the pending rejected iteration');
-    if (pendingRejection !== null && frontierDecision?.action === 'ESCALATE') {
-      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: pendingRejection.story_id, escalation_reason: 'FRONTIER_DECISION' });
+    if (pendingRejection !== null && frontierDecision !== undefined && frontierDecision.rejected_event_hash !== pendingRejection.event_hash) invalid('frontier decision is not bound to the pending rejected iteration');
+    if (pendingRejection !== null && frontierDecision !== undefined) {
+      if (frontierDecisions.some((decision) => decision.decision_id === frontierDecision.decision_id
+        || decision.rejected_event_hash === frontierDecision.rejected_event_hash)) invalid('frontier decision is duplicated');
+      if (input.persist_frontier_decision === undefined) violation('frontier decision persistence is unavailable');
+      const decisionEvent = createFrontierDecisionEventV4({
+        schema_version: 4,
+        type: 'FRONTIER_DECISION_RECORDED',
+        run_id: plan.run_id,
+        plan_hash: plan.plan_hash,
+        decision_index: frontierDecisions.length + 1,
+        previous_decision_hash: frontierDecisions.at(-1)?.decision_hash ?? null,
+        ...frontierDecision,
+      });
+      await input.persist_frontier_decision({ event: decisionEvent });
+      frontierDecisions.push(decisionEvent);
+      activeFrontierDecisionHash = decisionEvent.decision_hash;
+      if (frontierDecision.action === 'ESCALATE') {
+        return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: pendingRejection.story_id, escalation_reason: 'FRONTIER_DECISION' });
+      }
     }
   }
   while (events.length < plan.max_iterations) {
     const story = nextStory(plan, state.accepted);
     if (story === undefined) {
       if (state.accepted.size !== plan.stories.length) violation('story graph has no executable pending story');
-      return Object.freeze({ status: 'COMPLETE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
+      return Object.freeze({ status: 'COMPLETE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: null, escalation_reason: null });
     }
     const attempt = (state.attempts.get(story.story_id) ?? 0) + 1;
-    if (attempt > story.max_attempts) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id, escalation_reason: 'ATTEMPT_LIMIT' });
+    if (attempt > story.max_attempts) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: story.story_id, escalation_reason: 'ATTEMPT_LIMIT' });
     const iteration = events.length + 1;
     const session = input.create_session_id({ run_id: plan.run_id, story_id: story.story_id, iteration, attempt });
     if (!sessionId.safeParse(session).success || state.sessions.has(session)) violation('executor session must be fresh and valid');
     const previousFailure = [...events].reverse().find((event) => event.story_id === story.story_id && event.outcome !== 'ACCEPTED');
     let repairPacket: RepairPacketV4 | null = null;
     if (attempt > 1) {
+      if (controlMode === 'FRONTIER_LED' && activeFrontierDecisionHash === null) violation('retry lacks a durable frontier decision');
       if (previousFailure === undefined || previousFailure.attempt !== attempt - 1) violation('retry lacks contiguous failure evidence');
       repairPacket = loadRepairPacketV4(await input.load_repair_packet({ story, failed_attempt: previousFailure.attempt, finding_hashes: previousFailure.finding_hashes }));
       if (repairPacket.story_id !== story.story_id || repairPacket.failed_attempt !== previousFailure.attempt
@@ -380,7 +513,7 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
     const noProgress = repeats >= worker.limits.no_progress_repeat_limit;
     const escalationReason = accepted ? null : noProgress ? 'NO_PROGRESS' as const : attempt >= story.max_attempts ? 'ATTEMPT_LIMIT' as const : null;
     const outcome = accepted ? 'ACCEPTED' : escalationReason === null ? 'RETRY' : 'ESCALATE';
-    const event = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: plan.run_id, plan_hash: plan.plan_hash, story_id: story.story_id, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash, outcome, changes: candidate.changes.map((change) => ({ ...change })), changed_lines: candidate.changed_lines, execution_result_hash: candidate.result_hash, validation_manifest_hash: validation.manifest_hash, review_attestation_hash: review?.attestation_hash ?? null, finding_hashes: findingHashes, repair_packet_hash: repairPacket?.packet_hash ?? null, failure_signature_hash: failureSignatureHash, escalation_reason: escalationReason });
+    const event = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: plan.run_id, plan_hash: plan.plan_hash, story_id: story.story_id, iteration, attempt, session_id: session, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash, outcome, changes: candidate.changes.map((change) => ({ ...change })), changed_lines: candidate.changed_lines, execution_result_hash: candidate.result_hash, validation_manifest_hash: validation.manifest_hash, review_attestation_hash: review?.attestation_hash ?? null, finding_hashes: findingHashes, repair_packet_hash: repairPacket?.packet_hash ?? null, frontier_decision_hash: attempt > 1 ? activeFrontierDecisionHash : null, failure_signature_hash: failureSignatureHash, escalation_reason: escalationReason });
     await input.persist_iteration({ event, promotion: accepted ? { story, input_tree_hash: state.treeHash, candidate_tree_hash: candidate.candidate_tree_hash } : null });
     events.push(event);
     state.attempts.set(story.story_id, attempt);
@@ -389,10 +522,10 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
       state.treeHash = candidate.candidate_tree_hash;
       state.accepted.set(story.story_id, Object.freeze({ story_id: story.story_id, output_tree_hash: state.treeHash, changes: event.changes, validation_manifest_hash: event.validation_manifest_hash, review_attestation_hash: event.review_attestation_hash! }));
     } else if (outcome === 'ESCALATE') {
-      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id, escalation_reason: escalationReason });
+      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: story.story_id, escalation_reason: escalationReason });
     } else if (controlMode === 'FRONTIER_LED') {
-      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
+      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: null, escalation_reason: null });
     }
   }
-  return Object.freeze({ status: state.accepted.size === plan.stories.length ? 'COMPLETE' : 'ITERATION_LIMIT', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
+  return Object.freeze({ status: state.accepted.size === plan.stories.length ? 'COMPLETE' : 'ITERATION_LIMIT', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), frontier_decisions: Object.freeze(frontierDecisions), escalation_story_id: null, escalation_reason: null });
 }
