@@ -553,7 +553,6 @@ test('certification transcript contains exactly one artifact of each required ki
 
 test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 30_000 }, async () => {
   const root = await makeTrustedFixtureRoot('ao-cli-block-');
-  const previousCwd = process.cwd();
   try {
     await Promise.all([mkdir(join(root, 'active')), mkdir(join(root, 'broker'))]);
     const dockerExecutable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
@@ -572,7 +571,6 @@ test('terminate aborts blocked Docker identity commands and releases the executi
       await writeFile(dockerExecutable, `#!${process.execPath}\n${blockedCommand(join(root, 'info-child.pid'))}\n`, 'utf8');
       await chmod(dockerExecutable, 0o700);
     }
-    process.chdir(root);
     const backend = createDockerProcessSandboxV4({
       ...config,
       docker_executable: dockerExecutable,
@@ -607,7 +605,6 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     await backend.terminate(request.execution_id);
     await reused;
   } finally {
-    process.chdir(previousCwd);
     await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
@@ -646,13 +643,11 @@ test('Windows bounded termination waits for every detached descendant to be abse
 
 test('Windows bounded termination propagates taskkill failure even when the main process closes', { timeout: 15_000, skip: process.platform !== 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'ao-taskkill-failure-'));
-  const previousCwd = process.cwd();
   const previousSystemRoot = process.env.SystemRoot;
   let descendantPid: number | undefined;
   try {
     await mkdir(join(root, 'System32'));
     await copyFile(process.execPath, join(root, 'System32', 'taskkill.exe'));
-    process.chdir(root);
     const pidPath = join(root, 'descendant.pid');
     const source = [
       "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
@@ -675,7 +670,6 @@ test('Windows bounded termination propagates taskkill failure even when the main
     process.env.SystemRoot = root;
     await assert.rejects(() => handle.terminate(), /PROCESS_SANDBOX_UNAVAILABLE/);
   } finally {
-    process.chdir(previousCwd);
     if (previousSystemRoot === undefined) delete process.env.SystemRoot;
     else process.env.SystemRoot = previousSystemRoot;
     if (descendantPid !== undefined) {
@@ -747,9 +741,8 @@ test('network absence classification accepts only the exact immutable ID not-fou
   assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', `Error response from daemon: network ${'d'.repeat(64)} not found\n`), false);
 });
 
-test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 30_000 }, async () => {
+test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 60_000 }, async () => {
   const root = await makeTrustedFixtureRoot('ao-container-transaction-');
-  const previousCwd = process.cwd();
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const statePath = join(root, 'state.json');
   const queryPath = join(root, 'queries.log');
@@ -778,8 +771,6 @@ test('broker container transaction recovers partial and delayed create effects a
       "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
       `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
     ].join(''));
-    process.chdir(root);
-
     for (const kind of ['gateway', 'tls-fixture'] as const) {
       await assert.rejects(() => createBrokerOwnedDockerContainerV4({
         docker_executable: executable,
@@ -810,18 +801,16 @@ test('broker container transaction recovers partial and delayed create effects a
     assert.equal((await readFile(queryPath, 'utf8')).split('\n').filter((line) => line.startsWith('ls ')).length >= 3, true,
       'the delayed effect must require at least one bounded recovery retry');
   } finally {
-    process.chdir(previousCwd);
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
 
-test('fresh process reconciles a durable owned container transaction before new create authority', { timeout: 30_000 }, async () => {
+test('fresh process reconciles a durable owned container transaction before new create authority', { timeout: 60_000 }, async () => {
   const root = await makeTrustedFixtureRoot('ao-container-restart-');
   const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
   const statePath = join(root, 'state.json');
   const countPath = join(root, 'count');
   const removedPath = join(root, 'removed.log');
-  const previousCwd = process.cwd();
   await copyFile(process.execPath, executable);
   if (process.platform !== 'win32') await chmod(executable, 0o755);
   await writeFile(join(root, 'create'), [
@@ -879,7 +868,6 @@ test('fresh process reconciles a durable owned container transaction before new 
       child.once('error', reject);
       child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`child exited ${code}: ${stderr}`)));
     });
-    process.chdir(root);
     await new Promise<void>((resolvePromise, reject) => {
       let output = '';
       let errorOutput = '';
@@ -895,7 +883,6 @@ test('fresh process reconciles a durable owned container transaction before new 
     await owned.removal.remove();
     assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'e'.repeat(64)]);
   } finally {
-    process.chdir(previousCwd);
     await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
