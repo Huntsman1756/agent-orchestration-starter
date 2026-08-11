@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-No changes yet.
+### Changed
+
+- Docker CLI subprocesses use an explicit launcher directory instead of the
+  caller's process-wide working directory. Recovery tests no longer mutate
+  shared `process.cwd()`, and their outer watchdog leaves margin above the
+  unchanged internal recovery deadlines.
+
+### Removed
+
+- Completed tool-specific `docs/superpowers/` implementation plans from the
+  active documentation and npm package. Git history remains the archive.
+- The frozen, unexecuted ArliAI pilot fixture. It produced no run evidence and
+  its retired-provider assumptions must not be mistaken for a current example.
 
 ## 0.2.0 - 2026-08-11
 

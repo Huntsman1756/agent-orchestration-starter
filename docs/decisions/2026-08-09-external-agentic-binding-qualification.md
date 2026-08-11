@@ -42,6 +42,13 @@ The frozen pilot manifest, seed, assignment, and order are not changed by
 this decision. No Stage 1 block is admitted until a qualified executor
 binding exists.
 
+That Stage 1 pilot was never executed and produced no run records. Its
+provider-specific frozen fixture was removed from the active tree during the
+post-0.2 repository cleanup so consumers do not mistake it for a supported
+example or current qualification evidence. The original manifest, gate and
+work contracts remain recoverable from Git commit `3cc4a1f`; any future pilot
+must create a new manifest and qualification identity rather than revive it.
+
 ## Required qualification record
 
 An executor that declares `agentic_tool_execution` must carry profile-local
