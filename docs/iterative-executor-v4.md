@@ -42,6 +42,24 @@ The worker snapshot separately caps files, lines, context, acceptance-criteria c
 
 The coding model cannot set `ACCEPTED`, choose the next story, edit its capability snapshot, increase budgets, create repair evidence, publish Git changes, or merge a pull request.
 
+## Frontier-led review control
+
+The host may set `review_control.mode` to `FRONTIER_LED` when a frontier model
+must coordinate and review while an economical model performs the bounded code
+work. In this mode a rejected attempt is persisted and the executor returns
+`AWAITING_FRONTIER_DECISION`. It does not create another worker session until
+the host resumes it with `RETRY` bound to the exact rejected `event_hash`.
+`ESCALATE` stops without another worker call. Missing, stale and cross-mode
+decisions fail closed.
+
+This gate is deliberately separate from the worker receipt. The worker reports
+candidate bytes; deterministic validation and independent review create the
+evidence; the frontier decides whether another delegated attempt is justified.
+The existing `AUTONOMOUS_BROKER` mode remains available for separately
+qualified deployments whose trusted broker owns retry policy. Consumers must
+name the mode they actually operate and must not describe broker-driven retry
+as frontier orchestration.
+
 ## Repair packets and clean retries
 
 `RepairPacketV4` is created by the trusted validation/review boundary from the persisted finding hashes. It contains bounded category codes, paths/lines when applicable and short actionable instructions. Its hash, story ID, failed attempt and complete evidence set are checked before retry. A packet that introduces unrelated evidence fails closed.

@@ -129,6 +129,14 @@ outside the model:
 9. bounded repair followed by frontier escalation or stop;
 10. a factual receipt that is evidence for review, never self-acceptance.
 
+When the frontier model is the advertised orchestrator/reviewer, use the
+frontier-led control described in
+[`iterative-executor-v4.md`](iterative-executor-v4.md#frontier-led-review-control):
+persist each rejected attempt, stop, and require an event-bound frontier
+decision before retrying. An automatic broker retry may be valid under a
+separately qualified policy, but it is a different operating topology and must
+be named `AUTONOMOUS_BROKER`, not presented as frontier-led orchestration.
+
 A before/after file snapshot is useful detection, but it is not prevention and
 does not prove hard isolation. Preserve violations for review; do not run a
 broad cleanup that could destroy unrelated work.
@@ -174,6 +182,7 @@ the publication authority.
 - [ ] Credentials remain outside repository-controlled descendants.
 - [ ] Code workers use clean isolated worktrees and exact path contracts.
 - [ ] Validation and review are independent from worker claims.
+- [ ] Retry ownership is explicit; frontier-led runs prove that no second worker call occurs without an event-bound frontier decision.
 - [ ] Report-only extensions cannot publish or mutate application data.
 - [ ] Publication is disabled until its separate evidence gate passes.
 - [ ] Platform and host qualification are current for the exact deployment.

@@ -166,6 +166,64 @@ test('retries a rejected candidate from the last accepted tree without promoting
   assert.deepEqual(result.events.slice(0, 2).map((event) => event.outcome), ['RETRY', 'ACCEPTED']);
 });
 
+test('frontier-led review control never launches a repair attempt without an event-bound frontier decision', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  assert.equal(waiting.status, 'AWAITING_FRONTIER_DECISION');
+  assert.equal(first.calls.length, 1);
+  assert.equal(waiting.events[0]?.outcome, 'RETRY');
+
+  const undecided = fixture({ prior: [...waiting.events] });
+  (undecided.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const stillWaiting = await runIterativeExecutorV4(undecided.input);
+  assert.equal(stillWaiting.status, 'AWAITING_FRONTIER_DECISION');
+  assert.equal(undecided.calls.length, 0);
+
+  const resumed = fixture({ prior: [...waiting.events] });
+  (resumed.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: { rejected_event_hash: waiting.events[0]!.event_hash, action: 'RETRY' },
+  };
+  const completed = await runIterativeExecutorV4(resumed.input);
+  assert.equal(completed.status, 'COMPLETE');
+  assert.deepEqual(resumed.calls.slice(0, 1).map((call) => [call.story, call.attempt]), [['story_alpha', 2]]);
+  assert.match(resumed.calls[0]!.repair!, /^[a-f0-9]{64}$/u);
+});
+
+test('frontier-led review control rejects stale decisions and can escalate without another worker call', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  const stale = fixture({ prior: [...waiting.events] });
+  (stale.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: { rejected_event_hash: evidence('9'), action: 'RETRY' },
+  };
+  await assert.rejects(runIterativeExecutorV4(stale.input), /not bound to the pending rejected iteration/u);
+  assert.equal(stale.calls.length, 0);
+
+  const malformed = fixture({ prior: [...waiting.events] });
+  (malformed.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: { rejected_event_hash: waiting.events[0]!.event_hash, action: 'KEEP_TRYING' },
+  };
+  await assert.rejects(runIterativeExecutorV4(malformed.input), /review control is invalid/u);
+  assert.equal(malformed.calls.length, 0);
+
+  const escalated = fixture({ prior: [...waiting.events] });
+  (escalated.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: { rejected_event_hash: waiting.events[0]!.event_hash, action: 'ESCALATE' },
+  };
+  const result = await runIterativeExecutorV4(escalated.input);
+  assert.equal(result.status, 'ESCALATE');
+  assert.equal(result.escalation_reason, 'FRONTIER_DECISION');
+  assert.equal(escalated.calls.length, 0);
+});
+
 test('rejects a repair packet that is not derived from persisted failure evidence', async () => {
   const value = fixture({ rejectFirst: true });
   value.input.load_repair_packet = async (input: any) => {

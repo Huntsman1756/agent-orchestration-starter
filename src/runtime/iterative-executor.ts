@@ -69,6 +69,10 @@ const iterationSchema = iterationBodySchema.extend({ event_hash: hash }).strict(
 const executionCandidateSchema = z.object({ candidate_tree_hash: hash, changes: unique(candidateChangeSchema, 256, 1), changed_lines: z.number().int().min(1).max(100_000), result_hash: hash }).strict();
 const validationResultSchema = z.object({ passed: z.boolean(), manifest_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
 const reviewResultSchema = z.object({ accepted: z.boolean(), attestation_hash: hash, finding_hashes: unique(hash, 128), failure_signature_hash: hash.nullable() }).strict();
+const reviewControlSchema = z.object({
+  mode: z.enum(['AUTONOMOUS_BROKER', 'FRONTIER_LED']),
+  frontier_decision: z.object({ rejected_event_hash: hash, action: z.enum(['RETRY', 'ESCALATE']) }).strict().optional(),
+}).strict();
 
 export type IterativeStoryV4 = z.infer<typeof storySchema>;
 export type IterativeStoryPlanV4 = z.infer<typeof planSchema>;
@@ -88,6 +92,17 @@ export interface IterativeExecutionRequestV4 {
   readonly plan: IterativeStoryPlanV4;
   readonly initial_tree_hash: string;
   readonly prior_events: readonly StoryIterationEventV4[];
+  /**
+   * FRONTIER_LED stops after every rejected attempt until the trusted host
+   * supplies a decision bound to that exact persisted event.
+   */
+  readonly review_control?: {
+    readonly mode: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED';
+    readonly frontier_decision?: {
+      readonly rejected_event_hash: string;
+      readonly action: 'RETRY' | 'ESCALATE';
+    };
+  };
   readonly execute: (input: {
     story: IterativeStoryV4;
     iteration: number;
@@ -113,12 +128,12 @@ export interface IterativeExecutionRequestV4 {
 }
 
 export interface IterativeExecutionResultV4 {
-  readonly status: 'COMPLETE' | 'ESCALATE' | 'ITERATION_LIMIT';
+  readonly status: 'COMPLETE' | 'ESCALATE' | 'ITERATION_LIMIT' | 'AWAITING_FRONTIER_DECISION';
   readonly tree_hash: string;
   readonly accepted_receipts: readonly AcceptedStoryReceiptV4[];
   readonly events: readonly StoryIterationEventV4[];
   readonly escalation_story_id: string | null;
-  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | null;
+  readonly escalation_reason: 'ATTEMPT_LIMIT' | 'NO_PROGRESS' | 'FRONTIER_DECISION' | null;
 }
 
 export interface IterativeTrajectorySnapshotV4 {
@@ -298,6 +313,22 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
   const state = replay(plan, input.initial_tree_hash, input.prior_events, worker);
   const events = [...state.events];
   if (state.escalationStoryId !== null) return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: state.escalationStoryId, escalation_reason: state.escalationReason });
+  const parsedReviewControl = reviewControlSchema.safeParse(input.review_control ?? { mode: 'AUTONOMOUS_BROKER' });
+  if (!parsedReviewControl.success) invalid('review control is invalid');
+  const controlMode = parsedReviewControl.data.mode;
+  const frontierDecision = parsedReviewControl.data.frontier_decision;
+  const pendingRejection = events.at(-1)?.outcome === 'RETRY' ? events.at(-1)! : null;
+  if (controlMode === 'AUTONOMOUS_BROKER' && frontierDecision !== undefined) invalid('frontier decision requires FRONTIER_LED review control');
+  if (controlMode === 'FRONTIER_LED') {
+    if (pendingRejection === null && frontierDecision !== undefined) invalid('frontier decision has no pending rejected iteration');
+    if (pendingRejection !== null && frontierDecision === undefined) {
+      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
+    }
+    if (pendingRejection !== null && frontierDecision?.rejected_event_hash !== pendingRejection.event_hash) invalid('frontier decision is not bound to the pending rejected iteration');
+    if (pendingRejection !== null && frontierDecision?.action === 'ESCALATE') {
+      return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: pendingRejection.story_id, escalation_reason: 'FRONTIER_DECISION' });
+    }
+  }
   while (events.length < plan.max_iterations) {
     const story = nextStory(plan, state.accepted);
     if (story === undefined) {
@@ -359,6 +390,8 @@ export async function runIterativeExecutorV4(input: IterativeExecutionRequestV4)
       state.accepted.set(story.story_id, Object.freeze({ story_id: story.story_id, output_tree_hash: state.treeHash, changes: event.changes, validation_manifest_hash: event.validation_manifest_hash, review_attestation_hash: event.review_attestation_hash! }));
     } else if (outcome === 'ESCALATE') {
       return Object.freeze({ status: 'ESCALATE', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: story.story_id, escalation_reason: escalationReason });
+    } else if (controlMode === 'FRONTIER_LED') {
+      return Object.freeze({ status: 'AWAITING_FRONTIER_DECISION', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });
     }
   }
   return Object.freeze({ status: state.accepted.size === plan.stories.length ? 'COMPLETE' : 'ITERATION_LIMIT', tree_hash: state.treeHash, accepted_receipts: Object.freeze([...state.accepted.values()]), events: Object.freeze(events), escalation_story_id: null, escalation_reason: null });

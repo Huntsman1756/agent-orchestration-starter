@@ -81,6 +81,12 @@ last accepted tree. It is not a free-running shell loop. The model cannot mark
 its own story complete, read prior hidden reasoning, grant itself tools or
 publish changes.
 
+When the frontier is the decision owner, select frontier-led review control.
+Each rejected attempt then returns `AWAITING_FRONTIER_DECISION`; retry requires
+a frontier decision bound to that persisted event, so the economical worker
+cannot silently consume another attempt. `AUTONOMOUS_BROKER` remains a distinct
+mode for hosts with separately qualified automatic retry policy.
+
 The outer [autonomous dispatcher](docs/autonomous-dispatcher-v4.md) starts in
 `PAUSED`, requires a durable transition to `RUNNING`, recovers leases and
 rechecks the exact merge SHA after publication. Circuit recovery also requires
