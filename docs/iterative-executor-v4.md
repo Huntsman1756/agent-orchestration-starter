@@ -42,6 +42,22 @@ The worker snapshot separately caps files, lines, context, acceptance-criteria c
 
 The coding model cannot set `ACCEPTED`, choose the next story, edit its capability snapshot, increase budgets, create repair evidence, publish Git changes, or merge a pull request.
 
+## Single-writer execution
+
+Contract-write authority is serial within a run. The broker selects one
+dependency-ready story, awaits one executor attempt and promotes at most one
+candidate tree before another writer can start. Planner and reviewer contexts
+remain read-only, and no parallel child executor may write to the same run
+worktree. This keeps implicit code and design decisions in one ordered history
+that replay can reconstruct.
+
+A host may parallelize bounded, independent discovery only as read-only work.
+Each discovery task needs an explicit objective, scope and output contract, and
+returns condensed evidence to the frontier planner; it cannot edit files,
+approve output, share credentials or mutate the active story. Such fan-out is
+an optional measured route for breadth-heavy research, not the default for
+coding, and it does not increase runtime authority.
+
 ## Frontier-led review control
 
 The host may set `review_control.mode` to `FRONTIER_LED` when a frontier model

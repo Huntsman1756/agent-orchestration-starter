@@ -23,6 +23,43 @@ Use these as starting points, then qualify and benchmark the exact model/harness
 
 Sources: [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model), [Anthropic prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), [Google Gemini prompt design](https://ai.google.dev/gemini-api/docs/prompting-strategies), and [OpenCode agent options](https://opencode.ai/docs/agents).
 
+## Context engineering invariants
+
+Context is a finite execution input, not an unbounded transcript. Runtime hosts
+must preserve these provider-neutral invariants:
+
+- Keep the static prompt prefix deterministic. Stable broker instructions,
+  versioned model guidance and fixed tool definitions precede task-specific
+  material. Do not put timestamps, request IDs, retry counters or other
+  volatile values in that prefix. A serialization change is a harness/parser
+  revision change and requires fresh qualification.
+- Freeze the tool surface for the complete attempt. The broker exposes only
+  capability-approved actions from the `tool_bundle_hash`; changing that set
+  creates a new capability identity instead of silently adding or removing
+  tools from an active context.
+- Prefer progressive disclosure. Give the worker bounded paths, hashes,
+  receipts and approved instructions, then let it retrieve relevant repository
+  bytes as needed. The measured context budget includes system instructions,
+  tool definitions, retrieved content and tool results, not only the task text.
+- Make context reduction restorable. Runtime V4 normally starts a fresh
+  context for each attempt and carries forward accepted receipts plus a
+  verified repair packet. Full logs and authority evidence remain in
+  broker-owned storage; a summary or model-authored note never replaces or
+  rewrites them.
+- Record provider-reported input, output, cached-input and reasoning usage when
+  available, preserving `null` when a dimension is unsupported. Prefix caching
+  is a best-effort cost/latency optimization. It cannot change validation,
+  acceptance, routing or authority, and one provider's cache behavior is not
+  qualification evidence for another.
+- Do not turn progress notes into cross-run mutable memory. Durable plans,
+  journals, accepted receipts and evidence hashes are the authoritative
+  continuity mechanism. Any future learned instruction still follows the
+  separately governed post-dogfood compounding process.
+
+These rules favor the smallest high-signal context that remains auditable. A
+larger context window does not justify forwarding planner rationale, raw prior
+traces or every available skill to the worker.
+
 ## Safe model replacement
 
 1. Copy the profile; do not edit repository policy.
