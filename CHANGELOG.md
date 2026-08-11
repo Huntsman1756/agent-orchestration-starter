@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Documented provider-neutral context-engineering invariants: deterministic
+  prompt prefixes, immutable per-attempt tool surfaces, progressive disclosure,
+  restorable failure evidence, explicit cache telemetry and serial
+  contract-write authority with optional read-only discovery fan-out.
 - Docker CLI subprocesses use an explicit launcher directory instead of the
   caller's process-wide working directory. Recovery tests no longer mutate
   shared `process.cwd()`, and their outer watchdog leaves margin above the
