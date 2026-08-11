@@ -86,6 +86,18 @@ The outer [autonomous dispatcher](docs/autonomous-dispatcher-v4.md) starts in
 rechecks the exact merge SHA after publication. Circuit recovery also requires
 an explicit paused/reactivation sequence.
 
+## Adopting in another repository
+
+Use the [consumer adoption guide](docs/consumer-adoption-v4.md) to choose and
+name the actual trust level: pattern-only, bounded local delegation,
+analysis-only activation, certified isolated execution or autonomous
+publication. The guide provides a clone-to-analysis walkthrough and a handoff
+checklist based on real consumer integration patterns.
+
+Pin a release tag and full commit for every pilot. A project-local wrapper,
+model permission rule or post-run path check can be useful, but none of them is
+Runtime V4 hard-isolation evidence by itself.
+
 ## Routing and evidence
 
 The supported strategies are:
@@ -201,6 +213,7 @@ notes.
 
 ## Documentation map
 
+- [Consumer adoption and handoff](docs/consumer-adoption-v4.md)
 - [Runtime operations](docs/runtime-v4-operations.md)
 - [Control plane](docs/control-plane-v4.md)
 - [Frontend/backend practice packs](docs/delegation-practice-packs-v4.md)
