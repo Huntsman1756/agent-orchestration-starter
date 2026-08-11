@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.2.0 - 2026-08-10
+## Unreleased
+
+No changes yet.
+
+## 0.2.0 - 2026-08-11
 
 This is the first formal 0.x release after the Runtime V4 host-boundary
 consolidation. It remains pre-1.0 and does not imply a universal production
@@ -20,8 +24,11 @@ host qualification.
 - Portable test discovery and Windows path canonicalization that preserves
   rejection of symbolic links/reparse points while accepting equivalent 8.3
   path spellings on the supported platform matrix.
+- Consumer adoption and handoff guidance that distinguishes pattern-only,
+  bounded-local, analysis-only, isolated-execution and autonomous-publication
+  evidence levels, with a clone-to-analysis walkthrough.
 
-### Migration
+### Package migration
 
 - Consumers importing low-level Runtime V4 modules from the default
   `runtime-v4` entry point must move those imports to `runtime-v4/contracts`,
@@ -29,14 +36,12 @@ host qualification.
 - The package version is now `0.2.0`; host/profile changes still require exact
   fresh qualification and do not become production-certified by this release.
 
-## Unreleased
-
-### Changed
+### Runtime and deployment changes
 
 - Platform CI and manual host certification now exercise Ubuntu and Windows on
   Node 20, 22 and 24, matching the supported `>=20` engine range more closely.
 
-### Added
+### Runtime and evidence additions
 
 - A bounded, seeded dispatcher state-machine model test covering pause, run,
   admission, crash/recovery, drain and abort invariants with replayable
@@ -94,7 +99,7 @@ host qualification.
 
 - Hostile Docker certification tests no longer resolve a Docker executable during module import when no certification image is configured. Clean hosts without Docker now skip the opt-in integration suite instead of failing test discovery; configured certification still fails closed when Docker is unavailable.
 
-### Migration
+### Runtime migration
 
 - Existing iterative story plans and persisted iteration events predate the required worker, budget, repair and failure-signature bindings and must start a new run. Host adapters must now provide the active worker snapshot, measured changed lines, normalized failure signatures and hash-verified repair-packet loading.
 - Existing dispatcher state keeps its persisted mode. Before upgrading a host whose state is `RUNNING`, explicitly switch it to `PAUSED` if the deployment must remain inactive after restart; only newly created state adopts the new paused default.
