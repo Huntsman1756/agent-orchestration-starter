@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 export interface BoundedProcessResultV4 {
   readonly exit_code: number | null;
@@ -21,6 +21,7 @@ interface BoundedProcessRequestV4 {
   readonly executable: string;
   readonly argv: readonly string[];
   readonly environment: NodeJS.ProcessEnv;
+  readonly working_directory?: string;
   readonly deadline_ms: number;
   readonly max_output_bytes: number;
   readonly signal?: AbortSignal;
@@ -36,7 +37,9 @@ function boundedAppend(chunks: Buffer[], size: number, chunk: Buffer | string, l
 
 export function startBoundedProcessV4(request: BoundedProcessRequestV4): BoundedProcessHandleV4 {
   if (!Number.isSafeInteger(request.deadline_ms) || request.deadline_ms < 1
-    || !Number.isSafeInteger(request.max_output_bytes) || request.max_output_bytes < 1) {
+    || !Number.isSafeInteger(request.max_output_bytes) || request.max_output_bytes < 1
+    || (request.working_directory !== undefined
+      && (!isAbsolute(request.working_directory) || resolve(request.working_directory) !== request.working_directory))) {
     throw new Error('PROCESS_SANDBOX_UNAVAILABLE: bounded process policy is invalid');
   }
   const child = spawn(request.executable, [...request.argv], {
@@ -45,6 +48,7 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
     detached: process.platform !== 'win32',
     stdio: ['pipe', 'pipe', 'pipe'],
     env: request.environment,
+    cwd: request.working_directory,
   });
   let stdoutSize = 0;
   let stderrSize = 0;

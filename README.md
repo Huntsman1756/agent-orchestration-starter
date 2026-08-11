@@ -120,7 +120,7 @@ first-pass and final acceptance; no cheaper candidate may reduce final
 acceptance under the conservative initial policy. Escalations, repairs and
 rescues remain part of real cost. See [routing gate](routing-gate.yaml), the
 [benchmark examples](examples/benchmark-observations.jsonl), and the V3
-[pilot design](docs/superpowers/plans/2026-08-08-telemetry-routing-schema-v3.md).
+[provider-neutral routing design](docs/plans/2026-08-08-evidence-based-routing-design.md).
 
 ```powershell
 node dist/cli/main.js benchmark `
