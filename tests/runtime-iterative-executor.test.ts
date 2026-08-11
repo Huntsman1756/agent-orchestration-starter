@@ -6,11 +6,18 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 
 import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
-import { loadIterativeStoryPlanV4, runIterativeExecutorV4, type IterativeStoryPlanV4, type StoryIterationEventV4 } from '../src/runtime/iterative-executor.js';
+import { createFrontierDecisionEventV4, inspectIterativeTrajectoryV4, loadIterativeStoryPlanV4, runIterativeExecutorV4, type IterativeStoryPlanV4, type StoryIterationEventV4 } from '../src/runtime/iterative-executor.js';
 import { createWorkerCapabilityV4 } from '../src/runtime/worker-capability.js';
 import { validWorkContract } from './runtime-contracts.test.js';
 
 const evidence = (character: string) => character.repeat(64);
+const frontierDecision = (rejectedEventHash: string, action: 'RETRY' | 'ESCALATE', decisionId = 'decision_0000000000000001') => ({
+  decision_id: decisionId,
+  decision_owner_ref: 'frontier-reviewer',
+  authority_evidence_hash: evidence('a'),
+  rejected_event_hash: rejectedEventHash,
+  action,
+});
 
 function worker(maxStoryFiles = 3) {
   return createWorkerCapabilityV4({
@@ -100,12 +107,13 @@ test('rejects worker drift, unsupported capabilities, and oversized step budgets
   );
 });
 
-function fixture(options: { rejectFirst?: boolean; alwaysReject?: boolean; repeatFailureSignature?: boolean; prior?: StoryIterationEventV4[]; storyAttempts?: number } = {}) {
+function fixture(options: { rejectFirst?: boolean; alwaysReject?: boolean; repeatFailureSignature?: boolean; prior?: StoryIterationEventV4[]; priorDecisions?: any[]; storyAttempts?: number } = {}) {
   const work = contract();
   const workerCapability = worker();
   const storyPlan = plan(work, workerCapability, options.storyAttempts ?? 2);
   const calls: Array<{ story: string; attempt: number; input: string; receipts: readonly string[]; session: string; repair: string | null }> = [];
   const events: StoryIterationEventV4[] = [...(options.prior ?? [])];
+  const frontierDecisions: any[] = [...(options.priorDecisions ?? [])];
   const promotions: string[] = [];
   let executions = 0;
   return { work, storyPlan, calls, events, promotions, input: {
@@ -114,6 +122,7 @@ function fixture(options: { rejectFirst?: boolean; alwaysReject?: boolean; repea
     plan: storyPlan,
     initial_tree_hash: evidence('1'),
     prior_events: options.prior ?? [],
+    prior_frontier_decisions: options.priorDecisions ?? [],
     create_session_id: ({ iteration }: { iteration: number }) => `session_${String(iteration).padStart(16, '0')}`,
     execute: async (value: any) => {
       executions += 1;
@@ -133,15 +142,18 @@ function fixture(options: { rejectFirst?: boolean; alwaysReject?: boolean; repea
     validate: async () => ({ passed: true, manifest_hash: evidence('5'), finding_hashes: [], failure_signature_hash: null }),
     review: async ({ story }: any) => {
       const rejected = options.alwaysReject || (options.rejectFirst && story.story_id === 'story_alpha' && calls.filter((call) => call.story === 'story_alpha').length === 1);
-      const attemptCount = calls.filter((call) => call.story === story.story_id).length;
-      const signatureCharacter = options.repeatFailureSignature ? '8' : String.fromCharCode(55 + attemptCount);
+      const attempted = calls.filter((call) => call.story === story.story_id).at(-1)?.attempt ?? 1;
+      const signatureCharacter = options.repeatFailureSignature ? '8' : String.fromCharCode(55 + attempted);
       return { accepted: !rejected, attestation_hash: evidence('6'), finding_hashes: rejected ? [evidence('7')] : [], failure_signature_hash: rejected ? evidence(signatureCharacter) : null };
     },
     persist_iteration: async ({ event, promotion }: any) => {
       events.push(event);
       if (promotion !== null) promotions.push(promotion.story.story_id);
     },
-  }, workerCapability };
+    persist_frontier_decision: async ({ event }: any) => {
+      frontierDecisions.push(event);
+    },
+  }, workerCapability, frontierDecisions };
 }
 
 test('executes one dependency-ordered story per fresh context and carries only accepted receipts', async () => {
@@ -164,6 +176,203 @@ test('retries a rejected candidate from the last accepted tree without promoting
   assert.equal((result.events[1] as any).repair_packet_hash, value.calls[1]!.repair);
   assert.deepEqual(value.promotions, ['story_alpha', 'story_beta']);
   assert.deepEqual(result.events.slice(0, 2).map((event) => event.outcome), ['RETRY', 'ACCEPTED']);
+});
+
+test('frontier-led review control never launches a repair attempt without an event-bound frontier decision', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  assert.equal(waiting.status, 'AWAITING_FRONTIER_DECISION');
+  assert.equal(first.calls.length, 1);
+  assert.equal(waiting.events[0]?.outcome, 'RETRY');
+
+  const undecided = fixture({ prior: [...waiting.events] });
+  (undecided.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const stillWaiting = await runIterativeExecutorV4(undecided.input);
+  assert.equal(stillWaiting.status, 'AWAITING_FRONTIER_DECISION');
+  assert.equal(undecided.calls.length, 0);
+
+  const resumed = fixture({ prior: [...waiting.events] });
+  (resumed.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: frontierDecision(waiting.events[0]!.event_hash, 'RETRY'),
+  };
+  const completed = await runIterativeExecutorV4(resumed.input);
+  assert.equal(completed.status, 'COMPLETE');
+  assert.deepEqual(resumed.calls.slice(0, 1).map((call) => [call.story, call.attempt]), [['story_alpha', 2]]);
+  assert.match(resumed.calls[0]!.repair!, /^[a-f0-9]{64}$/u);
+});
+
+test('persists a canonical frontier retry decision before the worker and binds it into replay', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  const resumed = fixture({ prior: [...waiting.events] });
+  (resumed.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: {
+      decision_id: 'decision_0000000000000001',
+      decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'),
+      rejected_event_hash: waiting.events[0]!.event_hash,
+      action: 'RETRY',
+    },
+  };
+  const completed = await runIterativeExecutorV4(resumed.input);
+
+  assert.equal(completed.status, 'COMPLETE');
+  assert.equal(resumed.frontierDecisions.length, 1);
+  assert.match(resumed.frontierDecisions[0].decision_hash, /^[a-f0-9]{64}$/u);
+  assert.equal((completed.events[1] as any).frontier_decision_hash, resumed.frontierDecisions[0].decision_hash);
+});
+
+test('resumes from a durable frontier retry decision after its persistence response is lost', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  const interrupted = fixture({ prior: [...waiting.events] });
+  (interrupted.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: {
+      decision_id: 'decision_0000000000000001',
+      decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'),
+      rejected_event_hash: waiting.events[0]!.event_hash,
+      action: 'RETRY',
+    },
+  };
+  interrupted.input.persist_frontier_decision = async ({ event }: any) => {
+    interrupted.frontierDecisions.push(event);
+    throw new Error('simulated lost frontier decision persistence response');
+  };
+  await assert.rejects(runIterativeExecutorV4(interrupted.input), /lost frontier decision persistence response/u);
+  assert.equal(interrupted.calls.length, 0);
+
+  const resumed = fixture({ prior: [...waiting.events], priorDecisions: [...interrupted.frontierDecisions] });
+  (resumed.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const completed = await runIterativeExecutorV4(resumed.input);
+  assert.equal(completed.status, 'COMPLETE');
+  assert.deepEqual(resumed.calls.map((call) => [call.story, call.attempt]), [['story_alpha', 2], ['story_beta', 1]]);
+  assert.equal((completed.events[1] as any).frontier_decision_hash, interrupted.frontierDecisions[0].decision_hash);
+});
+
+test('rejects reuse of a durable frontier decision identity before another worker attempt', async () => {
+  const first = fixture({ alwaysReject: true, storyAttempts: 3 });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const firstWaiting = await runIterativeExecutorV4(first.input);
+
+  const second = fixture({ alwaysReject: true, storyAttempts: 3, prior: [...firstWaiting.events] });
+  (second.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: {
+      decision_id: 'decision_0000000000000001', decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'), rejected_event_hash: firstWaiting.events[0]!.event_hash, action: 'RETRY',
+    },
+  };
+  const secondWaiting = await runIterativeExecutorV4(second.input);
+  assert.equal(secondWaiting.status, 'AWAITING_FRONTIER_DECISION');
+
+  const duplicate = fixture({ alwaysReject: true, storyAttempts: 3, prior: [...secondWaiting.events], priorDecisions: [...second.frontierDecisions] });
+  (duplicate.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: {
+      decision_id: 'decision_0000000000000001', decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('b'), rejected_event_hash: secondWaiting.events[1]!.event_hash, action: 'RETRY',
+    },
+  };
+  await assert.rejects(runIterativeExecutorV4(duplicate.input), /frontier decision is duplicated/u);
+  assert.equal(duplicate.calls.length, 0);
+  assert.equal(duplicate.frontierDecisions.length, 1);
+});
+
+test('replay rejects absent, altered, duplicate, and stale frontier decision evidence', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+  const resumed = fixture({ prior: [...waiting.events] });
+  (resumed.input as any).review_control = { mode: 'FRONTIER_LED', frontier_decision: frontierDecision(waiting.events[0]!.event_hash, 'RETRY') };
+  const completed = await runIterativeExecutorV4(resumed.input);
+  const recorded = resumed.frontierDecisions[0];
+
+  const snapshot = inspectIterativeTrajectoryV4({
+    contract: resumed.work, worker: resumed.workerCapability, plan: resumed.storyPlan, initial_tree_hash: evidence('1'),
+    events: completed.events, review_control_mode: 'FRONTIER_LED', frontier_decisions: resumed.frontierDecisions,
+  });
+  assert.equal(snapshot.status, 'COMPLETE');
+
+  const absent = fixture({ prior: [...completed.events] });
+  (absent.input as any).review_control = { mode: 'FRONTIER_LED' };
+  await assert.rejects(runIterativeExecutorV4(absent.input), /frontier-led retry lacks its exact durable decision/u);
+  assert.equal(absent.calls.length, 0);
+
+  const altered = fixture({ prior: [...completed.events], priorDecisions: [{ ...recorded, decision_owner_ref: 'altered-owner' }] });
+  (altered.input as any).review_control = { mode: 'FRONTIER_LED' };
+  await assert.rejects(runIterativeExecutorV4(altered.input), /frontier decision hash is invalid/u);
+  assert.equal(altered.calls.length, 0);
+
+  const duplicateBody = { ...recorded, decision_index: 2, previous_decision_hash: recorded.decision_hash } as any;
+  delete duplicateBody.decision_hash;
+  const duplicated = { ...duplicateBody, decision_hash: hashCanonicalV4(duplicateBody) };
+  const duplicateHistory = fixture({ prior: [...completed.events], priorDecisions: [recorded, duplicated] });
+  (duplicateHistory.input as any).review_control = { mode: 'FRONTIER_LED' };
+  await assert.rejects(runIterativeExecutorV4(duplicateHistory.input), /frontier decision is duplicated/u);
+  assert.equal(duplicateHistory.calls.length, 0);
+
+  const staleBody = { ...recorded, rejected_event_hash: evidence('9') } as any;
+  delete staleBody.decision_hash;
+  const stale = fixture({ prior: [...completed.events], priorDecisions: [{ ...staleBody, decision_hash: hashCanonicalV4(staleBody) }] });
+  (stale.input as any).review_control = { mode: 'FRONTIER_LED' };
+  await assert.rejects(runIterativeExecutorV4(stale.input), /stale or not bound/u);
+  assert.equal(stale.calls.length, 0);
+});
+
+test('frontier-led review control rejects stale decisions and can escalate without another worker call', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  const stale = fixture({ prior: [...waiting.events] });
+  (stale.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: frontierDecision(evidence('9'), 'RETRY'),
+  };
+  await assert.rejects(runIterativeExecutorV4(stale.input), /not bound to the pending rejected iteration/u);
+  assert.equal(stale.calls.length, 0);
+
+  const malformed = fixture({ prior: [...waiting.events] });
+  (malformed.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: { ...frontierDecision(waiting.events[0]!.event_hash, 'RETRY'), action: 'KEEP_TRYING' },
+  };
+  await assert.rejects(runIterativeExecutorV4(malformed.input), /review control is invalid/u);
+  assert.equal(malformed.calls.length, 0);
+
+  const unavailable = fixture({ prior: [...waiting.events] });
+  (unavailable.input as any).review_control = { mode: 'FRONTIER_LED', frontier_decision: frontierDecision(waiting.events[0]!.event_hash, 'RETRY') };
+  delete (unavailable.input as any).persist_frontier_decision;
+  await assert.rejects(runIterativeExecutorV4(unavailable.input), /frontier decision persistence is unavailable/u);
+  assert.equal(unavailable.calls.length, 0);
+
+  const escalated = fixture({ prior: [...waiting.events] });
+  (escalated.input as any).review_control = {
+    mode: 'FRONTIER_LED',
+    frontier_decision: frontierDecision(waiting.events[0]!.event_hash, 'ESCALATE'),
+  };
+  const result = await runIterativeExecutorV4(escalated.input);
+  assert.equal(result.status, 'ESCALATE');
+  assert.equal(result.escalation_reason, 'FRONTIER_DECISION');
+  assert.equal(escalated.calls.length, 0);
+  assert.equal(result.frontier_decisions[0]?.action, 'ESCALATE');
+
+  const replayed = fixture({ prior: [...waiting.events], priorDecisions: [...result.frontier_decisions] });
+  (replayed.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const replayedResult = await runIterativeExecutorV4(replayed.input);
+  assert.equal(replayedResult.status, 'ESCALATE');
+  assert.equal(replayedResult.escalation_reason, 'FRONTIER_DECISION');
+  assert.equal(replayed.calls.length, 0);
 });
 
 test('rejects a repair packet that is not derived from persisted failure evidence', async () => {
@@ -252,16 +461,21 @@ test('resumes from verified events and rejects forged plans, sessions, paths, an
   await assert.rejects(runIterativeExecutorV4(wrongOperation.input), /change authority/);
 });
 
-test('publishes strict provider-neutral JSON schemas for plans and iteration receipts', async () => {
+test('publishes strict provider-neutral JSON schemas for plans, decisions, and iteration receipts', async () => {
   const value = fixture();
   const result = await runIterativeExecutorV4(value.input);
   const ajv = new Ajv2020({ strict: true });
   const planSchema = JSON.parse(await readFile(new URL('../contracts/runtime-story-plan-v4.schema.json', import.meta.url), 'utf8'));
   const iterationSchema = JSON.parse(await readFile(new URL('../contracts/runtime-story-iteration-v4.schema.json', import.meta.url), 'utf8'));
+  const decisionSchema = JSON.parse(await readFile(new URL('../contracts/runtime-frontier-decision-v4.schema.json', import.meta.url), 'utf8'));
   const validatePlan = ajv.compile(planSchema);
   const validateIteration = ajv.compile(iterationSchema);
+  const validateDecision = ajv.compile(decisionSchema);
+  const decision = createFrontierDecisionEventV4({ schema_version: 4, type: 'FRONTIER_DECISION_RECORDED', run_id: value.storyPlan.run_id, plan_hash: value.storyPlan.plan_hash, decision_index: 1, previous_decision_hash: null, ...frontierDecision(result.events[0]!.event_hash, 'RETRY') });
   assert.equal(validatePlan(value.storyPlan), true, JSON.stringify(validatePlan.errors));
   assert.equal(validateIteration(result.events[0]), true, JSON.stringify(validateIteration.errors));
+  assert.equal(validateDecision(decision), true, JSON.stringify(validateDecision.errors));
   assert.equal(validatePlan({ ...value.storyPlan, provider: 'coupled-provider' }), false);
   assert.equal(validateIteration({ ...result.events[0], raw_reasoning: 'hidden context' }), false);
+  assert.equal(validateDecision({ ...decision, raw_reasoning: 'hidden context' }), false);
 });

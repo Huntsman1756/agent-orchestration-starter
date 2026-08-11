@@ -1,12 +1,12 @@
 import { hashCanonicalV4 } from './canonical.js';
 import type { RuntimeWorkContractV4 } from './contracts.js';
-import { inspectIterativeTrajectoryV4, loadIterativeStoryPlanV4, type IterativeStoryPlanV4, type StoryIterationEventV4 } from './iterative-executor.js';
+import { inspectIterativeTrajectoryV4, loadIterativeStoryPlanV4, type FrontierDecisionEventV4, type IterativeStoryPlanV4, type StoryIterationEventV4 } from './iterative-executor.js';
 import { appendRuntimeEventV4, loadRuntimeEventV4, type RuntimeEventV4 } from './telemetry.js';
 import type { WorkerCapabilityV4 } from './worker-capability.js';
 
 export interface RuntimeGraphNodeV4 { readonly node_id: string; readonly story_hash: string; readonly status: 'PENDING' | 'RETRY' | 'ACCEPTED' | 'ESCALATED'; readonly attempts: number; }
 export interface RuntimeGraphEdgeV4 { readonly from: string; readonly to: string; readonly kind: 'DEPENDS_ON'; }
-export interface RuntimeExecutionGraphV4 { readonly schema_version: 4; readonly run_id: string; readonly plan_hash: string; readonly status: 'COMPLETE' | 'ESCALATE' | 'IN_PROGRESS'; readonly nodes: readonly RuntimeGraphNodeV4[]; readonly edges: readonly RuntimeGraphEdgeV4[]; readonly graph_hash: string; }
+export interface RuntimeExecutionGraphV4 { readonly schema_version: 4; readonly run_id: string; readonly plan_hash: string; readonly status: 'COMPLETE' | 'ESCALATE' | 'IN_PROGRESS'; readonly nodes: readonly RuntimeGraphNodeV4[]; readonly edges: readonly RuntimeGraphEdgeV4[]; readonly frontier_decision_hashes: readonly string[]; readonly graph_hash: string; }
 
 export interface RuntimeTraceSpanV4 {
   readonly trace_id: string;
@@ -31,7 +31,7 @@ function freeze<T>(value: T): T {
   return value;
 }
 
-export function buildRuntimeExecutionGraphV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[] }): RuntimeExecutionGraphV4 {
+export function buildRuntimeExecutionGraphV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; events: readonly StoryIterationEventV4[]; review_control_mode?: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED'; frontier_decisions?: readonly FrontierDecisionEventV4[] }): RuntimeExecutionGraphV4 {
   const plan = loadIterativeStoryPlanV4(input.plan, input.contract, input.worker);
   const snapshot = inspectIterativeTrajectoryV4(input);
   const accepted = new Set(snapshot.accepted_story_ids);
@@ -45,7 +45,7 @@ export function buildRuntimeExecutionGraphV4(input: { contract: RuntimeWorkContr
   }));
   const edges = plan.stories.flatMap((story) => story.depends_on.map((dependency): RuntimeGraphEdgeV4 => Object.freeze({ from: dependency, to: story.story_id, kind: 'DEPENDS_ON' })));
   if (nodes.length > 64 || edges.length > 2_048) throw new Error('INVALID_CONTRACT: runtime graph exceeds bounded size');
-  const body = { schema_version: 4 as const, run_id: plan.run_id, plan_hash: plan.plan_hash, status: snapshot.status, nodes, edges };
+  const body = { schema_version: 4 as const, run_id: plan.run_id, plan_hash: plan.plan_hash, status: snapshot.status, nodes, edges, frontier_decision_hashes: snapshot.frontier_decisions.map((decision) => decision.decision_hash) };
   return freeze({ ...body, graph_hash: hashCanonicalV4(body) });
 }
 
@@ -75,7 +75,7 @@ export function exportRuntimeTraceV4(supplied: readonly RuntimeEventV4[]): Runti
   return freeze({ ...body, trace_hash: hashCanonicalV4(body) });
 }
 
-export function evaluateRuntimeTrajectoryV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; story_events: readonly StoryIterationEventV4[]; runtime_events: readonly RuntimeEventV4[] }): RuntimeTrajectoryEvaluationV4 {
+export function evaluateRuntimeTrajectoryV4(input: { contract: RuntimeWorkContractV4; worker: WorkerCapabilityV4; plan: IterativeStoryPlanV4; initial_tree_hash: string; story_events: readonly StoryIterationEventV4[]; runtime_events: readonly RuntimeEventV4[]; review_control_mode?: 'AUTONOMOUS_BROKER' | 'FRONTIER_LED'; frontier_decisions?: readonly FrontierDecisionEventV4[] }): RuntimeTrajectoryEvaluationV4 {
   const rules: TrajectoryRuleResultV4[] = [];
   let trace: RuntimeTraceExportV4 | null = null;
   try { trace = exportRuntimeTraceV4(input.runtime_events); rules.push({ rule_id: 'TELEMETRY_CHAIN', outcome: 'PASS', evidence_hashes: [trace.trace_hash] }); }
@@ -102,7 +102,7 @@ export function evaluateRuntimeTrajectoryV4(input: { contract: RuntimeWorkContra
   if (reviewActive) reviewOrder = false;
   rules.push({ rule_id: 'VALIDATION_BEFORE_REVIEW', outcome: reviewOrder ? 'PASS' : 'FAIL', evidence_hashes: reviewOrder && trace !== null ? [trace.trace_hash] : [] });
   let graph: RuntimeExecutionGraphV4 | null = null;
-  try { graph = buildRuntimeExecutionGraphV4({ contract: input.contract, worker: input.worker, plan: input.plan, initial_tree_hash: input.initial_tree_hash, events: input.story_events }); rules.push({ rule_id: 'ITERATION_GRAPH', outcome: 'PASS', evidence_hashes: [graph.graph_hash] }); }
+  try { graph = buildRuntimeExecutionGraphV4({ contract: input.contract, worker: input.worker, plan: input.plan, initial_tree_hash: input.initial_tree_hash, events: input.story_events, review_control_mode: input.review_control_mode, frontier_decisions: input.frontier_decisions }); rules.push({ rule_id: 'ITERATION_GRAPH', outcome: 'PASS', evidence_hashes: [graph.graph_hash] }); }
   catch { rules.push({ rule_id: 'ITERATION_GRAPH', outcome: 'FAIL', evidence_hashes: [] }); }
   const body = { schema_version: 4 as const, run_id: input.contract.run_id, outcome: rules.every((rule) => rule.outcome === 'PASS') ? 'PASS' as const : 'FAIL' as const, rules, graph_hash: graph?.graph_hash ?? null, trace_hash: trace?.trace_hash ?? null };
   return freeze({ ...body, evaluation_hash: hashCanonicalV4(body) });

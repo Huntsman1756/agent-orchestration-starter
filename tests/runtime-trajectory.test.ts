@@ -7,7 +7,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { createModelAdapterCapabilitiesV4, createModelCapabilityContractV4, matchModelCapabilitiesV4 } from '../src/runtime/capability-contract.js';
 import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
-import { createStoryIterationEventV4, type IterativeStoryPlanV4 } from '../src/runtime/iterative-executor.js';
+import { createFrontierDecisionEventV4, createStoryIterationEventV4, type IterativeStoryPlanV4 } from '../src/runtime/iterative-executor.js';
 import { createRuntimeEventV4, type RuntimeEventV4 } from '../src/runtime/telemetry.js';
 import { buildRuntimeExecutionGraphV4, evaluateRuntimeTrajectoryV4, exportRuntimeTraceV4 } from '../src/runtime/trajectory.js';
 import { createWorkerCapabilityV4, type WorkerCapabilityV4 } from '../src/runtime/worker-capability.js';
@@ -74,6 +74,19 @@ test('builds a bounded hash-stable story graph and safe trace export', () => {
   assert.equal(trace.spans[3]!.attributes.finding_low_count, 1);
   assert.equal(JSON.stringify(trace).includes('finding-low'), false);
   assert.equal(trace.trace_hash.length, 64);
+});
+
+test('binds verified frontier retry decisions into the portable execution graph', () => {
+  const work = contract();
+  const activeWorker = worker();
+  const storyPlan = plan(work, activeWorker);
+  const rejected = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: work.run_id, plan_hash: storyPlan.plan_hash, story_id: 'story_alpha', iteration: 1, attempt: 1, session_id: 'session_0000000000000001', input_tree_hash: h('1'), candidate_tree_hash: h('2'), outcome: 'RETRY', changes: [{ path: 'src/a.ts', operation: 'MODIFY' }], changed_lines: 10, execution_result_hash: h('3'), validation_manifest_hash: h('4'), review_attestation_hash: h('5'), finding_hashes: [h('6')], repair_packet_hash: null, frontier_decision_hash: null, failure_signature_hash: h('7'), escalation_reason: null });
+  const decision = createFrontierDecisionEventV4({ schema_version: 4, type: 'FRONTIER_DECISION_RECORDED', run_id: work.run_id, plan_hash: storyPlan.plan_hash, decision_index: 1, previous_decision_hash: null, decision_id: 'decision_0000000000000001', decision_owner_ref: 'frontier-reviewer', authority_evidence_hash: h('8'), rejected_event_hash: rejected.event_hash, action: 'RETRY' });
+  const accepted = createStoryIterationEventV4({ schema_version: 4, type: 'STORY_ITERATION_RECORDED', run_id: work.run_id, plan_hash: storyPlan.plan_hash, story_id: 'story_alpha', iteration: 2, attempt: 2, session_id: 'session_0000000000000002', input_tree_hash: h('1'), candidate_tree_hash: h('3'), outcome: 'ACCEPTED', changes: [{ path: 'src/a.ts', operation: 'MODIFY' }], changed_lines: 10, execution_result_hash: h('4'), validation_manifest_hash: h('5'), review_attestation_hash: h('6'), finding_hashes: [], repair_packet_hash: h('9'), frontier_decision_hash: decision.decision_hash, failure_signature_hash: null, escalation_reason: null });
+
+  const graph = buildRuntimeExecutionGraphV4({ contract: work, worker: activeWorker, plan: storyPlan, initial_tree_hash: h('1'), events: [rejected, accepted], review_control_mode: 'FRONTIER_LED', frontier_decisions: [decision] });
+  assert.equal(graph.status, 'COMPLETE');
+  assert.deepEqual(graph.frontier_decision_hashes, [decision.decision_hash]);
 });
 
 test('evaluates complete trajectories and reports tampered graph or lifecycle order as FAIL', () => {

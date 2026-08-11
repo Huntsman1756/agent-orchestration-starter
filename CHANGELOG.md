@@ -8,6 +8,9 @@
   caller's process-wide working directory. Recovery tests no longer mutate
   shared `process.cwd()`, and their outer watchdog leaves margin above the
   unchanged internal recovery deadlines.
+- Frontier-led retries now persist a canonical, authority-bound decision before
+  worker launch and bind its hash into the next iteration. Crash replay rejects
+  absent, altered, duplicate, stale and cross-mode decision evidence.
 
 ### Removed
 
