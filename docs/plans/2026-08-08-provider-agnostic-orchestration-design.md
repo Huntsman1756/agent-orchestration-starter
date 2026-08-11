@@ -1,5 +1,12 @@
 # Provider-Agnostic Agent Orchestration Design
 
+> **Status: historical design record.** This V1 compiler design predates the
+> Runtime V4 daemon, durable control plane and host boundary. Use
+> [`../../README.md`](../../README.md),
+> [`../runtime-v4-operations.md`](../runtime-v4-operations.md) and the current
+> [consolidation roadmap](2026-08-10-runtime-consolidation-roadmap.md) for
+> supported behavior. The decisions below are retained as design provenance.
+
 ## Purpose
 
 `agent-orchestration-starter` is a reusable repository starter for projects that reserve a frontier model for planning and final review while delegating bounded implementation work to a cheaper model. The stable contract describes roles and capabilities; provider and model names live only in replaceable profiles.

@@ -45,10 +45,14 @@ Generated `.codex/config.toml` keeps the primary frontier context read-only, mar
 
 ## Intended lifecycle
 
-```text
-agent-orchestration runtime daemon
-agent-orchestration runtime doctor --repository-policy policies/repository-policy.yaml --profile profiles/runtime.yaml
-agent-orchestration runtime status --run-id run_...
+Every privileged standalone command loads the same hash-bound repository
+activation. Embedded hosts may inject equivalent verified operations, but the
+operator-facing CLI never infers authority from ambient repository files.
+
+```powershell
+agent-orchestration runtime daemon --activation <activation-v4.json>
+agent-orchestration runtime doctor --activation <activation-v4.json>
+agent-orchestration runtime status --run-id run_... --activation <activation-v4.json>
 ```
 
 The STDIO MCP adapter performs short authenticated control calls only. `createRuntimeHostCompositionV4` binds it to the durable daemon and exact host operations. Before the root can do that, the loader independently verifies task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification ports. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.

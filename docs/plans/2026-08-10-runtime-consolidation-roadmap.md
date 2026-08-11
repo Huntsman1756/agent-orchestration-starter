@@ -2,8 +2,7 @@
 
 This plan records what was consolidated after the Runtime V4 host-component
 split and what remains deliberately incremental. It is repository-wide and
-does not specialize the runtime for EduAyudas, ESData, Qwen, OpenAI or any
-other single project/provider.
+does not specialize the runtime for any single consumer repository, model or provider.
 
 ## Completed in this consolidation
 

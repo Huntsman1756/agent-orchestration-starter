@@ -44,17 +44,24 @@ npm run build
 node dist/cli/main.js init `
   --target G:\_Proyectos\my-project `
   --policy orchestration.yaml `
-  --profile profiles/runtime.example.yaml `
-  --harnesses codex,opencode
+  --profile profiles/open-compatible.yaml `
+  --harnesses codex,opencode `
+  --dry-run
 ```
 
-Inspect first with `--dry-run`. Use `check` to detect local drift and `doctor`
-to verify selected harnesses. The CLI does not write credentials or global
-tool configuration.
+After inspecting the proposed files, run the same initialization without
+`--dry-run` to materialize them. Use `check` to detect local drift and `doctor`
+to verify the same selected harnesses. The CLI does not write credentials or
+global tool configuration.
 
 ```powershell
-node dist/cli/main.js check --target G:\_Proyectos\my-project --policy orchestration.yaml --profile profiles/runtime.example.yaml
-node dist/cli/main.js doctor --harnesses codex,opencode --policy orchestration.yaml --profile profiles/runtime.example.yaml
+node dist/cli/main.js init `
+  --target G:\_Proyectos\my-project `
+  --policy orchestration.yaml `
+  --profile profiles/open-compatible.yaml `
+  --harnesses codex,opencode
+node dist/cli/main.js check --target G:\_Proyectos\my-project --policy orchestration.yaml --profile profiles/open-compatible.yaml --harnesses codex,opencode
+node dist/cli/main.js doctor --harnesses codex,opencode --policy orchestration.yaml --profile profiles/open-compatible.yaml
 ```
 
 ## Autonomous lifecycle
@@ -121,8 +128,8 @@ frontier_execution`, matched by `taskId + caseFingerprint`. It protects both
 first-pass and final acceptance; no cheaper candidate may reduce final
 acceptance under the conservative initial policy. Escalations, repairs and
 rescues remain part of real cost. See [routing gate](routing-gate.yaml), the
-[benchmark examples](examples/benchmark-observations.jsonl), and the V3
-[provider-neutral routing design](docs/plans/2026-08-08-evidence-based-routing-design.md).
+[benchmark examples](examples/benchmark-observations.jsonl), and the
+[historical evidence-based routing design](docs/plans/2026-08-08-evidence-based-routing-design.md).
 
 ```powershell
 node dist/cli/main.js benchmark `

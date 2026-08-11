@@ -33,6 +33,7 @@ import {
   type SandboxCertificationIdentityV4,
   type SandboxCertificationTranscriptV4,
 } from '../src/runtime/sandbox-certification.js';
+import { RUNTIME_BROKER_VERSION_V4 } from '../src/runtime/version.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
 const trustedFixtureParent = process.platform === 'win32'
@@ -415,7 +416,7 @@ const certificationIdentity: SandboxCertificationIdentityV4 = {
   image_architecture: 'amd64',
   profile: 'VALIDATION_UNTRUSTED',
   policy_hash: `sha256:${'b'.repeat(64)}`,
-  broker_version: '0.1.0-v4',
+  broker_version: RUNTIME_BROKER_VERSION_V4,
 };
 function transcript(overrides: Partial<SandboxCertificationTranscriptV4> = {}): SandboxCertificationTranscriptV4 {
   const artifact = (id: string, kind: 'DOCKER_IDENTITY_RESULT' | 'HOSTILE_PROCESS_RESULT' | 'TIMEOUT_TREE_RESULT' | 'GATEWAY_NETWORK_RESULT') => ({

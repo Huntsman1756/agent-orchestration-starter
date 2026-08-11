@@ -4,6 +4,14 @@
 
 ### Changed
 
+- Corrected the README compiler Quick start and privileged Runtime V4 command
+  examples, marked superseded V1/V2 plans as historical, and generalized
+  consumer-derived architecture notes. Executable documentation contracts now
+  protect the Quick start, activation binding and historical-status boundary.
+- Centralized the Runtime V4 broker qualification identity and aligned it with
+  package `0.2.0` as `0.2.0-v4`. Package-version parity is now a release test;
+  existing Docker sandbox evidence bound to `0.1.0-v4` requires fresh
+  certification.
 - Documented provider-neutral context-engineering invariants: deterministic
   prompt prefixes, immutable per-attempt tool surfaces, progressive disclosure,
   restorable failure evidence, explicit cache telemetry and serial
