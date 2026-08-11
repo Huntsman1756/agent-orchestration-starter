@@ -25,6 +25,7 @@ import { startProviderEgressGatewayV4 } from './provider-egress-gateway.js';
 import { runBoundedProcessV4, startBoundedProcessV4 } from './bounded-process.js';
 import { dockerCliEnvironmentV4, registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
 import { createBrokerOwnedDockerContainerV4 } from './docker-container-transaction.js';
+import { RUNTIME_BROKER_VERSION_V4 } from './version.js';
 
 export interface DockerSandboxConfigV4 {
   docker_executable: string;
@@ -285,7 +286,7 @@ export function buildDockerRunArgvV4(config: DockerSandboxConfigV4, request: San
 export function dockerSandboxPolicyHashV4(config: DockerSandboxConfigV4, profile: SandboxProfileV4): `sha256:${string}` {
   return `sha256:${hashCanonicalV4({
     backend: 'docker-engine-linux-v4',
-    broker_version: '0.1.0-v4',
+    broker_version: RUNTIME_BROKER_VERSION_V4,
     docker_endpoint: {
       context: null,
       host: process.platform === 'win32' ? 'npipe:////./pipe/docker_engine' : 'unix:///var/run/docker.sock',
@@ -694,7 +695,7 @@ export async function inspectDockerSandboxIdentityV4(
         launcher,
         policy_hash: dockerSandboxPolicyHashV4(config, profile),
       })}`,
-      broker_version: '0.1.0-v4',
+      broker_version: RUNTIME_BROKER_VERSION_V4,
     });
   } catch {
     unavailable();

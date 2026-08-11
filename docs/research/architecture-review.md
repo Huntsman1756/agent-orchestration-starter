@@ -33,11 +33,17 @@ Reviewed 2026-08-11. These notes separate durable design choices from provider-s
   evidence rather than trusting agent-authored explanations of their own
   failures.
 
-## Local projects
+## Consumer-derived lessons
 
-`eduayudas` already demonstrates typed availability fallback, attempted/effective provider telemetry, and fail-closed behavior for authentication, policy, invalid output, grounding, and validation. Its main portability cost is that concrete provider/model names appear across several layers; this starter confines them to profiles.
-
-`mcpspain/official-sources` treats deterministic source auditors as authoritative and model output as advisory. That same ordering is encoded here: a reviewer cannot approve a failed deterministic gate, and the maker is never the sole verifier.
+- Consumer runtime integrations demonstrate the value of typed availability
+  fallback, attempted/effective provider telemetry and fail-closed handling of
+  authentication, policy, invalid output, grounding and validation failures.
+  Their portable lesson is to confine concrete provider/model identities to
+  replaceable profiles instead of spreading them across application layers.
+- Source-verification integrations demonstrate that deterministic auditors
+  must remain authoritative and model output advisory. The portable rule is
+  encoded here: a reviewer cannot approve a failed deterministic gate, and the
+  maker is never the sole verifier.
 
 ## Upstream material
 

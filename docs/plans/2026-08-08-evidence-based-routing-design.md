@@ -1,5 +1,10 @@
 # Evidence-Based Routing Design
 
+> **Status: historical design record.** This document records the V2 routing
+> gate design. Runtime V4 operations and Dogfood V1 are the current execution
+> and experimental contracts; later schema and evidence changes are recorded
+> in the changelog and current consolidation roadmap.
+
 ## Scope
 
 Version 2 turns the fixed frontier-to-economy path into three explicit strategies without adding a provider runner:
