@@ -6,7 +6,8 @@ import { parse } from 'yaml';
 
 import { resolveBinding } from '../src/runtime/bindings.js';
 import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
-import { codexModelConfigArgvV4, openCodeModelOptionsV4, renderModelPromptV4 } from '../src/runtime/model-guidance.js';
+import { codexBrokerProviderConfigArgvV4, codexModelConfigArgvV4, openCodeModelOptionsV4, renderModelPromptV4 } from '../src/runtime/model-guidance.js';
+import { isProviderGatewayPathAllowedV4 } from '../src/runtime/provider-egress-gateway.js';
 import { validModelGuidance, validRuntimeProfile } from './runtime-contracts.test.js';
 
 test('renders the selected model guidance without changing stable authority', () => {
@@ -25,6 +26,22 @@ test('maps only bounded cross-provider controls and rejects unsupported Codex ef
   assert.deepEqual(codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'provider-default' }), []);
   assert.deepEqual(codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'xhigh' }), ['-c', 'model_reasoning_effort="xhigh"']);
   assert.throws(() => codexModelConfigArgvV4({ ...validModelGuidance(), reasoningEffort: 'vendor-ultra' }), /CAPABILITY_UNVERIFIED/);
+});
+
+test('pins Codex to the internal Responses gateway and keeps the path allowlist narrow', () => {
+  assert.deepEqual(codexBrokerProviderConfigArgvV4('http://provider-gateway:8080/v1'), [
+    '-c', 'model_provider="broker_gateway"',
+    '-c', 'model_providers.broker_gateway.name="Broker Gateway"',
+    '-c', 'model_providers.broker_gateway.base_url="http://provider-gateway:8080/v1"',
+    '-c', 'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
+    '-c', 'model_providers.broker_gateway.wire_api="responses"',
+    '-c', 'model_providers.broker_gateway.requires_openai_auth=false',
+  ]);
+  assert.throws(() => codexBrokerProviderConfigArgvV4('https://api.nan.builders/v1'), /CAPABILITY_UNVERIFIED/);
+  assert.equal(isProviderGatewayPathAllowedV4('/v1/chat/completions'), true);
+  assert.equal(isProviderGatewayPathAllowedV4('/v1/responses'), true);
+  assert.equal(isProviderGatewayPathAllowedV4('/v1/models'), false);
+  assert.equal(isProviderGatewayPathAllowedV4('/v1/responses?debug=true'), false);
 });
 
 test('binds model guidance into qualification identity and loads the current subscription snapshot', async () => {

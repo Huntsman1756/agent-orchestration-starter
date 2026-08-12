@@ -18,6 +18,14 @@ test('uses a fresh read-only capsule session and never mounts the worktree', asy
   assert.equal(result.decision, 'ACCEPT');
   assert.deepEqual(requests[0].mounts, [{ source: 'C:/review-capsule', target: '/capsule', access: 'READ_ONLY' }]);
   assert.deepEqual(requests[0].argv.slice(1, 13), ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '--skip-git-repo-check', '--output-schema', '/capsule/review-attestation-v4.schema.json', '--json', '--cd', '/capsule']);
+  assert.deepEqual(requests[0].argv.slice(15, 27), [
+    '-c', 'model_provider="broker_gateway"',
+    '-c', 'model_providers.broker_gateway.name="Broker Gateway"',
+    '-c', 'model_providers.broker_gateway.base_url="http://provider-gateway:8080/v1"',
+    '-c', 'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
+    '-c', 'model_providers.broker_gateway.wire_api="responses"',
+    '-c', 'model_providers.broker_gateway.requires_openai_auth=false',
+  ]);
 });
 
 test('encodes exactly economy, one repair, typed frontier escalation, and final review', async () => {

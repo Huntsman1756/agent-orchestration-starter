@@ -49,3 +49,19 @@ export function codexModelConfigArgvV4(guidance: RuntimeModelGuidanceV4): readon
   }
   return Object.freeze(['-c', `model_reasoning_effort=${JSON.stringify(guidance.reasoningEffort)}`]);
 }
+
+export function codexBrokerProviderConfigArgvV4(providerEndpoint: string): readonly string[] {
+  let endpoint: URL;
+  try { endpoint = new URL(providerEndpoint); } catch { throw new Error('CAPABILITY_UNVERIFIED: Codex provider gateway endpoint is invalid'); }
+  if (endpoint.toString() !== 'http://provider-gateway:8080/v1') {
+    throw new Error('CAPABILITY_UNVERIFIED: Codex provider gateway endpoint is invalid');
+  }
+  return Object.freeze([
+    '-c', 'model_provider="broker_gateway"',
+    '-c', 'model_providers.broker_gateway.name="Broker Gateway"',
+    '-c', `model_providers.broker_gateway.base_url=${JSON.stringify(endpoint.toString().replace(/\/$/u, ''))}`,
+    '-c', 'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
+    '-c', 'model_providers.broker_gateway.wire_api="responses"',
+    '-c', 'model_providers.broker_gateway.requires_openai_auth=false',
+  ]);
+}
