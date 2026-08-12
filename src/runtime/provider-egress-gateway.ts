@@ -46,6 +46,11 @@ interface GatewayBootPayloadV4 {
 
 const maxRequestBytes = 1024 * 1024;
 const maxResponseBytes = 4 * 1024 * 1024;
+const allowedProviderPaths = new Set(['/v1/chat/completions', '/v1/responses']);
+
+export function isProviderGatewayPathAllowedV4(path: string): boolean {
+  return allowedProviderPaths.has(path);
+}
 
 function unavailable(): never {
   throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process sandbox is unavailable');
@@ -105,7 +110,7 @@ function validateStartRequest(request: ProviderGatewayStartRequestV4): URL {
   if (!/^ao-out-exec-[a-z0-9-]{4,80}$/.test(request.outbound_network)) unavailable();
   if (isIP(request.outbound_address) !== 4 || !isProviderEgressAddressAllowedV4(request.outbound_address)) unavailable();
   if (request.allowed_methods.length !== 1 || request.allowed_methods[0] !== 'POST') unavailable();
-  if (request.allowed_paths.length !== 1 || request.allowed_paths[0] !== '/v1/chat/completions') unavailable();
+  if (request.allowed_paths.length !== 1 || !isProviderGatewayPathAllowedV4(request.allowed_paths[0]!)) unavailable();
   if (request.real_api_key.length < 16 || request.real_api_key.length > 512 || /[\r\n\0]/.test(request.real_api_key)) unavailable();
   if (!request.ca_pem.includes('-----BEGIN CERTIFICATE-----') || request.ca_pem.length > 128 * 1024) unavailable();
   if (!Number.isSafeInteger(request.startup_timeout_ms) || request.startup_timeout_ms < 100 || request.startup_timeout_ms > 60_000) unavailable();
@@ -205,7 +210,7 @@ export async function startProviderEgressGatewayV4(
     `--origin=${request.provider_origin}`,
     `--allowed-host=${new URL(request.provider_origin).hostname}`,
     '--allowed-method=POST',
-    '--allowed-path=/v1/chat/completions',
+    `--allowed-path=${request.allowed_paths[0]}`,
   ];
   const owned = await createBrokerOwnedDockerContainerV4({
     docker_executable: request.docker_executable,
@@ -362,7 +367,9 @@ export function isProviderEgressAddressAllowedV4(address: string): boolean {
 }
 
 function pathClass(path: string): string {
-  return path === '/v1/chat/completions' ? 'chat_completions' : 'other';
+  if (path === '/v1/chat/completions') return 'chat_completions';
+  if (path === '/v1/responses') return 'responses';
+  return 'other';
 }
 
 function audit(input: {
@@ -511,7 +518,7 @@ async function serveGateway(): Promise<void> {
   const origin = validateProviderGatewayOriginV4(argument('origin'), [argument('allowed-host')]);
   const allowedMethod = argument('allowed-method');
   const allowedPath = argument('allowed-path');
-  if (allowedMethod !== 'POST' || allowedPath !== '/v1/chat/completions') unavailable();
+  if (allowedMethod !== 'POST' || !isProviderGatewayPathAllowedV4(allowedPath)) unavailable();
   const boot = await readBootPayload();
   const server = createServer((request, response) => {
     void proxyRequest(request, response, origin, boot, new Set([allowedMethod]), new Set([allowedPath]));

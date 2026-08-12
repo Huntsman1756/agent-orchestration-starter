@@ -62,8 +62,16 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   assert.deepEqual(request.environment, { PROVIDER_GATEWAY_TOKEN: 'broker-gateway', HOME: '/capsule/home', TMPDIR: '/capsule/tmp', NO_COLOR: '1' });
   assert.deepEqual(request.argv.slice(2, 14), ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--output-schema', '/capsule/config/frontier-executor-result-v4.schema.json', '--json', '--cd', '/capsule', '--model']);
   assert.equal(request.argv[14], 'profile-frontier-model');
-  assert.deepEqual(request.argv.slice(15, 17), ['-c', 'model_reasoning_effort="high"']);
-  const prompt = request.argv[17]!;
+  assert.deepEqual(request.argv.slice(15, 27), [
+    '-c', 'model_provider="broker_gateway"',
+    '-c', 'model_providers.broker_gateway.name="Broker Gateway"',
+    '-c', 'model_providers.broker_gateway.base_url="http://provider-gateway:8080/v1"',
+    '-c', 'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
+    '-c', 'model_providers.broker_gateway.wire_api="responses"',
+    '-c', 'model_providers.broker_gateway.requires_openai_auth=false',
+  ]);
+  assert.deepEqual(request.argv.slice(27, 29), ['-c', 'model_reasoning_effort="high"']);
+  const prompt = request.argv[29]!;
   assert.match(prompt, /repo\/ is the only editable source/);
   assert.match(prompt, /Do not commit, push, merge, deploy, or use network/);
   assert.match(prompt, /"contract_hash":"a{64}"/);
