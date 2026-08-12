@@ -232,6 +232,7 @@ notes.
 - [Runtime operations](docs/runtime-v4-operations.md)
 - [Control plane](docs/control-plane-v4.md)
 - [Frontend/backend practice packs](docs/delegation-practice-packs-v4.md)
+- [Harness adapters and delegation proof](docs/harness-adapters-v4.md)
 - [Model guidance](docs/model-guidance-v4.md)
 - [Publication](docs/publication-v4.md)
 - [Portable runtime inspection](docs/portable-runtime-inspection-v4.md)

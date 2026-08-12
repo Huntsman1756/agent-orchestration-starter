@@ -66,6 +66,9 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.equal(revoked, true);
     const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-opencode-capture.json'), 'utf8'));
     assert.equal(capture.cwd, capsule);
+    assert.ok(capture.argv.includes('--pure'));
+    assert.ok(capture.argv.includes('--auto'));
+    assert.ok(capture.argv.includes('--dir=/capsule'));
     assert.ok(capture.argv.includes('--model=profile-selected-provider/economy/model-v1'));
     assert.ok(capture.argv.includes('--agent=executor'));
     const windowsBaseline = ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR'];
@@ -90,16 +93,19 @@ test('rejects an unverified capability before leasing credentials or launching a
   await assert.rejects(() => runner.execute({ execution_id: 'exec_bad_0001', binding: {} as ResolvedBindingV4, capability: { ...capability, status: 'UNQUALIFIED' }, capsule_root: 'x', worktree_root: 'x', agent: 'executor', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64) }), /CAPABILITY_UNVERIFIED/);
 });
 
-test('rejects non-JSON, tool leakage, unexpected tools, and missing terminal events', async () => {
+test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'ao-opencode-invalid-'));
   const worktree = await mkdtemp(join(tmpdir(), 'ao-opencode-worktree-'));
   const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() }, binding_hash: 'f'.repeat(64) };
   const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
   const outputs = [
     'not-json\n',
-    `${JSON.stringify({ type: 'message', text: '<tool_call>' })}\n${JSON.stringify({ type: 'result', status: 'completed', session_id: 's' })}\n`,
-    `${JSON.stringify({ type: 'tool', name: 'bash' })}\n${JSON.stringify({ type: 'result', status: 'completed', session_id: 's' })}\n`,
-    `${JSON.stringify({ type: 'message', text: 'no terminal' })}\n`,
+    `${JSON.stringify({ type: 'step_start', sessionID: 's', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'text', sessionID: 's', part: { type: 'text', text: '<tool_call>' } })}\n${JSON.stringify({ type: 'step_finish', sessionID: 's', part: { type: 'step-finish', reason: 'stop' } })}\n`,
+    `${JSON.stringify({ type: 'step_start', sessionID: 's', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'tool_use', sessionID: 's', part: { type: 'tool', tool: 'bash', callID: 'call_1', state: { status: 'completed', input: {} } } })}\n${JSON.stringify({ type: 'step_finish', sessionID: 's', part: { type: 'step-finish', reason: 'stop' } })}\n`,
+    `${JSON.stringify({ type: 'step_start', sessionID: 's', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'tool_use', sessionID: 's', part: { type: 'tool', tool: 'write', callID: 'call_1' } })}\n${JSON.stringify({ type: 'step_finish', sessionID: 's', part: { type: 'step-finish', reason: 'stop' } })}\n`,
+    `${JSON.stringify({ type: 'step_start', sessionID: 's', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'text', sessionID: 's', part: { type: 'text', text: 'no terminal' } })}\n`,
+    `${JSON.stringify({ type: 'step_start', sessionID: 's1', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'text', sessionID: 's2', part: { type: 'text', text: 'mixed sessions' } })}\n${JSON.stringify({ type: 'step_finish', sessionID: 's2', part: { type: 'step-finish', reason: 'stop' } })}\n`,
+    `${JSON.stringify({ type: 'message', text: 'legacy fixture protocol' })}\n${JSON.stringify({ type: 'result', status: 'completed', session_id: 's' })}\n`,
   ];
   let diffChecks = 0;
   try {
