@@ -13,6 +13,7 @@ test('runtime-v4 keeps an intentional entry-point module surface', async () => {
     './readiness.js',
     './routing.js',
     './iterative-executor.js',
+    './frontier-supervisor.js',
     './autonomous-dispatcher.js',
     './worker-capability.js',
   ]);

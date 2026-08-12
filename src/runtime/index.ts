@@ -4,5 +4,6 @@ export * from './model-guidance.js';
 export * from './readiness.js';
 export * from './routing.js';
 export * from './iterative-executor.js';
+export * from './frontier-supervisor.js';
 export * from './autonomous-dispatcher.js';
 export * from './worker-capability.js';

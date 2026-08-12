@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Added the provider-neutral `runFrontierSupervisorV4` control loop for real
+  frontier-led delegation: persisted rejection evidence is converted into a
+  bounded `RETRY` or `ESCALATE`, repair attempts use fresh worker sessions, and
+  malformed decisions, crashes and exhausted decision budgets fail closed.
 - Aligned the OpenCode runner with the native JSONL protocol emitted by the
   pinned 1.18.15 harness and verified 1.18.16 (`step_start`, `text`,
   `tool_use`, `step_finish`). Launches now pin pure/auto JSON execution and the

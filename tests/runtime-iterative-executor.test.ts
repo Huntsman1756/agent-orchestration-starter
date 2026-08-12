@@ -7,6 +7,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
 import { createFrontierDecisionEventV4, inspectIterativeTrajectoryV4, loadIterativeStoryPlanV4, runIterativeExecutorV4, type IterativeStoryPlanV4, type StoryIterationEventV4 } from '../src/runtime/iterative-executor.js';
+import { runFrontierSupervisorV4 } from '../src/runtime/frontier-supervisor.js';
 import { createWorkerCapabilityV4 } from '../src/runtime/worker-capability.js';
 import { validWorkContract } from './runtime-contracts.test.js';
 
@@ -202,6 +203,124 @@ test('frontier-led review control never launches a repair attempt without an eve
   assert.equal(completed.status, 'COMPLETE');
   assert.deepEqual(resumed.calls.slice(0, 1).map((call) => [call.story, call.attempt]), [['story_alpha', 2]]);
   assert.match(resumed.calls[0]!.repair!, /^[a-f0-9]{64}$/u);
+});
+
+test('frontier supervisor turns a rejected worker attempt into a durable repair cycle', async () => {
+  const value = fixture({ rejectFirst: true });
+  const decisions: string[] = [];
+
+  const result = await runFrontierSupervisorV4({
+    execution: value.input,
+    limits: { max_frontier_decisions: 2 },
+    decide: async ({ rejected_event }) => {
+      decisions.push(rejected_event.event_hash);
+      return {
+        decision_id: 'decision_0000000000000001',
+        decision_owner_ref: 'frontier-reviewer',
+        authority_evidence_hash: evidence('a'),
+        action: 'RETRY',
+      };
+    },
+  });
+
+  assert.equal(result.status, 'COMPLETE');
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0], result.events[0]!.event_hash);
+  assert.deepEqual(value.calls.slice(0, 2).map((call) => [call.attempt, call.repair === null]), [[1, true], [2, false]]);
+  assert.equal(result.frontier_decisions.length, 1);
+  assert.equal(result.events[1]!.frontier_decision_hash, result.frontier_decisions[0]!.decision_hash);
+});
+
+test('frontier supervisor persists escalation and never launches another worker attempt', async () => {
+  const value = fixture({ rejectFirst: true });
+
+  const result = await runFrontierSupervisorV4({
+    execution: value.input,
+    limits: { max_frontier_decisions: 2 },
+    decide: async () => ({
+      decision_id: 'decision_0000000000000001',
+      decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'),
+      action: 'ESCALATE',
+    }),
+  });
+
+  assert.equal(result.status, 'ESCALATE');
+  assert.equal(result.escalation_reason, 'FRONTIER_DECISION');
+  assert.equal(value.calls.length, 1);
+  assert.equal(result.frontier_decisions[0]!.action, 'ESCALATE');
+});
+
+test('frontier supervisor fails closed when the frontier decision is malformed', async () => {
+  const value = fixture({ rejectFirst: true });
+
+  await assert.rejects(runFrontierSupervisorV4({
+    execution: value.input,
+    limits: { max_frontier_decisions: 2 },
+    decide: async () => ({
+      decision_id: 'not-canonical',
+      decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'),
+      action: 'RETRY',
+    }),
+  }), /frontier returned an invalid decision/u);
+
+  assert.equal(value.calls.length, 1);
+  assert.equal(value.frontierDecisions.length, 0);
+});
+
+test('frontier supervisor stops before requesting or launching work beyond its decision budget', async () => {
+  const value = fixture({ alwaysReject: true, storyAttempts: 3 });
+  let decisionNumber = 0;
+
+  await assert.rejects(runFrontierSupervisorV4({
+    execution: value.input,
+    limits: { max_frontier_decisions: 1 },
+    decide: async () => {
+      decisionNumber += 1;
+      return {
+        decision_id: `decision_${String(decisionNumber).padStart(16, '0')}`,
+        decision_owner_ref: 'frontier-reviewer',
+        authority_evidence_hash: evidence('a'),
+        action: 'RETRY',
+      };
+    },
+  }), /frontier decision budget reached/u);
+
+  assert.equal(decisionNumber, 1);
+  assert.equal(value.calls.length, 2);
+  assert.equal(value.frontierDecisions.length, 1);
+});
+
+test('frontier supervisor reuses a durable retry decision after a crash without consulting frontier twice', async () => {
+  const first = fixture({ rejectFirst: true });
+  (first.input as any).review_control = { mode: 'FRONTIER_LED' };
+  const waiting = await runIterativeExecutorV4(first.input);
+
+  const interrupted = fixture({ prior: [...waiting.events] });
+  (interrupted.input as any).execute = async () => { throw new Error('simulated crash before worker launch'); };
+  await assert.rejects(runFrontierSupervisorV4({
+    execution: interrupted.input,
+    limits: { max_frontier_decisions: 2 },
+    decide: async () => ({
+      decision_id: 'decision_0000000000000001',
+      decision_owner_ref: 'frontier-reviewer',
+      authority_evidence_hash: evidence('a'),
+      action: 'RETRY',
+    }),
+  }), /simulated crash/u);
+  assert.equal(interrupted.frontierDecisions.length, 1);
+
+  const recovered = fixture({ prior: [...waiting.events], priorDecisions: [...interrupted.frontierDecisions] });
+  const result = await runFrontierSupervisorV4({
+    execution: recovered.input,
+    limits: { max_frontier_decisions: 2 },
+    decide: async () => { throw new Error('frontier must not be consulted twice'); },
+  });
+
+  assert.equal(result.status, 'COMPLETE');
+  assert.equal(recovered.calls[0]!.attempt, 2);
+  assert.equal(result.frontier_decisions.length, 1);
 });
 
 test('persists a canonical frontier retry decision before the worker and binds it into replay', async () => {
