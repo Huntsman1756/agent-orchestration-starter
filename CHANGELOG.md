@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Aligned the OpenCode runner with the native JSONL protocol emitted by the
+  pinned 1.18.15 harness and verified 1.18.16 (`step_start`, `text`,
+  `tool_use`, `step_finish`). Launches now pin pure/auto JSON execution and the
+  capsule directory; malformed sequences, mixed sessions and unapproved tools
+  fail closed. Added a provider-neutral checklist that distinguishes actual
+  worker delegation from passive repository instructions or frontier fallback.
 - Corrected the README compiler Quick start and privileged Runtime V4 command
   examples, marked superseded V1/V2 plans as historical, and generalized
   consumer-derived architecture notes. Executable documentation contracts now

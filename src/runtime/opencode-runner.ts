@@ -45,26 +45,57 @@ export interface OpenCodeRunnerDependenciesV4 {
 
 function invalid(message: string): never { throw new Error(`EXECUTOR_INVALID_OUTPUT: ${message}`); }
 
+function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : undefined;
+}
+
 function parseEvents(stdout: string): { events: readonly Readonly<Record<string, unknown>>[]; sessionId: string } {
   if (stdout.includes('<tool_call>')) invalid('textual tool-call leakage');
   const events: Readonly<Record<string, unknown>>[] = [];
+  let sessionId: string | undefined;
+  let stepOpen = false;
   for (const line of stdout.split('\n').filter((value) => value.length > 0)) {
     let event: unknown;
     try { event = JSON.parse(line); } catch { invalid('non-JSON event'); }
-    if (event === null || typeof event !== 'object' || Array.isArray(event)) invalid('event is not an object');
+    if (record(event) === undefined) invalid('event is not an object');
     const frozen = Object.freeze({ ...(event as Record<string, unknown>) });
-    const type = frozen.type;
-    if (!['message', 'tool', 'result'].includes(String(type))) invalid(`unexpected event type: ${String(type)}`);
-    if (type === 'tool' && !['read', 'glob', 'grep', 'edit'].includes(String(frozen.name))) invalid(`unexpected tool: ${String(frozen.name)}`);
+    const type = String(frozen.type);
+    const part = record(frozen.part);
+    const eventSessionId = frozen.sessionID;
+    if (typeof eventSessionId !== 'string' || eventSessionId.length < 1 || eventSessionId.length > 128) invalid('missing or malformed session ID');
+    if (sessionId !== undefined && sessionId !== eventSessionId) invalid('multiple session IDs');
+    sessionId = eventSessionId;
+    if (!['step_start', 'text', 'tool_use', 'step_finish'].includes(type)) invalid(`unexpected event type: ${type}`);
+    if (part === undefined) invalid('missing event part');
+    if (type === 'step_start') {
+      if (stepOpen || part.type !== 'step-start') invalid('malformed step start');
+      stepOpen = true;
+    } else if (type === 'step_finish') {
+      if (!stepOpen || part.type !== 'step-finish' || !['tool-calls', 'stop'].includes(String(part.reason))) invalid('malformed step finish');
+      stepOpen = false;
+    } else {
+      if (!stepOpen) invalid('event occurred outside a step');
+      if (type === 'text' && (part.type !== 'text' || typeof part.text !== 'string')) invalid('malformed text event');
+      if (type === 'tool_use') {
+        const tool = String(part.tool);
+        if (part.type !== 'tool' || !['read', 'glob', 'grep', 'edit', 'write', 'apply_patch', 'patch'].includes(tool)) invalid(`unexpected tool: ${tool}`);
+        const state = record(part.state);
+        if (typeof part.callID !== 'string' || part.callID.length < 1 || state === undefined
+          || !['completed', 'error'].includes(String(state.status)) || record(state.input) === undefined) {
+          invalid('malformed tool event');
+        }
+      }
+    }
     events.push(frozen);
   }
-  const terminals = events.filter((event) => event.type === 'result');
+  const terminals = events.filter((event) => event.type === 'step_finish' && record(event.part)?.reason === 'stop');
   const terminal = terminals[0];
-  if (terminals.length !== 1 || terminal !== events.at(-1) || terminal?.status !== 'completed'
-    || typeof terminal.session_id !== 'string' || terminal.session_id.length < 1 || terminal.session_id.length > 128) {
-    invalid('missing or malformed terminal result');
+  if (stepOpen || terminals.length !== 1 || terminal !== events.at(-1) || sessionId === undefined) {
+    invalid('missing or malformed terminal step');
   }
-  return { events: Object.freeze(events), sessionId: terminal.session_id };
+  return { events: Object.freeze(events), sessionId };
 }
 
 export function createOpenCodeRunner(deps: OpenCodeRunnerDependenciesV4): OpenCodeRunnerV4 {
@@ -114,7 +145,7 @@ export function createOpenCodeRunner(deps: OpenCodeRunnerDependenciesV4): OpenCo
           result = await deps.sandbox.run({
             execution_id: input.execution_id,
             profile: 'EXECUTOR_NETWORKED',
-            argv: [...deps.harness_argv, 'run', '--format=json', `--model=${input.binding.binding.provider}/${input.binding.binding.model}`, `--agent=${input.agent}`, '--', renderModelPromptV4({
+            argv: [...deps.harness_argv, 'run', '--pure', '--auto', '--format=json', '--dir=/capsule', `--model=${input.binding.binding.provider}/${input.binding.binding.model}`, `--agent=${input.agent}`, '--', renderModelPromptV4({
               guidance: input.binding.binding.guidance,
               stableInstructions: [
                 'Implement only the requested objective inside repo/.',

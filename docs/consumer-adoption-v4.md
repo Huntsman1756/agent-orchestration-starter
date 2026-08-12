@@ -145,6 +145,12 @@ A before/after file snapshot is useful detection, but it is not prevention and
 does not prove hard isolation. Preserve violations for review; do not run a
 broad cleanup that could destroy unrelated work.
 
+Before claiming that the economical worker is active, follow the executable
+delegation evidence and troubleshooting checklist in
+[`harness-adapters-v4.md`](harness-adapters-v4.md). `AGENTS.md`, a profile and a
+project-local OpenCode agent are declarative inputs, not proof that the launcher
+ran or that provider usage was attributed to the worker.
+
 ## Optional report-only roles
 
 Consumers often need source extraction or document synthesis in addition to
@@ -192,6 +198,7 @@ the publication authority.
 - [ ] Platform and host qualification are current for the exact deployment.
 - [ ] Model/profile changes trigger reactivation and fresh qualification.
 - [ ] A synthetic low-risk shakedown succeeds before real repository work.
+- [ ] The shakedown proves route, launch, native harness events and provider usage; it does not infer delegation from instructions or a diff.
 - [ ] A rollback/abort path is exercised before unattended operation.
 
 ## Common invalid shortcuts

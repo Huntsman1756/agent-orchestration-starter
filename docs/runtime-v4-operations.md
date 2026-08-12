@@ -41,6 +41,11 @@ If any item is absent, startup or execution returns a typed failure. There is no
 
 Repository policy owns allowed branches, exact validation argv, routing restrictions, source sensitivity, sandbox profiles, and approved instruction sources. Runtime profiles own replaceable harness/provider/model bindings. The repository registry binds an approved ID to a canonical root and the exact policy/profile locations. Models and providers do not appear in the stable repository policy.
 
+Generated rules and profiles do not invoke a worker. Use the route, launch,
+native-event and provider-usage evidence described in
+[`harness-adapters-v4.md`](harness-adapters-v4.md) to distinguish real
+delegation from a passive project convention or a frontier fallback.
+
 Generated `.codex/config.toml` keeps the primary frontier context read-only, marks `agent_orchestration_v4` required, and enables only `run_coding_task`, `repair_coding_task`, `finalize_coding_task`, `abort_coding_task`, and `get_coding_task_status`. Existing unmanaged or locally modified config is never overwritten.
 
 ## Intended lifecycle
