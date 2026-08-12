@@ -46,6 +46,13 @@ native-event and provider-usage evidence described in
 [`harness-adapters-v4.md`](harness-adapters-v4.md) to distinguish real
 delegation from a passive project convention or a frontier fallback.
 
+For frontier-orchestrated economical execution, the admitted-run pipeline must
+invoke `runFrontierSupervisorV4` with qualified worker, review, frontier
+decision, repair-packet and durable persistence ports. This is the reusable
+automatic `delegate -> review -> repair/retry -> escalate` loop. A local script
+that launches the worker once and returns `AWAITING_FRONTIER_REVIEW` is only a
+one-shot adapter and must not be reported as autonomous orchestration.
+
 Generated `.codex/config.toml` keeps the primary frontier context read-only, marks `agent_orchestration_v4` required, and enables only `run_coding_task`, `repair_coding_task`, `finalize_coding_task`, `abort_coding_task`, and `get_coding_task_status`. Existing unmanaged or locally modified config is never overwritten.
 
 ## Intended lifecycle

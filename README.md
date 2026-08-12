@@ -96,6 +96,13 @@ owner and authority evidence authorized another economical-worker attempt.
 `AUTONOMOUS_BROKER` remains a distinct mode for hosts with separately qualified
 automatic retry policy.
 
+Hosts that want the complete automatic cycle should call
+`runFrontierSupervisorV4`. It drives `AWAITING_FRONTIER_DECISION` through a
+host-supplied, provider-neutral frontier decision port, persists the exact
+authorization, starts a clean bounded repair attempt and repeats until
+completion, escalation, iteration limit or budget failure. Configuration files
+alone do not start this loop; the admitted-run pipeline must invoke it.
+
 The outer [autonomous dispatcher](docs/autonomous-dispatcher-v4.md) starts in
 `PAUSED`, requires a durable transition to `RUNNING`, recovers leases and
 rechecks the exact merge SHA after publication. Circuit recovery also requires

@@ -88,6 +88,30 @@ qualified deployments whose trusted broker owns retry policy. Consumers must
 name the mode they actually operate and must not describe broker-driven retry
 as frontier orchestration.
 
+### Provider-neutral automatic supervisor
+
+`runFrontierSupervisorV4` closes the control-loop gap for `FRONTIER_LED`
+deployments. It repeatedly invokes the iterative executor, asks a host-supplied
+frontier decision port only when a persisted rejection is waiting, binds the
+returned `RETRY` or `ESCALATE` to that exact event and resumes from the durable
+event/decision chains. A retry therefore launches a fresh economical-worker
+session with the verified repair packet; escalation stops before another
+worker call. Invalid decisions, frontier-port failures and exhausted decision
+budgets fail closed.
+
+The supervisor is provider-neutral. `decide`, `execute`, `review`,
+`load_repair_packet` and persistence are host ports, so ChatGPT + NAN,
+frontier-only OpenAI, Anthropic + a local worker, or future combinations use
+the same loop after exact qualification. The supervisor never obtains provider
+credentials, invents repair findings or silently falls back to direct frontier
+execution.
+
+This function must be called by the host's admitted-run pipeline. Merely
+generating a profile, an `AGENTS.md` rule or a project-local launcher does not
+activate delegation. Consumer verification should prove at least one
+`reject -> durable frontier RETRY -> repair attempt` trajectory and record
+usage for planner, worker and reviewer roles.
+
 ## Repair packets and clean retries
 
 `RepairPacketV4` is created by the trusted validation/review boundary from the persisted finding hashes. It contains bounded category codes, paths/lines when applicable and short actionable instructions. Its hash, story ID, failed attempt and complete evidence set are checked before retry. A packet that introduces unrelated evidence fails closed.
