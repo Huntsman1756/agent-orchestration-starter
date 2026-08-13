@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 
 import { hashCanonicalV4 } from '../src/runtime/canonical.js';
+import { createDelegationProvenanceV4 } from '../src/runtime/delegation-provenance.js';
 import type { RuntimeWorkContractV4 } from '../src/runtime/contracts.js';
 import type { FinalizedRunV4 } from '../src/runtime/finalize.js';
 import { loadRuntimeRepositoryPolicyV4 } from '../src/runtime/load.js';
@@ -76,6 +78,37 @@ test('releases both locks when publication fails', async () => {
   value.input.adapter.pushExact = async () => { throw new Error('PUBLICATION_FAILED: offline'); };
   await assert.rejects(publishFinalizedRunV4(value.input), /PUBLICATION_FAILED/);
   assert.deepEqual(value.releases, ['repository', 'run']);
+});
+
+test('an opt-in publication gate rejects missing delegation provenance before push', async () => {
+  const value = fixture();
+  await assert.rejects(publishFinalizedRunV4({
+    ...value.input,
+    delegation_provenance_gate: { enforcement: 'REQUIRED', evidence: null, trusted_public_key: 'missing' },
+  }), /DELEGATION_PROVENANCE_REQUIRED/u);
+  assert.deepEqual(value.calls, []);
+  assert.deepEqual(value.releases, []);
+});
+
+test('an opt-in publication gate accepts only signed evidence for the exact finalized run', async () => {
+  const value = fixture();
+  const keys = generateKeyPairSync('ed25519');
+  const evidence = createDelegationProvenanceV4({
+    run_id: value.contract.run_id, route: 'ORCHESTRATED', disposition: 'DELEGATED', contract_hash: value.contract.contract_hash,
+    policy_hash: value.policyHash, profile_hash: value.contract.profile_hash, worker_capability_hash: '1'.repeat(64), base_sha: value.contract.base_sha,
+    commit_sha: value.finalized.commit_sha, git_tree_sha: value.finalized.git_tree_sha, evidence_tree_hash: value.finalized.evidence_tree_hash,
+    diff_hash: value.finalized.diff_hash, validation_manifest_hash: '4'.repeat(64), review_attestation_hash: value.finalized.review_attestation_hash,
+    accepted_story_receipt_hashes: ['6'.repeat(64)], frontier_decision_hashes: [], exemption: null, created_at: '2026-08-13T12:00:00.000Z',
+  }, {
+    public_key_spki_der: keys.publicKey.export({ type: 'spki', format: 'der' }),
+    sign: (payload) => sign(null, payload, keys.privateKey),
+  });
+  await publishFinalizedRunV4({ ...value.input, delegation_provenance_gate: { enforcement: 'REQUIRED', evidence, trusted_public_key: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() } });
+  assert.equal(value.calls[0], `push:${commitSha}:codex/auto/${value.contract.run_id}:origin`);
+
+  const stale = fixture();
+  await assert.rejects(publishFinalizedRunV4({ ...stale.input, delegation_provenance_gate: { enforcement: 'REQUIRED', evidence: { ...evidence, diff_hash: '0'.repeat(64) }, trusted_public_key: keys.publicKey.export({ type: 'spki', format: 'pem' }).toString() } }), /DELEGATION_PROVENANCE_REQUIRED/u);
+  assert.deepEqual(stale.calls, []);
 });
 
 test('records an explicit terminal skip only when policy or contract prohibits publication', async () => {

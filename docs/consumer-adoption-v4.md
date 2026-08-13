@@ -193,6 +193,7 @@ the publication authority.
 - [ ] Code workers use clean isolated worktrees and exact path contracts.
 - [ ] Validation and review are independent from worker claims.
 - [ ] Retry ownership is explicit; frontier-led runs prove through the decision chain and iteration binding that no second worker call occurs without durable frontier authority.
+- [ ] Repositories claiming mandatory delegation enable signed provenance enforcement outside the model; CI retrieves evidence from protected storage rather than the candidate tree.
 - [ ] Report-only extensions cannot publish or mutate application data.
 - [ ] Publication is disabled until its separate evidence gate passes.
 - [ ] Platform and host qualification are current for the exact deployment.

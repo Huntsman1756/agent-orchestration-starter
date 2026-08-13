@@ -1512,6 +1512,8 @@ const PUBLIC_FAILURE_MESSAGES_V4: Readonly<Record<RuntimeFailureCodeV4, string>>
   FINALIZATION_ISOLATION_FAILED: 'finalization isolation failed',
   FINALIZATION_FAILED: 'finalization failed',
   PUBLICATION_POLICY_DENIED: 'publication policy denied the operation',
+  DELEGATION_PROVENANCE_INVALID: 'delegation provenance is invalid',
+  DELEGATION_PROVENANCE_REQUIRED: 'required delegation provenance is unavailable',
   PUBLICATION_FAILED: 'publication failed',
   ABORTED: 'operation was aborted',
   UNKNOWN_FAILURE: 'broker request failed',

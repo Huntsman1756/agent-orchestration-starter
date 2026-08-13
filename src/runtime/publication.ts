@@ -2,6 +2,7 @@ import { hashCanonicalV4 } from './canonical.js';
 import type { RuntimeRepositoryPolicyV4, RuntimeWorkContractV4 } from './contracts.js';
 import type { FinalizationLockV4, FinalizedRunV4 } from './finalize.js';
 import type { BrokerCommandV4 } from './run-state.js';
+import { verifyDelegationProvenanceV4, type DelegationProvenanceV4 } from './delegation-provenance.js';
 
 const SHA1 = /^[a-f0-9]{40}$/;
 const RUN_ID = /^run_[A-Za-z0-9_-]{16,96}$/;
@@ -48,12 +49,17 @@ export interface PublishFinalizedRunInputV4 {
   readonly acquire_run_lock: () => Promise<FinalizationLockV4>;
   readonly acquire_repository_lock: () => Promise<FinalizationLockV4>;
   readonly append_publication_event: (event: PublicationProgressEventV4) => Promise<void>;
+  readonly delegation_provenance_gate?: Readonly<
+    | { enforcement: 'DISABLED' }
+    | { enforcement: 'REQUIRED'; evidence: DelegationProvenanceV4 | null; trusted_public_key: string | Uint8Array }
+  >;
 }
 
 export interface PublishedRunV4 extends PullRequestV4 { readonly run_id: string; readonly local_commit_sha: string; }
 
 function denied(message: string): never { throw new Error(`PUBLICATION_POLICY_DENIED: ${message}`); }
 function failed(message: string): never { throw new Error(`PUBLICATION_FAILED: ${message}`); }
+function provenanceRequired(message: string): never { throw new Error(`DELEGATION_PROVENANCE_REQUIRED: ${message}`); }
 
 function publicationIdentity(contract: RuntimeWorkContractV4, finalized: FinalizedRunV4, policy: RuntimeRepositoryPolicyV4, expectedPolicyHash: string): string {
   const policyHash = hashCanonicalV4(policy);
@@ -67,6 +73,23 @@ function publicationIdentity(contract: RuntimeWorkContractV4, finalized: Finaliz
 
 function verify(input: PublishFinalizedRunInputV4): { branch: string; policyHash: string } {
   const policyHash = publicationIdentity(input.contract, input.finalized, input.policy, input.expected_policy_hash);
+  if (input.delegation_provenance_gate?.enforcement === 'REQUIRED') {
+    if (input.delegation_provenance_gate.evidence === null) provenanceRequired('signed evidence is missing');
+    try {
+      const evidence = verifyDelegationProvenanceV4(input.delegation_provenance_gate.evidence, {
+        commit_sha: input.finalized.commit_sha,
+        git_tree_sha: input.finalized.git_tree_sha,
+        policy_hash: policyHash,
+        profile_hash: input.contract.profile_hash,
+      }, input.delegation_provenance_gate.trusted_public_key);
+      if (evidence.run_id !== input.contract.run_id || evidence.contract_hash !== input.contract.contract_hash
+        || evidence.diff_hash !== input.finalized.diff_hash || evidence.evidence_tree_hash !== input.finalized.evidence_tree_hash
+        || evidence.review_attestation_hash !== input.finalized.review_attestation_hash) provenanceRequired('evidence does not describe the finalized run');
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('DELEGATION_PROVENANCE_REQUIRED:')) throw error;
+      provenanceRequired('signed evidence is invalid or stale');
+    }
+  }
   if (!input.policy.publication.enabled) denied('publication is disabled');
   if (!input.policy.base.allowedBranches.includes(input.policy.publication.baseBranch)) denied('publication base is not allowed');
   const prohibited = new Set(input.contract.prohibited_actions.map((value) => value.toLocaleLowerCase('en-US')));
