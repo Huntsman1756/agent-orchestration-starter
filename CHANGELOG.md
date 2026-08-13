@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Added opt-in, provider-neutral delegation provenance enforcement. A trusted
+  host signs the exact finalized commit, policy/profile, worker capability,
+  accepted story receipts, validation and independent review with Ed25519;
+  broker publication rejects missing, forged or stale evidence before push.
+  Explicit frontier-only exemptions require separate authority evidence.
 - Added the provider-neutral `runFrontierSupervisorV4` control loop for real
   frontier-led delegation: persisted rejection evidence is converted into a
   bounded `RETRY` or `ESCALATE`, repair attempts use fresh worker sessions, and

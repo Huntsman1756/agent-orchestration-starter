@@ -25,6 +25,7 @@ import { reduceEvents } from '../pilot/reducer.js';
 import type { PilotEventV3 } from '../pilot/contracts.js';
 import { activateRuntimeRepositoryV4, installRuntimeHostV4, verifyRuntimeHostInstallationV4, loadRuntimeHostInstallationV4 } from '../runtime/host-installation.js';
 import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
+import { verifyDelegationProvenanceV4 } from '../runtime/delegation-provenance.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -256,6 +257,17 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
           const values = exactOptions(argv.slice(2), ['--run-id','--activation'], ['--run-id','--activation']);
           stdout(JSON.stringify(await (await loadRuntimeHostDriverV4(values.get('--activation')!)).status(runId)));
         }
+        return 0;
+      }
+      if (subcommand === 'verify-delegation') {
+        const values = exactOptions(argv.slice(2), ['--evidence','--public-key','--commit-sha','--git-tree-sha','--policy-hash','--profile-hash'], ['--evidence','--public-key','--commit-sha','--git-tree-sha','--policy-hash','--profile-hash']);
+        const evidence = verifyDelegationProvenanceV4(JSON.parse(await readFile(values.get('--evidence')!, 'utf8')), {
+          commit_sha: values.get('--commit-sha')!,
+          git_tree_sha: values.get('--git-tree-sha')!,
+          policy_hash: values.get('--policy-hash')!,
+          profile_hash: values.get('--profile-hash')!,
+        }, await readFile(values.get('--public-key')!, 'utf8'));
+        stdout(JSON.stringify({ verified: true, run_id: evidence.run_id, disposition: evidence.disposition, provenance_hash: evidence.provenance_hash }));
         return 0;
       }
       throw new Error('INVALID_CONTRACT: unsupported runtime command');

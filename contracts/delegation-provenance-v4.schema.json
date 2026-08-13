@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/agent-orchestration/delegation-provenance-v4.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "run_id", "route", "disposition", "contract_hash", "policy_hash", "profile_hash", "worker_capability_hash", "base_sha", "commit_sha", "git_tree_sha", "evidence_tree_hash", "diff_hash", "validation_manifest_hash", "review_attestation_hash", "accepted_story_receipt_hashes", "frontier_decision_hashes", "exemption", "created_at", "provenance_hash", "signer_key_id", "signature"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "kind": { "const": "DELEGATION_PROVENANCE" },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{16,96}$" },
+    "route": { "enum": ["ECONOMY", "ORCHESTRATED", "FRONTIER_EXECUTION"] },
+    "disposition": { "enum": ["DELEGATED", "FRONTIER_ONLY_EXEMPTION"] },
+    "contract_hash": { "$ref": "#/$defs/hash" },
+    "policy_hash": { "$ref": "#/$defs/hash" },
+    "profile_hash": { "$ref": "#/$defs/hash" },
+    "worker_capability_hash": { "oneOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] },
+    "base_sha": { "$ref": "#/$defs/sha" },
+    "commit_sha": { "$ref": "#/$defs/sha" },
+    "git_tree_sha": { "$ref": "#/$defs/sha" },
+    "evidence_tree_hash": { "$ref": "#/$defs/hash" },
+    "diff_hash": { "$ref": "#/$defs/hash" },
+    "validation_manifest_hash": { "$ref": "#/$defs/hash" },
+    "review_attestation_hash": { "$ref": "#/$defs/hash" },
+    "accepted_story_receipt_hashes": { "$ref": "#/$defs/hashes" },
+    "frontier_decision_hashes": { "$ref": "#/$defs/hashes" },
+    "exemption": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/exemption" }] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "provenance_hash": { "$ref": "#/$defs/hash" },
+    "signer_key_id": { "$ref": "#/$defs/hash" },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9+/]+={0,2}$" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "disposition": { "const": "DELEGATED" } }, "required": ["disposition"] },
+      "then": {
+        "properties": {
+          "route": { "enum": ["ECONOMY", "ORCHESTRATED"] },
+          "worker_capability_hash": { "$ref": "#/$defs/hash" },
+          "accepted_story_receipt_hashes": { "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } },
+          "exemption": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "route": { "const": "FRONTIER_EXECUTION" },
+          "worker_capability_hash": { "type": "null" },
+          "accepted_story_receipt_hashes": { "type": "array", "maxItems": 0 },
+          "exemption": { "$ref": "#/$defs/exemption" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "hashes": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/hash" } },
+    "exemption": { "type": "object", "additionalProperties": false, "required": ["reason_code", "authority_ref", "authority_evidence_hash"], "properties": { "reason_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }, "authority_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$" }, "authority_evidence_hash": { "$ref": "#/$defs/hash" } } }
+  }
+}

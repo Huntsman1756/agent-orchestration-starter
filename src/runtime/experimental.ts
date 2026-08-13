@@ -8,6 +8,7 @@ export * from './publication.js';
 export * from './github-publication.js';
 export * from './iterative-executor.js';
 export * from './frontier-supervisor.js';
+export * from './delegation-provenance.js';
 export * from './capability-contract.js';
 export * from './trajectory.js';
 export * from './a2a-adapter.js';

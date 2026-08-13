@@ -46,6 +46,13 @@ native-event and provider-usage evidence described in
 [`harness-adapters-v4.md`](harness-adapters-v4.md) to distinguish real
 delegation from a passive project convention or a frontier fallback.
 
+When delegation is mandatory, activate the signed provenance gate described in
+[`delegation-provenance-v4.md`](delegation-provenance-v4.md). It is enforced at
+the broker-owned publication boundary, before any push. Existing deployments
+remain compatible because the gate is disabled unless their trusted host
+composition explicitly supplies `enforcement: REQUIRED`, signed evidence and
+the protected Ed25519 public key.
+
 For frontier-orchestrated economical execution, the admitted-run pipeline must
 invoke `runFrontierSupervisorV4` with qualified worker, review, frontier
 decision, repair-packet and durable persistence ports. This is the reusable
@@ -89,4 +96,4 @@ Successful finalization creates a deterministic local commit and updates only th
 
 ## Typed failures
 
-Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, `PUBLICATION_POLICY_DENIED`, `PUBLICATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.
+Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `DELEGATION_PROVENANCE_INVALID`, `DELEGATION_PROVENANCE_REQUIRED`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, `PUBLICATION_POLICY_DENIED`, `PUBLICATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.

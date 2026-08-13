@@ -103,6 +103,14 @@ authorization, starts a clean bounded repair attempt and repeats until
 completion, escalation, iteration limit or budget failure. Configuration files
 alone do not start this loop; the admitted-run pipeline must invoke it.
 
+For deployments that require economical-worker delegation, enable the signed
+[delegation provenance gate](docs/delegation-provenance-v4.md). The privileged
+host signs the exact finalized commit and accepted worker/review evidence with
+Ed25519. Publication can then fail closed before push when the evidence is
+missing, stale, forged, or replaced by an unapproved frontier-only shortcut.
+The gate is opt-in for compatibility; instructions in `AGENTS.md` are not a
+substitute for enabling it at the broker/publication boundary.
+
 The outer [autonomous dispatcher](docs/autonomous-dispatcher-v4.md) starts in
 `PAUSED`, requires a durable transition to `RUNNING`, recovers leases and
 rechecks the exact merge SHA after publication. Circuit recovery also requires
