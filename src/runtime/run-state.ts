@@ -20,6 +20,7 @@ export interface BrokerReviewVerdictV4 {
   readonly contract_hash: string;
   readonly diff_hash: string;
   readonly tree_hash: string;
+  readonly capability_snapshot_hash: string;
   readonly verdict: BrokerVerdictV4;
   readonly reason: string;
   readonly verdict_hash: string;
@@ -32,7 +33,7 @@ export type BrokerCommandV4 =
   | Readonly<{ type: 'PATHS_REINSPECTED'; command_id: string; run_id: string; inspection_epoch: number }>
   | Readonly<{ type: 'EXTERNAL_PROCESS_STARTED'; command_id: string; run_id: string; process: ExternalProcessIdentityV4 }>
   | Readonly<{ type: 'CANDIDATE_ACCEPTED'; command_id: string; run_id: string; validation_results: readonly RuntimeValidationResultV4[]; diff_hash: string; tree_hash: string; changed_files: readonly string[]; review_attestation_hash: string }>
-  | Readonly<{ type: 'REVIEW_VERDICT_RECORDED'; command_id: string; run_id: string; review_packet_hash: string; contract_hash: string; diff_hash: string; tree_hash: string; verdict: BrokerVerdictV4; reason: string; verdict_hash: string }>
+  | Readonly<{ type: 'REVIEW_VERDICT_RECORDED'; command_id: string; run_id: string; review_packet_hash: string; contract_hash: string; diff_hash: string; tree_hash: string; capability_snapshot_hash: string; verdict: BrokerVerdictV4; reason: string; verdict_hash: string }>
   | Readonly<{ type: 'COMMIT_CREATED'; command_id: string; run_id: string; task_ref: string; base_sha: string; git_tree_sha: string; evidence_tree_hash: string; commit_sha: string; contract_hash: string; diff_hash: string; validation_manifest_hash: string; review_attestation_hash: string }>
   | Readonly<{ type: 'BRANCH_PUSHED'; command_id: string; run_id: string; commit_sha: string; branch: string; remote: string; publication_policy_hash: string }>
   | Readonly<{ type: 'PULL_REQUEST_RECORDED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; base_branch: string; publication_policy_hash: string }>
@@ -173,7 +174,7 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       return { type, command_id, run_id: runId(command.run_id), validation_results, diff_hash: hash(command.diff_hash, 'diff_hash'), tree_hash: hash(command.tree_hash, 'tree_hash'), changed_files, review_attestation_hash: hash(command.review_attestation_hash, 'review_attestation_hash') };
     }
     if (type === 'REVIEW_VERDICT_RECORDED') {
-      exactKeys(command, ['type', 'command_id', 'run_id', 'review_packet_hash', 'contract_hash', 'diff_hash', 'tree_hash', 'verdict', 'reason', 'verdict_hash'], 'REVIEW_VERDICT_RECORDED');
+      exactKeys(command, ['type', 'command_id', 'run_id', 'review_packet_hash', 'contract_hash', 'diff_hash', 'tree_hash', 'capability_snapshot_hash', 'verdict', 'reason', 'verdict_hash'], 'REVIEW_VERDICT_RECORDED');
       if (command.verdict !== 'APPROVED' && command.verdict !== 'REJECTED') corrupt('review verdict is invalid');
       if (typeof command.reason !== 'string' || command.reason.trim().length < 1 || command.reason.length > 4_000 || command.reason.includes('\u0000')) corrupt('review verdict reason is invalid');
       const run_id = runId(command.run_id);
@@ -181,9 +182,10 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       const contract_hash = hash(command.contract_hash, 'contract_hash');
       const diff_hash = hash(command.diff_hash, 'diff_hash');
       const tree_hash = hash(command.tree_hash, 'tree_hash');
+      const capability_snapshot_hash = hash(command.capability_snapshot_hash, 'capability_snapshot_hash');
       const verdict_hash = hash(command.verdict_hash, 'verdict_hash');
-      if (hashCanonicalV4({ schema_version: 4, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, verdict: command.verdict, reason: command.reason }) !== verdict_hash) corrupt('review verdict hash is forged');
-      return { type, command_id, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, verdict: command.verdict, reason: command.reason, verdict_hash };
+      if (hashCanonicalV4({ schema_version: 4, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, capability_snapshot_hash, verdict: command.verdict, reason: command.reason }) !== verdict_hash) corrupt('review verdict hash is forged');
+      return { type, command_id, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, capability_snapshot_hash, verdict: command.verdict, reason: command.reason, verdict_hash };
     }
     if (type === 'COMMIT_CREATED') {
       exactKeys(command, ['type', 'command_id', 'run_id', 'task_ref', 'base_sha', 'git_tree_sha', 'evidence_tree_hash', 'commit_sha', 'contract_hash', 'diff_hash', 'validation_manifest_hash', 'review_attestation_hash'], 'COMMIT_CREATED');
@@ -330,6 +332,7 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
         contract_hash: command.contract_hash,
         diff_hash: command.diff_hash,
         tree_hash: command.tree_hash,
+        capability_snapshot_hash: command.capability_snapshot_hash,
         verdict: command.verdict,
         reason: command.reason,
         verdict_hash: command.verdict_hash,

@@ -26,6 +26,7 @@ test('builds and reloads a review packet bound to deterministic evidence', () =>
     contract: workContract as any,
     complete_diff: 'diff --git a/src/greeting.ts b/src/greeting.ts\n',
     changed_files: ['src/greeting.ts'],
+    capability_snapshot_hash: 'a'.repeat(64),
     diff_hash: result.diff_hash,
     tree_hash: result.tree_hash,
     validation_results: [{ validation_id: 'test', passed: true, result_hash: 'e'.repeat(64), validated_tree_hash: result.tree_hash }],
@@ -33,9 +34,11 @@ test('builds and reloads a review packet bound to deterministic evidence', () =>
   });
   const packet = buildBrokerReviewPacket({ result, envelope });
   assert.equal(packet.packet_hash.length, 64);
+  assert.equal(packet.capability_snapshot_hash, 'a'.repeat(64));
   assert.deepEqual(loadBrokerReviewPacketV4(packet), packet);
   const verdict = createBrokerVerdictRecord({ run_id: packet.run_id, packet_hash: packet.packet_hash, verdict: 'APPROVED', reason: 'The deterministic evidence is complete.' }, packet);
   assert.equal(verdict.review_packet_hash, packet.packet_hash);
+  assert.equal(verdict.capability_snapshot_hash, packet.capability_snapshot_hash);
   assert.equal(verdict.verdict_hash.length, 64);
 });
 
@@ -46,6 +49,7 @@ test('refuses packets with unresolved findings or forged evidence bindings', () 
     contract: workContract as any,
     complete_diff: 'diff',
     changed_files: ['src/greeting.ts'],
+    capability_snapshot_hash: 'a'.repeat(64),
     diff_hash: result.diff_hash,
     tree_hash: result.tree_hash,
     validation_results: [{ validation_id: 'test', passed: true, result_hash: 'e'.repeat(64), validated_tree_hash: result.tree_hash }],
@@ -56,6 +60,7 @@ test('refuses packets with unresolved findings or forged evidence bindings', () 
     contract: workContract as any,
     complete_diff: 'diff',
     changed_files: ['src/greeting.ts'],
+    capability_snapshot_hash: 'a'.repeat(64),
     diff_hash: result.diff_hash,
     tree_hash: result.tree_hash,
     validation_results: [{ validation_id: 'test', passed: true, result_hash: 'e'.repeat(64), validated_tree_hash: result.tree_hash }],

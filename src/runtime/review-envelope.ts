@@ -14,6 +14,7 @@ export interface ReviewEnvelopeInputV4 {
   readonly contract: RuntimeWorkContractV4;
   readonly complete_diff: string;
   readonly changed_files: readonly string[];
+  readonly capability_snapshot_hash: string;
   readonly diff_hash: string;
   readonly tree_hash: string;
   readonly validation_results: readonly ReviewValidationEvidenceV4[];
@@ -26,6 +27,7 @@ export interface ReviewEnvelopeV4 {
   readonly base_sha: string;
   readonly complete_diff: string;
   readonly changed_files: readonly string[];
+  readonly capability_snapshot_hash: string;
   readonly validation_manifest: readonly ReviewValidationEvidenceV4[];
   readonly validation_manifest_hash: string;
   readonly tree_hash: string;
@@ -45,10 +47,10 @@ function deepFreeze<T>(value: T): T {
 }
 
 export function buildReviewEnvelope(input: ReviewEnvelopeInputV4): ReviewEnvelopeV4 {
-  const expected = ['changed_files', 'complete_diff', 'contract', 'diff_hash', 'tree_hash', 'unresolved_findings', 'validation_results'];
+  const expected = ['capability_snapshot_hash', 'changed_files', 'complete_diff', 'contract', 'diff_hash', 'tree_hash', 'unresolved_findings', 'validation_results'];
   const keys = Object.keys(input).sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) invalid('review envelope input contains hidden context');
-  if (!hash(input.diff_hash) || !hash(input.tree_hash) || Buffer.byteLength(input.complete_diff, 'utf8') > 2 * 1024 * 1024
+  if (!hash(input.capability_snapshot_hash) || !hash(input.diff_hash) || !hash(input.tree_hash) || Buffer.byteLength(input.complete_diff, 'utf8') > 2 * 1024 * 1024
     || input.changed_files.length > 256 || new Set(input.changed_files.map((path) => path.toLowerCase())).size !== input.changed_files.length
     || input.changed_files.some((path) => !isNormalizedRepositoryRelativePathV4(path))
     || input.validation_results.length < 1 || input.validation_results.length > 64
@@ -63,6 +65,6 @@ export function buildReviewEnvelope(input: ReviewEnvelopeInputV4): ReviewEnvelop
   const validationManifest = deepFreeze(structuredClone(input.validation_results));
   const unresolvedFindings = deepFreeze(structuredClone(input.unresolved_findings));
   const validationManifestHash = hashCanonicalV4({ schema_version: 4, results: validationManifest });
-  const body = { schema_version: 4 as const, contract, base_sha: contract.base_sha, complete_diff: input.complete_diff, changed_files: changedFiles, validation_manifest: validationManifest, validation_manifest_hash: validationManifestHash, tree_hash: input.tree_hash, diff_hash: input.diff_hash, unresolved_findings: unresolvedFindings };
+  const body = { schema_version: 4 as const, contract, base_sha: contract.base_sha, complete_diff: input.complete_diff, changed_files: changedFiles, capability_snapshot_hash: input.capability_snapshot_hash, validation_manifest: validationManifest, validation_manifest_hash: validationManifestHash, tree_hash: input.tree_hash, diff_hash: input.diff_hash, unresolved_findings: unresolvedFindings };
   return deepFreeze({ ...body, envelope_hash: hashCanonicalV4(body) });
 }

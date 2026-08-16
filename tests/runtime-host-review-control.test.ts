@@ -27,6 +27,7 @@ function fixture() {
     contract,
     complete_diff: 'diff --git a/src/greeting.ts b/src/greeting.ts\n',
     changed_files: result.changed_files,
+    capability_snapshot_hash: 'a'.repeat(64),
     diff_hash: result.diff_hash,
     tree_hash: result.tree_hash,
     validation_results: [{ validation_id: 'test', passed: true, result_hash: 'e'.repeat(64), validated_tree_hash: result.tree_hash }],

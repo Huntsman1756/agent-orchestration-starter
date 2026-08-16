@@ -82,7 +82,7 @@ test('permits one content-addressed context expansion in a second fresh session'
   assert.deepEqual(capsuleContextSizes, [0, 1]);
 });
 
-function attemptResult(session_id: string) { return { session_id, events: [], diff: { changes: [], changed_files: 0, changed_lines: 0, diff_hash: 'd'.repeat(64), tree_hash: 'c'.repeat(64) } }; }
+function attemptResult(session_id: string) { return { session_id, events: [], diff: { changes: [], changed_files: 0, changed_lines: 0, diff_hash: 'd'.repeat(64), tree_hash: 'c'.repeat(64) }, capability_snapshot_hash: '8'.repeat(64) }; }
 function rejection(seed: string) { const value = acceptance(seed); return { ...value, decision: 'REJECT' as const, findings: [{ id: `finding-${seed}`, severity: 'high', message: 'fix' }], unresolved_finding_ids: [`finding-${seed}`] }; }
 function acceptance(seed: string) { return { ...attestation(), review_id: seed, attestation_hash: hashCanonicalV4({ seed }) } as any; }
 function reviewResult(session: string, decision: 'REQUEST_CONTEXT' | 'ACCEPT', requested: string[]) { const body = { ...attestation(), reviewer_session_id: session, decision, requested_context_hashes: requested, attestation_hash: undefined }; delete (body as any).attestation_hash; return { ...body, attestation_hash: hashCanonicalV4(body) }; }

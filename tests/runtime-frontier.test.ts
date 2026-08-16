@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createFrontierExecutor } from '../src/runtime/frontier-executor.js';
 
 const diff = { changes: [{ path: 'src/greeting.ts', operation: 'MODIFY' as const, content_hash: '1'.repeat(64) }], changed_files: 1, changed_lines: 2, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) };
-const attempt = { session_id: 'executor-session', events: [], diff };
+const attempt = { session_id: 'executor-session', events: [], diff, capability_snapshot_hash: '8'.repeat(64) };
 const capsule = { root: 'C:/capsule', manifest_hash: '4'.repeat(64), instruction_manifest_hash: '5'.repeat(64) };
 const contract = { effective_route: 'FRONTIER', contract_hash: '6'.repeat(64) } as any;
 

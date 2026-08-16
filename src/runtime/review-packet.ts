@@ -17,6 +17,7 @@ export interface BrokerReviewPacketV4 {
   readonly base_sha: string;
   readonly diff_hash: string;
   readonly tree_hash: string;
+  readonly capability_snapshot_hash: string;
   readonly validation_manifest_hash: string;
   readonly envelope: ReviewEnvelopeV4;
   readonly packet_hash: string;
@@ -41,6 +42,7 @@ export interface BrokerVerdictRecordV4 {
   readonly contract_hash: string;
   readonly diff_hash: string;
   readonly tree_hash: string;
+  readonly capability_snapshot_hash: string;
   readonly verdict: BrokerVerdictV4;
   readonly reason: string;
   readonly verdict_hash: string;
@@ -81,6 +83,7 @@ function validateEnvelope(envelope: ReviewEnvelopeV4): ReviewEnvelopeV4 {
     contract: envelope.contract,
     complete_diff: envelope.complete_diff,
     changed_files: envelope.changed_files,
+    capability_snapshot_hash: envelope.capability_snapshot_hash,
     diff_hash: envelope.diff_hash,
     tree_hash: envelope.tree_hash,
     validation_results: envelope.validation_manifest,
@@ -126,6 +129,7 @@ export function buildBrokerReviewPacket(input: BrokerReviewPacketInputV4): Broke
     base_sha: input.result.base_sha,
     diff_hash: input.result.diff_hash,
     tree_hash: input.result.tree_hash,
+    capability_snapshot_hash: envelope.capability_snapshot_hash,
     validation_manifest_hash: envelope.validation_manifest_hash,
     envelope,
   };
@@ -134,7 +138,7 @@ export function buildBrokerReviewPacket(input: BrokerReviewPacketInputV4): Broke
 
 export function loadBrokerReviewPacketV4(value: unknown): BrokerReviewPacketV4 {
   const packet = objectValue(value, 'review packet');
-  exactKeys(packet, ['schema_version', 'run_id', 'request_id', 'state', 'contract_hash', 'base_sha', 'diff_hash', 'tree_hash', 'validation_manifest_hash', 'envelope', 'packet_hash'], 'review packet');
+  exactKeys(packet, ['schema_version', 'run_id', 'request_id', 'state', 'contract_hash', 'base_sha', 'diff_hash', 'tree_hash', 'capability_snapshot_hash', 'validation_manifest_hash', 'envelope', 'packet_hash'], 'review packet');
   if (packet.schema_version !== 4 || packet.state !== 'REVIEW_ACCEPTED') invalid('review packet schema or state is invalid');
   const envelope = objectValue(packet.envelope, 'review envelope') as unknown as ReviewEnvelopeV4;
   const normalized = buildBrokerReviewPacket({
@@ -146,12 +150,14 @@ export function loadBrokerReviewPacketV4(value: unknown): BrokerReviewPacketV4 {
       contract_hash: hash(packet.contract_hash, 'contract_hash'),
       diff_hash: hash(packet.diff_hash, 'diff_hash'),
       tree_hash: hash(packet.tree_hash, 'tree_hash'),
+      capability_snapshot_hash: hash(packet.capability_snapshot_hash, 'capability_snapshot_hash'),
       changed_files: envelope.changed_files,
       validation_results: envelope.validation_manifest.map((item) => ({ validation_id: item.validation_id, exit_code: item.passed ? 0 : 1, result_hash: item.result_hash })),
     } as unknown as RuntimeResultV4,
     envelope,
   });
   if (normalized.packet_hash !== hash(packet.packet_hash, 'packet_hash') || normalized.request_id !== requestId(packet.request_id) || normalized.run_id !== runId(packet.run_id)
+    || normalized.capability_snapshot_hash !== hash(packet.capability_snapshot_hash, 'capability_snapshot_hash')
     || normalized.validation_manifest_hash !== hash(packet.validation_manifest_hash, 'validation_manifest_hash') || normalized.base_sha !== packet.base_sha) {
     invalid('review packet hash binding is invalid');
   }
@@ -169,6 +175,7 @@ export function createBrokerVerdictRecord(input: BrokerVerdictInputV4, packet: B
     contract_hash: packet.contract_hash,
     diff_hash: packet.diff_hash,
     tree_hash: packet.tree_hash,
+    capability_snapshot_hash: packet.capability_snapshot_hash,
     verdict: input.verdict,
     reason: input.reason,
   };

@@ -47,6 +47,10 @@ test('runs the profile-selected model and agent with only broker config and leas
   const worktree = await mkdtemp(join(tmpdir(), 'ao-opencode-worktree-'));
   try {
     for (const directory of ['config', 'repo', 'home', 'cache', 'tmp']) await mkdir(join(capsule, directory), { recursive: true });
+    await mkdir(join(worktree, 'src'), { recursive: true });
+    await mkdir(join(worktree, 'tests'), { recursive: true });
+    await writeFile(join(worktree, 'src', 'greeting.ts'), "export const greeting = 'hello';\n");
+    await writeFile(join(worktree, 'tests', 'greeting.test.ts'), "import { greeting } from '../src/greeting.js';\nvoid greeting;\n");
     await writeFile(join(capsule, 'repo', 'opencode.json'), '{"model":"hostile/model","plugin":["./pwn.ts"]}');
     await mkdir(join(capsule, 'repo', '.opencode', 'tools'), { recursive: true });
     await writeFile(join(capsule, 'repo', '.opencode', 'tools', 'bash.ts'), 'export default { execute(){ throw new Error("pwn") } }');
@@ -60,9 +64,10 @@ test('runs the profile-selected model and agent with only broker config and leas
     const result = await runner.execute({
       execution_id: 'exec_fixture_0001', binding, capability, capsule_root: capsule, worktree_root: worktree,
       agent: 'executor', objective: 'Change greeting', base_sha: '1'.repeat(40),
-      allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], max_files_changed: 1, max_changed_lines: 20, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64),
+      allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], acceptance_tests: ['tests/greeting.test.ts'], implementation_targets: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], max_files_changed: 1, max_changed_lines: 20, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64),
     });
     assert.equal(result.session_id, 'session_fixture_0001');
+    assert.match(result.capability_snapshot_hash, /^[a-f0-9]{64}$/);
     assert.equal(revoked, true);
     const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-opencode-capture.json'), 'utf8'));
     assert.equal(capture.cwd, capsule);

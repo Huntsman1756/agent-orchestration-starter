@@ -46,6 +46,9 @@ export function createFrontierExecutor(deps: FrontierExecutorDependenciesV4): Fr
         throw error;
       }
       state('VALIDATION');
+      if (!/^[a-f0-9]{64}$/u.test(attempt.capability_snapshot_hash)) {
+        terminal('VALIDATION_FAILED', 'executor did not return a valid capability snapshot hash');
+      }
       let validation: readonly FrontierValidationEvidenceV4[];
       try {
         validation = await deps.validate(contract, capsule, attempt);

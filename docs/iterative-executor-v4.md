@@ -26,6 +26,14 @@ Every V4 work contract now carries two explicit path matrices:
 
 `allowed_changes` remains a hash-bound compatibility projection and must exactly mirror `implementation_targets`; it is not an independent authority. The broker inspects the implementation targets before launch, OpenCode denies every other edit path, and the economy diff interceptor rejects any observed acceptance-test change as `ECONOMY_POLICY_VIOLATION` before the candidate can be accepted. The normalized repair instruction is: `Intentaste modificar los tests de aceptación. Esto está prohibido por el contrato. Solo modifica los archivos de implementación.`
 
+## Static capability snapshot and context culling
+
+Before a coding runner starts its model session, `src/routing/capability-snapshot.ts` parses the declared implementation targets and acceptance tests with the TypeScript compiler API. It follows only statically observable local edges: imports/exports, literal `require()` or `import()` specifiers, import-type nodes and TypeScript reference paths. It never loads or evaluates repository modules. Package imports and dynamic expressions are excluded; unresolved local static imports fail closed, while ignored dynamic edges are recorded in the snapshot metadata.
+
+The default bounded context is 128 KiB and the parser caps the graph at 256 files. When the complete dependency closure would exceed the limit, the snapshot switches to `SIGNATURE_FALLBACK`: target and test roots retain full source, while dependencies contribute only exported type/interface signatures (plus safe declaration signatures). If even that bounded form cannot fit, execution fails before the model is invoked. The final ordered file set, inclusion modes, source revision and ignored-edge evidence are SHA-256 bound by `snapshot_hash`.
+
+OpenCode and Codex inject the rendered `<capability_snapshot>` blocks before the task and return the same hash in their execution receipt. The Review Envelope and Broker Review Packet carry `capability_snapshot_hash`; the durable review-verdict journal record includes it in its own hash chain. A reviewer can therefore verify both the exact bounded context seen by the worker and its transitive audit-trail binding.
+
 ## Bounded decomposition
 
 Every story declares exact allowed paths and operations, validation IDs, acceptance criteria, dependency edges, required capabilities and these budgets:

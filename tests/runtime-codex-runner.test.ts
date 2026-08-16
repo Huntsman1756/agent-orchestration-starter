@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -43,6 +43,10 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   const capsule = await mkdtemp(join(tmpdir(), 'ao-codex-capsule-'));
   const worktree = await mkdtemp(join(tmpdir(), 'ao-codex-worktree-'));
   await mkdir(join(capsule, 'config'), { recursive: true });
+  await mkdir(join(worktree, 'src'), { recursive: true });
+  await mkdir(join(worktree, 'tests'), { recursive: true });
+  await writeFile(join(worktree, 'src', 'greeting.ts'), "export const greeting = 'hello';\n");
+  await writeFile(join(worktree, 'tests', 'greeting.test.ts'), "import { greeting } from '../src/greeting.js';\nvoid greeting;\n");
   const requests: SandboxRunRequestV4[] = [];
   let revoked = false;
   const credentials: CredentialAdapterV4 = {
@@ -53,6 +57,7 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   const result = await runner.execute({ execution_id: 'exec_codex_0001', binding: binding(), capability, capsule_root: capsule, worktree_root: worktree, instruction_manifest_hash: '4'.repeat(64), contract: contract(), expected_sandbox_policy_hash: 'd'.repeat(64) });
 
   assert.equal(result.session_id, 'thread_fixture_0001');
+  assert.match(result.capability_snapshot_hash, /^[a-f0-9]{64}$/);
   assert.equal(Object.isFrozen((result.events[2] as { item?: object }).item), true);
   assert.deepEqual(result.structured_output.changed_paths, ['src/greeting.ts']);
   assert.equal(revoked, true);

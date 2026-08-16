@@ -8,8 +8,8 @@ const hash = (value: string) => value.repeat(64);
 const contract = fullContract();
 
 test('builds a bounded evidence-only envelope and rejects hidden context fields', () => {
-  const envelope = buildReviewEnvelope({ contract, complete_diff: 'diff --git a/x b/x\n', changed_files: ['src/x.ts'], diff_hash: hash('c'), tree_hash: hash('d'), validation_results: [{ validation_id: 'test', passed: true, result_hash: hash('e'), validated_tree_hash: hash('d') }], unresolved_findings: [{ id: 'finding-1', severity: 'high', message: 'fix it' }] });
-  assert.deepEqual(Object.keys(envelope).sort(), ['base_sha', 'changed_files', 'complete_diff', 'contract', 'diff_hash', 'envelope_hash', 'schema_version', 'tree_hash', 'unresolved_findings', 'validation_manifest', 'validation_manifest_hash']);
+  const envelope = buildReviewEnvelope({ contract, complete_diff: 'diff --git a/x b/x\n', changed_files: ['src/x.ts'], capability_snapshot_hash: hash('f'), diff_hash: hash('c'), tree_hash: hash('d'), validation_results: [{ validation_id: 'test', passed: true, result_hash: hash('e'), validated_tree_hash: hash('d') }], unresolved_findings: [{ id: 'finding-1', severity: 'high', message: 'fix it' }] });
+  assert.deepEqual(Object.keys(envelope).sort(), ['base_sha', 'capability_snapshot_hash', 'changed_files', 'complete_diff', 'contract', 'diff_hash', 'envelope_hash', 'schema_version', 'tree_hash', 'unresolved_findings', 'validation_manifest', 'validation_manifest_hash']);
   assert.notEqual(envelope.contract, contract);
   assert.equal(Object.isFrozen(envelope.contract), true);
   assert.throws(() => buildReviewEnvelope({ ...({ contract, complete_diff: '', changed_files: [], diff_hash: hash('c'), tree_hash: hash('d'), validation_results: [], unresolved_findings: [], executor_transcript: 'hidden' } as any) }), /REVIEW_ATTESTATION_INVALID/);

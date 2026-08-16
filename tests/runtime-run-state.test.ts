@@ -96,7 +96,7 @@ test('records a hash-bound frontier verdict without turning approval into public
     changed_files: ['src/greeting.ts'],
     review_attestation_hash: 'f'.repeat(64),
   });
-  const verdictBody = { schema_version: 4, run_id: acceptedCommand.run_id, review_packet_hash: '1'.repeat(64), contract_hash: acceptedCommand.contract.contract_hash, diff_hash: reviewed.runs[acceptedCommand.run_id].result.diff_hash, tree_hash: reviewed.runs[acceptedCommand.run_id].result.tree_hash, verdict: 'APPROVED' as const, reason: 'Independent review passed.' };
+  const verdictBody = { schema_version: 4, run_id: acceptedCommand.run_id, review_packet_hash: '1'.repeat(64), contract_hash: acceptedCommand.contract.contract_hash, diff_hash: reviewed.runs[acceptedCommand.run_id].result.diff_hash, tree_hash: reviewed.runs[acceptedCommand.run_id].result.tree_hash, capability_snapshot_hash: 'a'.repeat(64), verdict: 'APPROVED' as const, reason: 'Independent review passed.' };
   const verdict: Extract<BrokerCommandV4, { type: 'REVIEW_VERDICT_RECORDED' }> = {
     type: 'REVIEW_VERDICT_RECORDED',
     command_id: 'verdict-approved',
@@ -105,6 +105,7 @@ test('records a hash-bound frontier verdict without turning approval into public
     contract_hash: verdictBody.contract_hash,
     diff_hash: verdictBody.diff_hash,
     tree_hash: verdictBody.tree_hash,
+    capability_snapshot_hash: verdictBody.capability_snapshot_hash,
     verdict: verdictBody.verdict,
     reason: verdictBody.reason,
     verdict_hash: hashCanonicalV4(verdictBody),
@@ -112,6 +113,7 @@ test('records a hash-bound frontier verdict without turning approval into public
   const approved = reduceBrokerStateV4(reviewed, verdict);
   assert.equal(approved.runs[acceptedCommand.run_id].result.state, 'REVIEW_ACCEPTED');
   assert.equal(approved.runs[acceptedCommand.run_id].review_verdict?.verdict, 'APPROVED');
+  assert.equal(approved.runs[acceptedCommand.run_id].review_verdict?.capability_snapshot_hash, verdictBody.capability_snapshot_hash);
   assert.throws(() => reduceBrokerStateV4(approved, { ...verdict, command_id: 'verdict-replayed', verdict: 'REJECTED', verdict_hash: hashCanonicalV4({ ...verdictBody, verdict: 'REJECTED' }) }), /BROKER_STATE_CORRUPT/);
   assert.throws(() => reduceBrokerStateV4(reviewed, { ...verdict, command_id: 'verdict-forged', diff_hash: '4'.repeat(64) }), /BROKER_STATE_CORRUPT/);
 });

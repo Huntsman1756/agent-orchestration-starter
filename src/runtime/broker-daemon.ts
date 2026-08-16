@@ -363,6 +363,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
         contract_hash: verdict.contract_hash,
         diff_hash: verdict.diff_hash,
         tree_hash: verdict.tree_hash,
+        capability_snapshot_hash: verdict.capability_snapshot_hash,
         verdict: verdict.verdict,
         reason: verdict.reason,
         verdict_hash: verdict.verdict_hash,
