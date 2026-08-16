@@ -28,17 +28,40 @@ test('uses a fresh read-only capsule session and never mounts the worktree', asy
   ]);
 });
 
-test('encodes exactly economy, one repair, typed frontier escalation, and final review', async () => {
+test('reviews through the host ChatGPT subscription runner without leasing gateway credentials', async () => {
+  const requests: any[] = [];
+  const reviewer = createReviewer({
+    subscription_runner: {
+      probe: async () => { throw new Error('execute owns the fresh qualification probe'); },
+      execute: async (request) => {
+        requests.push(request);
+        return { execution_id: request.execution_id, exit_code: 0, signal: null, termination: null, timed_out: false, stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'fresh-session' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(attestation()) } })}\n${JSON.stringify({ type: 'turn.completed' })}\n`, stderr: '', stdout_truncated: false, stderr_truncated: false, duration_ms: 1 };
+      },
+    },
+    harness_argv: ['codex'],
+    capability_identity_for: () => identity,
+    now: () => '2026-08-10T10:00:00.000Z',
+    build_capsule: async () => ({ root: 'C:/review-capsule', manifest_hash: 'f'.repeat(64) }),
+    persist_attestation: async () => {},
+  });
+  const result = await reviewer.review({ execution_id: 'exec_review_subscription', binding: { role: 'reviewer', binding: { harness: 'codex', provider: 'openai', model: 'frontier-model', authentication: 'chatgpt-subscription', capability: 'review', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'read-only', guidance: validModelGuidance() }, binding_hash: '9'.repeat(64) }, capability, envelope: envelope(), capsule_parent: 'C:/parent', forbidden_roots: ['C:/worktree'], expected_sandbox_policy_hash: 'a'.repeat(64), prior_session_ids: ['executor-session'] });
+  assert.equal(result.decision, 'ACCEPT');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].capsule_root, 'C:/review-capsule');
+  assert.equal(requests[0].expected_policy_hash, 'a'.repeat(64));
+});
+
+test('encodes exactly economy, one repair, typed model escalation, and final review', async () => {
   const calls: string[] = [];
   const reviews = [rejection('r1'), rejection('r2'), acceptance('r3')];
   const machine = createEconomyReviewSequence({
-    execute_economy: async (attempt, findings) => { calls.push(`economy-${attempt}-${findings.length}`); return attemptResult(`economy-${attempt}`); },
-    execute_frontier: async (authority) => { calls.push(`frontier-${authority.review_rejection_hashes.length}-${authority.escalation_decision_hash.length}`); return attemptResult('frontier'); },
+    execute_economy: async (input) => { calls.push(`${input.role}-${input.attempt}-${input.repair_finding_hashes.length}`); return attemptResult(`${input.role}-${input.attempt}`); },
+    execute_escalation: async (input) => { calls.push(`${input.role}-${input.review_rejection_hashes.length}-${input.escalation_decision_hash.length}`); return attemptResult(input.role); },
     validate: async (_attempt, ordinal) => { calls.push(`validate-${ordinal}`); return true; },
     review: async (_attempt, ordinal) => { calls.push(`review-${ordinal}`); return reviews[ordinal - 1]!; },
   });
-  assert.equal((await machine.run()).session_id, 'frontier');
-  assert.deepEqual(calls, ['economy-1-0', 'validate-1', 'review-1', 'economy-2-1', 'validate-2', 'review-2', 'frontier-2-64', 'validate-3', 'review-3']);
+  assert.equal((await machine.run()).session_id, 'escalationExecutor');
+  assert.deepEqual(calls, ['executor-1-0', 'validate-1', 'review-1', 'executor-2-1', 'validate-2', 'review-2', 'escalationExecutor-2-64', 'validate-3', 'review-3']);
 });
 
 test('permits one content-addressed context expansion in a second fresh session', async () => {

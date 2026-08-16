@@ -76,7 +76,15 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.equal(capture.config.share, 'disabled');
     assert.equal(capture.config.autoupdate, false);
     assert.deepEqual(capture.config.enabled_providers, ['profile-selected-provider']);
-    assert.equal(capture.config.provider['profile-selected-provider'].options.baseURL, 'http://provider-gateway:8080/v1');
+    assert.deepEqual(capture.config.provider['profile-selected-provider'], {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'Broker-routed profile-selected-provider',
+      options: {
+        baseURL: 'http://provider-gateway:8080/v1',
+        apiKey: '{env:PROVIDER_GATEWAY_TOKEN}',
+      },
+      models: { 'economy/model-v1': { name: 'economy/model-v1' } },
+    });
     assert.deepEqual(capture.config.agent.executor, { description: 'Broker-owned executor agent', mode: 'primary', model: 'profile-selected-provider/economy/model-v1', reasoningEffort: 'low', textVerbosity: 'low', steps: 16 });
     assert.match(capture.argv.at(-1), /# Instructions[\s\S]*Keep the change minimal[\s\S]*# Task[\s\S]*Change greeting/);
     assert.deepEqual(capture.config.permission.edit, { '*': 'deny', 'repo/src/greeting.ts': 'allow' });
@@ -128,11 +136,16 @@ test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', 
   }
 });
 
-test('requires persisted findings for repair and explicit two-rejection authority for frontier execution', async () => {
+test('requires distinct persisted authority for repair, model escalation, and direct frontier execution', async () => {
   const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
   const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
+  const policyRunner = createOpenCodeRunner({ sandbox: { ...localSandbox(), probe: async () => { throw new Error('POLICY_AUTHORITY_ACCEPTED'); } }, credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity });
   const baseBinding = { harness: 'opencode', provider: 'provider', model: 'model', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() } as const;
   const common = { execution_id: 'exec_policy_0001', capability, capsule_root: 'x', worktree_root: 'x', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, expected_sandbox_policy_hash: 'd'.repeat(64) } as const;
   await assert.rejects(() => runner.execute({ ...common, binding: { role: 'executor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'executor', attempt_number: 2 }), /persisted findings/);
-  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1 }), /escalation authority/);
+  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'escalationExecutor', attempt_number: 1 }), /escalation authority/);
+  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1 }), /frontier route authority/);
+  await assert.rejects(() => policyRunner.execute({ ...common, binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'escalationExecutor', attempt_number: 1, review_rejection_hashes: ['a'.repeat(64), 'b'.repeat(64)], escalation_decision_hash: 'c'.repeat(64) }), /POLICY_AUTHORITY_ACCEPTED/);
+  await assert.rejects(() => policyRunner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1, route_decision_hash: 'c'.repeat(64) }), /POLICY_AUTHORITY_ACCEPTED/);
+  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1, route_decision_hash: 'c'.repeat(64), escalation_decision_hash: 'd'.repeat(64) }), /frontier route authority/);
 });

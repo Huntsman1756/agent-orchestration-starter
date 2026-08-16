@@ -18,6 +18,34 @@ test('resolves the economy executor binding from the profile', () => {
   assert.throws(() => { (binding.binding.guidance as { id: string }).id = 'mutated'; }, /read only|Cannot assign/i);
 });
 
+test('resolves the distinct economy escalation binding from the profile', () => {
+  const profile = validRuntimeProfile();
+  profile.bindings.executor.model = 'economy-coder';
+  profile.bindings.escalationExecutor.model = 'escalation-coder';
+
+  const binding = resolveBinding({ profile: profile as RuntimeProfileV4, route: 'ECONOMY', stage: 'ESCALATION', sourceSensitivity: 'PUBLIC' });
+
+  assert.equal(binding.role, 'escalationExecutor');
+  assert.equal(binding.binding.model, 'escalation-coder');
+});
+
+test('rejects an escalation stage on a direct frontier route', () => {
+  assert.throws(
+    () => resolveBinding({ profile: validRuntimeProfile() as RuntimeProfileV4, route: 'FRONTIER', stage: 'ESCALATION', sourceSensitivity: 'PUBLIC' }),
+    /INVALID_CONTRACT/u,
+  );
+});
+
+test('fails closed when a direct frontier route has no frontier executor binding', () => {
+  const profile = validRuntimeProfile();
+  delete (profile.bindings as Partial<RuntimeProfileV4['bindings']>).frontierExecutor;
+
+  assert.throws(
+    () => resolveBinding({ profile: profile as RuntimeProfileV4, route: 'FRONTIER', sourceSensitivity: 'PUBLIC' }),
+    /INVALID_CONTRACT: required frontierExecutor binding is unavailable/u,
+  );
+});
+
 test('rejects a route whose selected binding cannot process private source', () => {
   const profile = validRuntimeProfile();
 

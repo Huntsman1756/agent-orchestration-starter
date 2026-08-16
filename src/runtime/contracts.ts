@@ -11,6 +11,7 @@ export type ReviewDecisionV4 = 'REQUEST_CONTEXT' | 'ACCEPT' | 'REJECT';
 export type RuntimeRoleV4 = 'orchestrator' | 'executor' | 'escalationExecutor' | 'frontierExecutor' | 'reviewer';
 export type PromptFormatV4 = 'plain' | 'markdown' | 'xml';
 export type ContextPlacementV4 = 'before-task' | 'after-task';
+export type RuntimeAuthenticationV4 = 'provider-api-key' | 'chatgpt-subscription';
 
 export interface RuntimeModelGuidanceV4 {
   id: string;
@@ -55,6 +56,7 @@ export interface RuntimeBindingV4 {
   harness: string;
   provider: string;
   model: string;
+  authentication?: RuntimeAuthenticationV4;
   capability: string;
   allowedDataScopes: readonly DataScopeV4[];
   allowedSourceSensitivity: readonly SourceSensitivityV4[];

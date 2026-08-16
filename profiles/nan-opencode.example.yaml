@@ -1,17 +1,18 @@
 schemaVersion: 4
-id: nan-opencode-example
+id: nan-opencode-chatgpt-subscription-2026-08
 bindings:
   orchestrator:
     harness: codex
     provider: openai
-    model: Sol
+    model: gpt-5.6-sol
+    authentication: chatgpt-subscription
     capability: planning
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
     guidance: &sol_guidance
       id: openai-sol-current
-      revision: official-2026-08-10
+      revision: official-2026-08-16
       sourceUrls: [https://developers.openai.com/api/docs/guides/latest-model]
       promptFormat: markdown
       contextPlacement: before-task
@@ -25,14 +26,15 @@ bindings:
     harness: opencode
     provider: nan
     model: qwen3.6
+    authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
     guidance:
       id: qwen3p6-nan
-      revision: official-2026-08-10
-      sourceUrls: [https://github.com/QwenLM/Qwen3.6/blob/main/README.md, https://nan.builders/docs/api]
+      revision: nan-api-2026-08-16
+      sourceUrls: [https://nan.builders/docs/api, https://nan.builders/docs/models]
       promptFormat: markdown
       contextPlacement: before-task
       reasoningEffort: provider-default
@@ -44,15 +46,16 @@ bindings:
   escalationExecutor:
     harness: opencode
     provider: nan
-    model: gemma4
+    model: deepseek-v4-flash
+    authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
-    guidance:
-      id: gemma4-nan
-      revision: official-2026-08-10
-      sourceUrls: [https://developers.google.com/edge/litert-lm/models/gemma-4, https://nan.builders/docs/api]
+    guidance: &deepseek_guidance
+      id: deepseek-v4-flash-nan
+      revision: nan-api-2026-08-16
+      sourceUrls: [https://nan.builders/docs/api, https://nan.builders/docs/models]
       promptFormat: markdown
       contextPlacement: before-task
       reasoningEffort: provider-default
@@ -60,25 +63,27 @@ bindings:
       temperature: null
       maxSteps: 32
       instructions:
-        - Follow the explicit output contract and make only the requested code changes.
+        - Use native tool calls, follow the explicit output contract, and make only the requested code changes.
   frontierExecutor:
-    harness: codex
-    provider: openai
-    model: Sol
+    harness: opencode
+    provider: nan
+    model: deepseek-v4-flash
+    authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
-    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
-    guidance: *sol_guidance
+    guidance: *deepseek_guidance
   reviewer:
     harness: codex
     provider: openai
-    model: Sol
+    model: gpt-5.6-sol
+    authentication: chatgpt-subscription
     capability: review
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: read-only
     guidance: *sol_guidance
 runtime:
-  maxEconomyParallelRequests: 2
+  maxEconomyParallelRequests: 1
   maxConcurrentRunsPerRepository: 1

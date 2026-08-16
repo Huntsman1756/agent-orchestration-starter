@@ -126,7 +126,7 @@ outside the model:
 6. deterministic validation run independently from model claims;
 7. independent review of the diff and evidence;
 8. no commit, push, PR, merge, deploy or production mutation by the worker;
-9. bounded repair followed by frontier escalation or stop;
+9. bounded repair followed by a distinct economy model escalation, direct frontier routing, or stop;
 10. a factual receipt that is evidence for review, never self-acceptance.
 
 When the frontier model is the advertised orchestrator/reviewer, use the

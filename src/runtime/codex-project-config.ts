@@ -23,6 +23,9 @@ export function renderCodexProjectConfig(input: CodexProjectConfigInputV4): Gene
     content: [
       `model = ${toml(input.frontier_model)}`,
       `model_reasoning_effort = ${toml(input.reasoning_effort)}`,
+      'cli_auth_credentials_store = "keyring"',
+      'forced_login_method = "chatgpt"',
+      'approval_policy = "never"',
       'sandbox_mode = "read-only"',
       '',
       '[agents]',

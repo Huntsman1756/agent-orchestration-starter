@@ -68,6 +68,7 @@ test('profile and repository policy schemas reject mixed contracts and malformed
     (value) => ({ ...value, sourcePolicy: validRepositoryPolicy().sourcePolicy }),
     (value) => ({ ...value, bindings: { ...value.bindings, executor: { ...value.bindings.executor, allowedSourceSensitivity: ['PRVIATE'] } } }),
     (value) => ({ ...value, bindings: { ...value.bindings, executor: { ...value.bindings.executor, guidance: { ...value.bindings.executor.guidance, sourceUrls: ['http://insecure.invalid'] } } } }),
+    (value) => ({ ...value, bindings: { ...value.bindings, executor: { ...value.bindings.executor, harness: 'codex', authentication: 'chatgpt-subscription' } } }),
   ]);
   await assertParity('runtime-repository-policy-v4.schema.json', validRepositoryPolicy(), loadRuntimeRepositoryPolicyV4, [
     (value) => ({ ...value, bindings: validRuntimeProfile().bindings }),
