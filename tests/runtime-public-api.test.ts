@@ -8,6 +8,7 @@ test('runtime-v4 keeps an intentional entry-point module surface', async () => {
   const modules = [...source.matchAll(/^export \* from '(\.\/[^']+)';$/gmu)].map((match) => match[1]);
   assert.deepEqual(modules, [
     './contracts.js',
+    './audit-trail.js',
     './failures.js',
     './model-guidance.js',
     './readiness.js',

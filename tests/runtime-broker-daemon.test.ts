@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../src/runtime/audit-trail.js';
 import { createBrokerDaemon, type BrokerDaemonDependenciesV4 } from '../src/runtime/broker-daemon.js';
 import { acquireRepositoryLockV4, acquireRunLockV4, createInProcessReclamationCoordinatorV4, type ReclamationCoordinatorV4 } from '../src/runtime/repository-lock.js';
 import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
@@ -38,16 +39,24 @@ function runCommand(request = validTaskRequest() as RuntimeTaskRequestV4, comman
   return { type: 'RUN_CODING_TASK' as const, command_id: commandId, request };
 }
 
-test('generates the run ID and reaches executor-ready state only after path inspection', async () => {
-  const { deps } = await daemonFixture();
+test('generates the run ID, projects lifecycle evidence and reaches executor-ready state only after path inspection', async () => {
+  const { deps, stateDirectory } = await daemonFixture();
   const daemon = createBrokerDaemon(deps);
 
   const reply = await daemon.submit(runCommand());
+  await daemon.recordAuditEvidence!(reply.run_id, {
+    prompt: 'Use API_KEY=sk-test-12345678901234567890',
+    raw_completion: 'completed with token=secret-value',
+    status: 'MODEL_EXECUTION_RECORDED',
+  });
   const result = await daemon.status(reply.run_id);
 
   assert.equal(reply.run_id, 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1');
   assert.equal(result.state, 'READY_FOR_EXECUTOR');
   await daemon.close();
+  const report = await verifyAuditTrailV4(auditTrailDirectoryV4(stateDirectory));
+  assert.equal(report.status, 'OK');
+  assert.equal(report.record_count, 2);
 });
 
 test('does not append a run when pre-launch inspection fails', async () => {

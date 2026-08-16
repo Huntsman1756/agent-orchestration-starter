@@ -26,6 +26,7 @@ import type { PilotEventV3 } from '../pilot/contracts.js';
 import { activateRuntimeRepositoryV4, installRuntimeHostV4, verifyRuntimeHostInstallationV4, loadRuntimeHostInstallationV4 } from '../runtime/host-installation.js';
 import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
 import { verifyDelegationProvenanceV4 } from '../runtime/delegation-provenance.js';
+import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../runtime/audit-trail.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -269,6 +270,12 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         }, await readFile(values.get('--public-key')!, 'utf8'));
         stdout(JSON.stringify({ verified: true, run_id: evidence.run_id, disposition: evidence.disposition, provenance_hash: evidence.provenance_hash }));
         return 0;
+      }
+      if (subcommand === 'audit-verify') {
+        const values = exactOptions(argv.slice(2), ['--state-directory'], ['--state-directory']);
+        const report = await verifyAuditTrailV4(auditTrailDirectoryV4(values.get('--state-directory')!));
+        stdout(JSON.stringify(report));
+        return report.status === 'OK' ? 0 : 1;
       }
       throw new Error('INVALID_CONTRACT: unsupported runtime command');
     }

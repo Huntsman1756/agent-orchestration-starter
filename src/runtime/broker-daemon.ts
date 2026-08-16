@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4 } from './contracts.js';
 import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureV4 } from './failures.js';
+import { auditTrailDirectoryV4, createAuditTrailV4, type AuditTrailEntryV4, type AuditTrailEvidenceV4, type AuditTrailV4 } from './audit-trail.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import { inspectAllowedChanges, type InspectedChangeV4, type PathInspectionInputV4 } from './path-policy.js';
@@ -18,6 +19,7 @@ import {
   type BrokerReviewVerdictV4,
   type BrokerStateV4,
   type ExternalProcessIdentityV4,
+  initialBrokerStateV4,
 } from './run-state.js';
 
 export interface BrokerReplyV4 {
@@ -33,6 +35,7 @@ export interface BrokerDaemonV4 {
   recover(): Promise<void>;
   close(): Promise<void>;
   recordAttempt(runId: string, attempt: { attempt: number; executor_binding_ref: string; result_hash: string }): Promise<void>;
+  recordAuditEvidence?(runId: string, evidence: AuditTrailEvidenceV4): Promise<void>;
   reinspect(runId: string): Promise<void>;
   recordExternalProcessStarted(runId: string, process: ExternalProcessIdentityV4): Promise<void>;
   recordAcceptedCandidate?(event: Extract<BrokerCommandV4, { type: 'CANDIDATE_ACCEPTED' }>): Promise<void>;
@@ -58,6 +61,7 @@ export interface BrokerDaemonDependenciesV4 {
   writeStateCache?: typeof writeBrokerStateCacheV4;
   reclamationCoordinator: ReclamationCoordinatorV4;
   allowInProcessCoordinatorForTests?: boolean;
+  auditTrailDirectory?: string;
 }
 
 const terminalStates = new Set(['FAILED', 'ABORTED', 'FINALIZED']);
@@ -121,10 +125,12 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   }
   let state: BrokerStateV4 | null = null;
   let journal: JournalV4 | null = null;
+  let auditTrail: AuditTrailV4 | null = null;
   let recovering: Promise<void> | null = null;
   let closed = false;
   const locks = new Map<string, RepositoryLockV4>();
   const runLocks = new Map<string, RunLockV4>();
+  const auditSnapshots = new Map<string, AuditTrailEntryV4>();
   let mutationTail: Promise<void> = Promise.resolve();
 
   const serialize = async <T>(operation: () => Promise<T>): Promise<T> => {
@@ -161,15 +167,16 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   };
 
   const persist = async (command: BrokerCommandV4): Promise<void> => {
-    if (state === null || journal === null) throw new Error('BROKER_STATE_CORRUPT: daemon was not recovered');
+    if (state === null || journal === null || auditTrail === null) throw new Error('BROKER_STATE_CORRUPT: daemon was not recovered');
     const prior = journal.records.find((record) => record.command.command_id === command.command_id);
     if (prior !== undefined) {
       if (canonicalJsonV4(prior.command) !== canonicalJsonV4(command)) throw new Error(`BROKER_STATE_CORRUPT: command_id ${command.command_id} has conflicting canonical bytes`);
       return;
     }
     const next = reduceBrokerStateV4(state, command);
+    let journalRecord: Awaited<ReturnType<JournalV4['append']>>;
     try {
-      await journal.append(command);
+      journalRecord = await journal.append(command);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('BROKER_STATE_CORRUPT:')) throw error;
       throw new Error('BROKER_STATE_CORRUPT: durable journal append failed');
@@ -181,14 +188,30 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       throw new Error('BROKER_STATE_CORRUPT: durable state cache replacement failed');
     }
     state = next;
+    try {
+      await projectAudit(command, next, journalRecord.recorded_at);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('BROKER_STATE_CORRUPT:')) throw error;
+      throw new Error('BROKER_STATE_CORRUPT: audit trail projection failed');
+    }
   };
 
   const doRecover = async (): Promise<void> => {
     requireOpen();
-    if (state !== null && journal !== null) return;
+    if (state !== null && journal !== null && auditTrail !== null) return;
     const recovered = await recoverBrokerStateV4(deps.stateDirectory);
     state = recovered.state;
     journal = await createJournalV4(deps.stateDirectory);
+    auditTrail = await createAuditTrailV4(deps.auditTrailDirectory ?? auditTrailDirectoryV4(deps.stateDirectory));
+    for (const record of auditTrail.records) {
+      if (state.runs[record.entry.run_id] === undefined) throw new Error(`BROKER_STATE_CORRUPT: audit entry references unknown run ${record.entry.run_id}`);
+      auditSnapshots.set(record.entry.run_id, record.entry);
+    }
+    let replayed = initialBrokerStateV4();
+    for (const record of journal.records) {
+      replayed = reduceBrokerStateV4(replayed, record.command);
+      await projectAudit(record.command, replayed, record.recorded_at);
+    }
 
     for (const run of Object.values(state.runs)) {
       if (!terminalStates.has(run.result.state)) {
@@ -226,7 +249,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   };
 
   const ensureRecovered = async (): Promise<void> => {
-    if (state !== null && journal !== null) return;
+    if (state !== null && journal !== null && auditTrail !== null) return;
     recovering ??= doRecover().finally(() => { recovering = null; });
     await recovering;
   };
@@ -260,6 +283,73 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       state: result.state,
       status_token: hashCanonicalV4({ run_id: runId, state: result.state, artifact_manifest_hash: result.artifact_manifest_hash }),
     };
+  };
+
+  const auditStatusFor = (command: BrokerCommandV4, result: RuntimeResultV4): string => {
+    if (command.type === 'REVIEW_VERDICT_RECORDED') return command.verdict;
+    if (command.type === 'RUN_FAILED' || command.type === 'RUN_ABORTED') return command.failure.code;
+    return result.state;
+  };
+
+  const auditDiffFor = (command: BrokerCommandV4, previous: AuditTrailEntryV4 | undefined): string | unknown => {
+    if (command.type === 'CANDIDATE_ACCEPTED') {
+      return { diff_hash: command.diff_hash, tree_hash: command.tree_hash, changed_files: command.changed_files };
+    }
+    return previous?.diff ?? '';
+  };
+
+  const projectAudit = async (command: BrokerCommandV4, next: BrokerStateV4, recordedAt: string): Promise<void> => {
+    if (auditTrail === null) throw new Error('BROKER_STATE_CORRUPT: audit trail was not recovered');
+    if (command.type === 'RUN_CODING_TASK') throw new Error('BROKER_STATE_CORRUPT: caller command cannot enter the audit trail');
+    const runId = command.run_id;
+    const run = next.runs[runId];
+    if (run === undefined) throw new Error(`BROKER_STATE_CORRUPT: audit command references unknown run ${runId}`);
+    const previous = auditSnapshots.get(runId);
+    const terminal = terminalStates.has(run.result.state);
+    const existing = auditTrail.records.find((record) => record.entry.event_id === command.command_id);
+    const entry = await auditTrail.append({
+      event_id: command.command_id,
+      event_type: command.type,
+      story_id: previous?.story_id ?? run.contract.task_id,
+      run_id: runId,
+      started_at: previous?.started_at ?? recordedAt,
+      finished_at: terminal ? recordedAt : previous?.finished_at ?? null,
+      contract_hash: run.contract.contract_hash,
+      capability_snapshot_hash: run.review_verdict?.capability_snapshot_hash ?? previous?.capability_snapshot_hash ?? null,
+      prompt: previous?.prompt ?? '',
+      raw_completion: previous?.raw_completion ?? '',
+      diff: auditDiffFor(command, previous),
+      validation_results: command.type === 'CANDIDATE_ACCEPTED' ? command.validation_results : previous?.validation_results,
+      status: auditStatusFor(command, run.result),
+    });
+    const current = auditSnapshots.get(runId);
+    const currentRecord = current === undefined ? undefined : auditTrail.records.find((record) => record.entry.event_id === current.event_id);
+    if (currentRecord === undefined || existing === undefined || existing.sequence >= currentRecord.sequence) auditSnapshots.set(runId, entry.entry);
+  };
+
+  const recordAuditEvidence = async (runId: string, evidence: AuditTrailEvidenceV4): Promise<void> => {
+    if (state === null || auditTrail === null) throw new Error('BROKER_STATE_CORRUPT: audit trail was not recovered');
+    const run = state.runs[runId];
+    if (run === undefined) throw new Error(`INVALID_CONTRACT: unknown run_id ${runId}`);
+    if (evidence.contract_hash !== undefined && evidence.contract_hash !== run.contract.contract_hash) throw new Error('AUDIT_TRAIL_INTEGRITY_BREACH: evidence contract hash does not match the durable run');
+    const previous = auditSnapshots.get(runId);
+    const event_id = evidence.event_id ?? `audit:${runId}:${hashCanonicalV4({ prompt: evidence.prompt ?? '', raw_completion: evidence.raw_completion ?? '', diff: evidence.diff ?? '', status: evidence.status ?? null })}`;
+    const entry = await auditTrail.append({
+      event_id,
+      event_type: evidence.event_type ?? 'AUDIT_EVIDENCE_RECORDED',
+      story_id: evidence.story_id ?? previous?.story_id ?? run.contract.task_id,
+      run_id: runId,
+      started_at: evidence.started_at ?? previous?.started_at,
+      finished_at: evidence.finished_at ?? previous?.finished_at ?? null,
+      contract_hash: evidence.contract_hash ?? run.contract.contract_hash,
+      capability_snapshot_hash: evidence.capability_snapshot_hash ?? previous?.capability_snapshot_hash ?? run.review_verdict?.capability_snapshot_hash ?? null,
+      prompt: evidence.prompt ?? previous?.prompt ?? '',
+      raw_completion: evidence.raw_completion ?? previous?.raw_completion ?? '',
+      diff: evidence.diff ?? previous?.diff ?? '',
+      validation_results: evidence.validation_results ?? previous?.validation_results,
+      status: evidence.status ?? previous?.status ?? run.result.state,
+    });
+    auditSnapshots.set(runId, entry.entry);
   };
 
   return {
@@ -333,6 +423,11 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       await ensureRecovered();
       await persist({ type: 'ATTEMPT_RECORDED', command_id: commandId('attempt'), run_id: runId, attempt });
     }),
+    recordAuditEvidence: (runId, evidence) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await recordAuditEvidence(runId, evidence);
+    }),
     reinspect: (runId) => serialize(async () => {
       requireOpen();
       await ensureRecovered();
@@ -397,6 +492,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       if (closed) return;
       if (recovering !== null) await recovering;
       closed = true;
+      await auditTrail?.close();
+      auditTrail = null;
       await journal?.close();
       journal = null;
       for (const lock of locks.values()) await lock.release();

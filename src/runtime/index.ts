@@ -1,4 +1,5 @@
 export * from './contracts.js';
+export * from './audit-trail.js';
 export * from './failures.js';
 export * from './model-guidance.js';
 export * from './readiness.js';

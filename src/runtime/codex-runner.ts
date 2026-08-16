@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
+import type { AuditTrailEvidenceV4 } from './audit-trail.js';
 import type { ResolvedBindingV4 } from './bindings.js';
 import { assertFreshCapability, type CapabilityIdentityV4, type CapabilityRecordV4 } from './capabilities.js';
 import { canonicalJsonV4 } from './canonical.js';
@@ -55,6 +56,7 @@ export interface CodexRunnerDependenciesV4 {
   readonly capability_identity_for: (binding: ResolvedBindingV4) => CapabilityIdentityV4;
   readonly now?: () => string;
   readonly enforce_diff?: typeof enforceDiffPolicy;
+  readonly on_audit_evidence?: (input: AuditTrailEvidenceV4 & { readonly run_id: string; readonly story_id: string }) => Promise<void> | void;
 }
 
 function invalid(message: string): never { throw new Error(`EXECUTOR_INVALID_OUTPUT: ${message}`); }
@@ -164,6 +166,7 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
       const capabilitySnapshot = await build_capability_snapshot(contract, { repository_root: worktreeRoot });
       const lease = validateCredentialLeaseV4(await deps.credentials.lease(binding), now);
       const diffInput = { repository_root: worktreeRoot, base_sha: contract.base_sha, allowed_changes: contract.implementation_targets, max_files_changed: contract.max_files_changed, max_changed_lines: contract.max_changed_lines };
+      const prompt = promptFor(binding, contract, instructionManifestHash, capabilitySnapshot);
       try {
         await installResultSchema(capsuleRoot);
         let run;
@@ -171,7 +174,7 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
           run = await deps.sandbox.run({
             execution_id: executionId,
             profile: 'FRONTIER_NETWORKED',
-            argv: [...deps.harness_argv, 'exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--output-schema', '/capsule/config/frontier-executor-result-v4.schema.json', '--json', '--cd', '/capsule', '--model', binding.binding.model, ...codexBrokerProviderConfigArgvV4(lease.provider_endpoint), ...codexModelConfigArgvV4(binding.binding.guidance), promptFor(binding, contract, instructionManifestHash, capabilitySnapshot)],
+            argv: [...deps.harness_argv, 'exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--output-schema', '/capsule/config/frontier-executor-result-v4.schema.json', '--json', '--cd', '/capsule', '--model', binding.binding.model, ...codexBrokerProviderConfigArgvV4(lease.provider_endpoint), ...codexModelConfigArgvV4(binding.binding.guidance), prompt],
             working_directory: '/capsule',
             environment: Object.freeze({ ...lease.environment, HOME: '/capsule/home', TMPDIR: '/capsule/tmp', NO_COLOR: '1' }),
             mounts: [
@@ -192,6 +195,17 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
         const declared = [...parsed.output.changed_paths].sort();
         const observed = diff.changes.map((change) => change.path).sort();
         if (canonicalJsonV4(declared) !== canonicalJsonV4(observed)) invalid('declared changed paths do not match the inspected diff');
+        await deps.on_audit_evidence?.({
+          event_type: 'MODEL_EXECUTION_RECORDED',
+          run_id: contract.run_id,
+          story_id: contract.task_id,
+          contract_hash: contract.contract_hash,
+          capability_snapshot_hash: capabilitySnapshot.snapshot_hash,
+          prompt,
+          raw_completion: run.stdout,
+          diff,
+          status: 'EXECUTION_COMPLETED',
+        });
         return Object.freeze({ session_id: parsed.session_id, events: parsed.events, structured_output: parsed.output, diff, capability_snapshot_hash: capabilitySnapshot.snapshot_hash });
       } finally {
         await deps.credentials.revoke(lease.lease_id);
