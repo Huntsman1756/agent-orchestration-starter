@@ -1,10 +1,13 @@
 import type { RuntimeWorkContractV4 } from './contracts.js';
 import type { ExecutorCapsuleV4 } from './executor-capsule.js';
 import type { ExecutorAttemptResultV4 } from './opencode-runner.js';
+import type { RepairPacketV4 } from './repair-packet.js';
+import { deriveShiftLeftStoryIdV4, runReviewAfterDeterministicValidationV4 } from './shift-left-validation.js';
 
 export type FrontierStateV4 = 'FRONTIER_EXECUTION' | 'VALIDATION' | 'FRESH_REVIEW' | 'ACCEPTED' | 'TERMINAL_REJECTED';
 
 export interface FrontierValidationEvidenceV4 {
+  readonly validation_id: string;
   readonly passed: boolean;
   readonly result_hash: string;
   readonly validated_tree_hash: string;
@@ -25,6 +28,8 @@ export interface FrontierExecutorDependenciesV4 {
   readonly execute_once: (contract: RuntimeWorkContractV4, capsule: ExecutorCapsuleV4) => Promise<ExecutorAttemptResultV4>;
   readonly validate: (contract: RuntimeWorkContractV4, capsule: ExecutorCapsuleV4, attempt: ExecutorAttemptResultV4) => Promise<readonly FrontierValidationEvidenceV4[]>;
   readonly fresh_review: (contract: RuntimeWorkContractV4, capsule: ExecutorCapsuleV4, attempt: ExecutorAttemptResultV4, validation: readonly FrontierValidationEvidenceV4[]) => Promise<FrontierReviewEvidenceV4>;
+  readonly story_id?: string;
+  readonly on_repair_packet?: (input: { readonly packet: RepairPacketV4; readonly attempt: ExecutorAttemptResultV4; readonly validation: readonly FrontierValidationEvidenceV4[] }) => Promise<void> | void;
   readonly on_state?: (state: FrontierStateV4) => void;
 }
 
@@ -56,13 +61,21 @@ export function createFrontierExecutor(deps: FrontierExecutorDependenciesV4): Fr
         state('TERMINAL_REJECTED');
         throw error;
       }
-      if (validation.length === 0 || validation.some((result) => !result.passed || result.validated_tree_hash !== attempt.diff.tree_hash || !/^[a-f0-9]{64}$/.test(result.result_hash))) {
+      if (validation.length === 0 || validation.some((result) => result.validated_tree_hash !== attempt.diff.tree_hash || !/^[a-f0-9]{64}$/.test(result.result_hash))) {
         terminal('VALIDATION_FAILED', 'deterministic validation did not accept the exact tree');
       }
-      state('FRESH_REVIEW');
       let review: FrontierReviewEvidenceV4;
       try {
-        review = await deps.fresh_review(contract, capsule, attempt, validation);
+        review = await runReviewAfterDeterministicValidationV4({
+          story_id: deps.story_id ?? deriveShiftLeftStoryIdV4(contract.task_id),
+          failed_attempt: 1,
+          validation_results: validation,
+          on_repair_packet: (packet) => deps.on_repair_packet?.({ packet, attempt, validation }),
+          review: async () => {
+            state('FRESH_REVIEW');
+            return deps.fresh_review(contract, capsule, attempt, validation);
+          },
+        });
       } catch (error) {
         state('TERMINAL_REJECTED');
         throw error;

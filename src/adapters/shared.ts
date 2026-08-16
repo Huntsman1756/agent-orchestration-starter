@@ -35,7 +35,8 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
     return [
       'Implement only the received work contract and touch only its implementation_targets.',
       'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
-      `Run the contract validation commands; project defaults are: ${commands.join('; ')}.`,
+      `Run every contract validation command, including static lint and format gates; project defaults are: ${commands.join('; ')}.`,
+      'A failed static quality or security gate is deterministic evidence, not a warning. Repair it before reporting completion.',
       'Return only status, files changed, validation result, and risks. Ask one question instead of guessing when the contract is ambiguous.',
     ].join('\n');
   }

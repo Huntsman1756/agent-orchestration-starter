@@ -67,7 +67,9 @@
     "test:hostile": "tsx --test tests/runtime-docker-sandbox.test.ts tests/runtime-sandbox-hostile.test.ts",
     "example:reference-e2e": "tsx --test tests/runtime-reference-host-e2e.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
-    "validate": "npm run test && npm run typecheck && npm run build",
+    "lint": "eslint src tests --max-warnings=0",
+    "format:check": "prettier --check eslint.config.mjs .prettierrc.json orchestration.yaml policies/repository-policy.example.yaml package.json src/runtime/shift-left-validation.ts tests/runtime-shift-left.test.ts",
+    "validate": "npm run test && npm run typecheck && npm run lint && npm run format:check && npm run build",
     "prepublishOnly": "npm run validate"
   },
   "engines": {
@@ -82,7 +84,11 @@
     "@types/node": "^22.17.2",
     "ajv": "^8.20.0",
     "esbuild": "0.28.1",
+    "eslint": "^9.39.5",
+    "eslint-plugin-security": "^3.0.1",
+    "prettier": "^3.9.6",
     "tsx": "^4.20.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.67.0"
   }
 }

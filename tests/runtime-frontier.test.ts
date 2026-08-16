@@ -13,7 +13,7 @@ test('performs exactly one frontier execution, validation, and fresh exact-tree 
   const states: string[] = [];
   const runner = createFrontierExecutor({
     execute_once: async () => { executions += 1; return attempt; },
-    validate: async () => [{ passed: true, result_hash: '7'.repeat(64), validated_tree_hash: diff.tree_hash }],
+    validate: async () => [{ validation_id: 'test', passed: true, result_hash: '7'.repeat(64), validated_tree_hash: diff.tree_hash }],
     fresh_review: async () => ({ decision: 'ACCEPT', reviewer_session_id: 'fresh-review-session', reviewed_tree_hash: diff.tree_hash, reviewed_diff_hash: diff.diff_hash }),
     on_state: (state) => { states.push(state); },
   });
@@ -28,7 +28,7 @@ test('validation failure or rejection is terminal and never triggers frontier re
     const states: string[] = [];
     const runner = createFrontierExecutor({
       execute_once: async () => { executions += 1; return attempt; },
-      validate: async () => [{ passed: scenario !== 'validation', result_hash: '7'.repeat(64), validated_tree_hash: diff.tree_hash }],
+      validate: async () => [{ validation_id: 'test', passed: scenario !== 'validation', result_hash: '7'.repeat(64), validated_tree_hash: diff.tree_hash }],
       fresh_review: async () => ({ decision: scenario === 'review' ? 'REJECT' : 'ACCEPT', reviewer_session_id: 'fresh-review-session', reviewed_tree_hash: diff.tree_hash, reviewed_diff_hash: diff.diff_hash }),
       on_state: (state) => { states.push(state); },
     });

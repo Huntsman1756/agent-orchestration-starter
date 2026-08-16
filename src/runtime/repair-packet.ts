@@ -37,6 +37,21 @@ const packetSchema = bodySchema.extend({ packet_hash: hash }).strict();
 export type RepairPacketV4 = z.infer<typeof packetSchema>;
 export type FailureSignatureFindingV4 = z.infer<typeof failureSignatureFindingSchema>;
 
+export const SHIFT_LEFT_REPAIR_INSTRUCTION_V4 = 'Las pruebas pasan, pero el código viola las políticas estáticas de calidad/seguridad. Repara los siguientes errores de lint antes de reclamar completitud.';
+
+export interface ShiftLeftValidationEvidenceV4 {
+  readonly validation_id: string;
+  readonly passed: boolean;
+  readonly result_hash: string;
+  readonly validated_tree_hash: string;
+  readonly stdout_preview?: string;
+  readonly stderr_preview?: string;
+}
+
+export function isStaticQualityValidationIdV4(validationId: string): boolean {
+  return /(?:^|[-_:])(?:lint|format)(?:$|[-_:])/iu.test(validationId.trim());
+}
+
 export function createNormalizedFailureSignatureV4<T extends FailureSignatureFindingV4>(findings: readonly T[]): string {
   const projected = findings.map((finding) => ({ source: finding.source, category_code: finding.category_code, path: finding.path }));
   const parsed = z.array(failureSignatureFindingSchema).min(1).max(128).parse(structuredClone(projected));
@@ -77,6 +92,41 @@ export function createEconomyPolicyRepairPacketV4(input: {
       instruction: input.violation.repair_instruction,
       evidence_hash: input.violation.evidence_hash,
     }],
+  };
+  return loadRepairPacketV4({ ...body, packet_hash: hashCanonicalV4(body) });
+}
+
+export function createShiftLeftLintRepairPacketV4(input: {
+  readonly story_id: string;
+  readonly failed_attempt: number;
+  readonly validation_results: readonly ShiftLeftValidationEvidenceV4[];
+}): RepairPacketV4 {
+  const failed = input.validation_results.filter((result) => !result.passed && isStaticQualityValidationIdV4(result.validation_id));
+  if (failed.length === 0) throw new Error('VALIDATION_FAILED: no failed static quality validation is available for repair');
+  const body = {
+    schema_version: 4 as const,
+    story_id: input.story_id,
+    failed_attempt: input.failed_attempt,
+    findings: failed.map((result) => {
+      const evidence_hash = hashCanonicalV4({
+        schema_version: 4,
+        validation_id: result.validation_id,
+        result_hash: result.result_hash,
+        validated_tree_hash: result.validated_tree_hash,
+        stdout_preview: result.stdout_preview ?? '',
+        stderr_preview: result.stderr_preview ?? '',
+      });
+      const safeValidationId = result.validation_id.replace(/[^A-Za-z0-9._-]/gu, '-').slice(0, 64);
+      return {
+        finding_id: `shift-left-${safeValidationId}-${evidence_hash.slice(0, 24)}`,
+        source: 'VALIDATION' as const,
+        category_code: 'shift_left_static_quality',
+        path: null,
+        line: null,
+        instruction: SHIFT_LEFT_REPAIR_INSTRUCTION_V4,
+        evidence_hash,
+      };
+    }),
   };
   return loadRepairPacketV4({ ...body, packet_hash: hashCanonicalV4(body) });
 }

@@ -16,6 +16,16 @@ validation:
     workingDirectory: .
     timeoutSeconds: 300
     sandboxProfile: validation-untrusted
+  lint:
+    argv: [npm, run, lint]
+    workingDirectory: .
+    timeoutSeconds: 300
+    sandboxProfile: validation-untrusted
+  format-check:
+    argv: [npm, run, format:check]
+    workingDirectory: .
+    timeoutSeconds: 300
+    sandboxProfile: validation-untrusted
 sourcePolicy:
   dataScope: SOURCE_CODE_ONLY
   sourceSensitivity: PUBLIC

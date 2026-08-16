@@ -12,6 +12,7 @@ export function strictSddPlannerInstructionsV4(): readonly string[] {
     'Use strict Spec-Driven Development: generate the acceptance tests first so they define the expected behavior.',
     'Only after the acceptance tests are frozen may you request implementation from the Economy executor.',
     'The Work Contract must separate acceptance_tests (read-only) from implementation_targets (write-only).',
+    'Static quality and security gates are deterministic acceptance criteria; never waive lint or format failures by model judgment.',
   ]);
 }
 
@@ -23,6 +24,7 @@ export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tes
     `Acceptance tests (READ-ONLY, immutable): ${acceptanceTests}`,
     `Implementation targets (READ-WRITE only): ${implementationTargets}`,
     'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
+    'SHIFT-LEFT: npm run lint and npm run format:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
     'If a repair packet is supplied, follow its bounded instruction without widening the implementation target list.',
   ]);
 }

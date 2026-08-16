@@ -37,6 +37,7 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
       'Pass work contracts, never the full conversation. A work contract includes: id, objective, acceptance_tests, implementation_targets, inputs, constraints, validation commands, success criteria, budget, and result format.',
       'Strict SDD: generate acceptance tests first, freeze them as read-only, then ask Economy to modify only implementation_targets.',
       'The Economy executor is PROHIBITED from editing supplied acceptance-test files; its only objective is to modify implementation files so the deterministic tests pass.',
+      'Shift-left quality gates (lint and format) are deterministic and networkless. A failed gate blocks review and produces a bounded Repair Packet for Economy.',
       'The executor returns only status, files changed, validation result, and risks. Start review in a fresh context containing only the original contract, complete diff, deterministic results, and requested files.',
       'The reviewer stays read-only and cannot overrule failed deterministic validation. Exclude planner rationale, executor reasoning, and prior verdicts from review evidence.',
       `Required write isolation: ${policy.isolation.required}. A degraded harness requires exact explicit acceptance and records its effective guarantee in the manifest.`,

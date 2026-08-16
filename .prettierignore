@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+coverage/
+.tmp/
+.worktrees/
+_codex_worktrees/
+_codex_tmp/
+contracts/
+native/

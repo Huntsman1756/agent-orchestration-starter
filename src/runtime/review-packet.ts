@@ -115,7 +115,7 @@ export function buildBrokerReviewPacket(input: BrokerReviewPacketInputV4): Broke
   if (envelope.validation_manifest.length !== input.result.validation_results.length) invalid('packet validation manifest length does not match the durable result');
   for (const [index, validation] of envelope.validation_manifest.entries()) {
     const result = input.result.validation_results[index];
-    if (result === undefined || validation.validation_id !== result.validation_id || !validation.passed || validation.result_hash !== result.result_hash || validation.validated_tree_hash !== input.result.tree_hash) {
+    if (result === undefined || result.exit_code !== 0 || validation.validation_id !== result.validation_id || !validation.passed || validation.result_hash !== result.result_hash || validation.validated_tree_hash !== input.result.tree_hash) {
       invalid('packet contains validation evidence that is not deterministically accepted');
     }
   }

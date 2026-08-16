@@ -67,4 +67,5 @@ test('refuses packets with unresolved findings or forged evidence bindings', () 
     unresolved_findings: [],
   });
   assert.throws(() => buildBrokerReviewPacket({ result: { ...result, tree_hash: 'f'.repeat(64) }, envelope: cleanEnvelope }), /REVIEW_PACKET_INVALID/);
+  assert.throws(() => buildBrokerReviewPacket({ result: { ...result, validation_results: [{ validation_id: 'lint', exit_code: 1, result_hash: 'e'.repeat(64) }] }, envelope: cleanEnvelope }), /REVIEW_PACKET_INVALID/);
 });

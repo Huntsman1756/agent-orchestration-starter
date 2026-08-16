@@ -34,6 +34,12 @@ The default bounded context is 128 KiB and the parser caps the graph at 256 file
 
 OpenCode and Codex inject the rendered `<capability_snapshot>` blocks before the task and return the same hash in their execution receipt. The Review Envelope and Broker Review Packet carry `capability_snapshot_hash`; the durable review-verdict journal record includes it in its own hash chain. A reviewer can therefore verify both the exact bounded context seen by the worker and its transitive audit-trail binding.
 
+## Shift-left validation gate
+
+The project policy runs `npm run lint` and `npm run format:check` as deterministic, networkless validation commands. ESLint uses the TypeScript parser plus `eslint-plugin-security`; the security gate rejects executable evaluation such as `eval()` and the controlled strict type-checked profile applies to the new broker quality boundary. `npm audit` is deliberately not part of this sandbox gate because it is network-dependent and cannot provide a reproducible offline verdict.
+
+The broker validates the static-quality results before invoking a fresh Frontier reviewer. If `lint` or a format gate fails, the reviewer callback is not reached. The broker creates a hash-bound `RepairPacketV4` with category `shift_left_static_quality`, ties each finding to the validation evidence hash, and forwards the bounded instruction `Las pruebas pasan, pero el código viola las políticas estáticas de calidad/seguridad. Repara los siguientes errores de lint antes de reclamar completitud.` to the Economy repair path.
+
 ## Bounded decomposition
 
 Every story declares exact allowed paths and operations, validation IDs, acceptance criteria, dependency edges, required capabilities and these budgets:
