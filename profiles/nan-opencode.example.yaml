@@ -1,3 +1,11 @@
+# Runtime V4 MCP setup:
+# - `runtime activate` generates the managed `.codex/config.toml` binding;
+#   MCP transport is not configured by adding a profile field.
+# - The ChatGPT subscription binding is read-only Codex orchestration/review;
+#   Nano/OpenCode executor credentials remain outside the repository.
+# - The generated local STDIO server is required and exposes the seven broker
+#   tools, including hash-bound review packet and verdict controls.
+# See ../docs/architecture-mcp-sdd.md for activation and HTTP details.
 schemaVersion: 4
 id: nan-opencode-chatgpt-subscription-2026-08
 bindings:

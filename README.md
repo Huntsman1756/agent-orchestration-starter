@@ -33,6 +33,52 @@ gateway, sandbox and exact binding qualification are deployment obligations.
 The current native broker evidence is for Linux x64; Windows and macOS need
 separate host evidence. See the [compatibility matrix](docs/compatibility-matrix-v4.md).
 
+## Architecture
+
+The broker is the only component that owns repository mutation, deterministic
+validation, review gating and publication. ChatGPT Desktop can act as the
+read-only frontier planner/reviewer through the generated MCP binding, while
+the Economy worker receives a bounded contract and capability snapshot. The
+review verdict is evidence, not a publication command: `APPROVED` never skips
+validation and never finalizes or publishes a run by itself.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontier as ChatGPT Desktop
+    participant Broker
+    participant Economy as Economy model
+    participant Gates as Deterministic gates
+    participant Git as Broker-owned Git
+
+    User->>Broker: Submit bounded task
+    Broker->>Frontier: Plan through MCP
+    Frontier-->>Broker: Work Contract plus acceptance tests
+    Broker->>Broker: Build capability snapshot
+    Broker->>Economy: Contract plus snapshot plus tests
+    Economy-->>Broker: Implementation diff
+    Broker->>Gates: npm test plus lint plus format plus security
+    alt Deterministic validation fails
+        Gates-->>Broker: Hash-bound Repair Packet
+        Broker->>Economy: Bounded repair attempt
+    else Deterministic validation passes
+        Gates-->>Broker: Validation manifest
+        Broker->>Frontier: Review Packet through MCP
+        Frontier-->>Broker: APPROVED or REJECTED verdict
+        alt REJECTED
+            Broker->>Economy: Existing repair flow
+        else APPROVED
+            Frontier-->>Broker: Hash-bound verdict only
+            Broker->>Gates: Re-check before finalization
+            Gates-->>Broker: Deterministic gates still pass
+            Broker->>Git: Finalize and publish only if policy allows
+        end
+    end
+```
+
+The complete contract, trust boundaries and operator procedures are in the
+[MCP and strict SDD architecture guide](docs/architecture-mcp-sdd.md).
+
 ## Quick start
 
 Requires Node.js 20 or newer.
@@ -63,6 +109,14 @@ node dist/cli/main.js init `
 node dist/cli/main.js check --target G:\_Proyectos\my-project --policy orchestration.yaml --profile profiles/open-compatible.yaml --harnesses codex,opencode
 node dist/cli/main.js doctor --harnesses codex,opencode --policy orchestration.yaml --profile profiles/open-compatible.yaml
 ```
+
+For ChatGPT Desktop orchestration and review, use the host activation flow in
+the [MCP setup guide](docs/architecture-mcp-sdd.md#connecting-chatgpt-desktop).
+It generates a required local STDIO MCP binding with keyring-backed ChatGPT
+authentication and does not require an OpenAI API key for the read-only
+frontier path. The Economy executor remains a separate profile binding and
+may require its own provider credential. Never copy `auth.json` or an API key
+into a repository, worktree or capsule.
 
 ## Autonomous lifecycle
 
@@ -273,6 +327,7 @@ notes. Public issues, pull requests and examples must also follow the
 - [Project profile selection](docs/profile-selection-v4.md)
 - [Public repository hygiene](docs/public-repository-hygiene.md)
 - [Runtime operations](docs/runtime-v4-operations.md)
+- [MCP, strict SDD and context culling](docs/architecture-mcp-sdd.md)
 - [Control plane](docs/control-plane-v4.md)
 - [Frontend/backend practice packs](docs/delegation-practice-packs-v4.md)
 - [Harness adapters and delegation proof](docs/harness-adapters-v4.md)

@@ -1,3 +1,13 @@
+# Runtime V4 MCP setup:
+# - `runtime activate` generates the managed `.codex/config.toml` binding;
+#   MCP transport is not configured by adding a profile field.
+# - Desktop uses the required local STDIO server and the seven broker tools:
+#   run/repair/finalize/abort/status plus the two broker review controls.
+# - `chatgpt-subscription` is intentionally restricted by the schema to
+#   read-only Codex orchestrator/reviewer bindings and OS-keyring auth.
+# - The Economy executor remains a separate contract-write binding; its
+#   provider credential stays behind the trusted gateway.
+# See ../docs/architecture-mcp-sdd.md for activation and HTTP details.
 schemaVersion: 4
 id: chatgpt-subscription-runtime-example
 bindings:

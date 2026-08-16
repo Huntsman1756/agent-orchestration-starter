@@ -1,3 +1,12 @@
+# Runtime V4 MCP setup:
+# - `runtime activate` generates `.codex/config.toml`; do not add an ad-hoc
+#   `mcp` key here.
+# - The generated `agent_orchestration_v4` server runs
+#   `runtime mcp-stdio --activation <activation-v4.json>` with all seven
+#   broker tools enabled and `required = true`.
+# - Keep this profile provider-neutral. Concrete providers, models and
+#   authentication belong in a dated profile revision.
+# See ../docs/architecture-mcp-sdd.md for Desktop and Streamable HTTP setup.
 schemaVersion: 4
 id: provider-neutral-runtime-example
 bindings:
