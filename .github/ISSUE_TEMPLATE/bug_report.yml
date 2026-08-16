@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible problem without publishing sensitive data
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste credentials, private source, raw prompts/model responses, full logs, personal paths or host inventories. Use a private security advisory for a suspected vulnerability.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed credentials, private data, personal paths and unrelated logs.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the observable failure and the expected result.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction
+      description: Use synthetic fixtures, placeholders and the smallest bounded output excerpt.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Release or full commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [Linux, macOS, Windows, Windows with WSL, Other]
+    validations:
+      required: true
+  - type: dropdown
+    id: adoption
+    attributes:
+      label: Adoption level
+      options: [PATTERN_ONLY, BOUNDED_LOCAL, ANALYSIS_ONLY, ISOLATED_EXECUTION, AUTONOMOUS_PUBLICATION]
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Bounded evidence
+      description: Exact command, exit status and short sanitized excerpt. Do not attach full logs.

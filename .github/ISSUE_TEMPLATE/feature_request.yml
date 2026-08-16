@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a provider-neutral capability or operational improvement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the capability and authority boundary first. A provider or model name alone is not a feature requirement or qualification claim.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and affected user
+    validations:
+      required: true
+  - type: textarea
+    id: capability
+    attributes:
+      label: Provider-neutral capability
+      description: State the required inputs, outputs, permissions and failure behavior without assuming one vendor.
+    validations:
+      required: true
+  - type: textarea
+    id: authority
+    attributes:
+      label: Trust boundary and authority impact
+      description: Explain whether this changes repository writes, credentials, network, review, publication or deployment authority.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Acceptance and qualification evidence
+      description: Describe deterministic validation, compatibility and exact-host evidence that would be required.
+    validations:
+      required: true
