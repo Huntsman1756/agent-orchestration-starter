@@ -6,6 +6,11 @@ Keep repository policy provider- and model-neutral. Concrete providers and
 model names belong in dated profile examples and qualification records. Do not
 turn model output, issue text or test fixtures into authority.
 
+Before publishing any branch, issue or pull request, follow the
+[public repository hygiene guide](docs/public-repository-hygiene.md). Replace
+personal paths and identities with placeholders, keep logs bounded, and use a
+private security advisory for sensitive reproductions.
+
 Start from a clean branch and keep changes small enough to review. Before
 opening a pull request, run:
 

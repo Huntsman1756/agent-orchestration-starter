@@ -190,6 +190,13 @@ Gemma, a future provider or a local model; the frontier planner sizes stories
 from the worker's declared capability and limits rather than assuming a fixed
 model.
 
+Choose bindings per repository rather than establishing a global vendor
+default. The [project profile selection guide](docs/profile-selection-v4.md)
+compares the mixed ChatGPT-subscription + NaN topology, the Sol + Luna OpenAI
+topology and a fully replaceable template. It also makes the authentication
+boundary explicit: a ChatGPT subscription can back read-only orchestration and
+review, but it is not an API credential for a writable Luna or Sol executor.
+
 The runtime rejects malformed native tool protocols and textual pseudo-calls
 such as `<tool_call>`; it does not convert them into executable authority.
 External agent runtimes and sandbox launchers must pass the
@@ -257,11 +264,14 @@ Read the [repository threat model](docs/threat-model-v4.md) and
 [security policy](SECURITY.md) before changing sandboxing, credentials, IPC,
 host installation, publication or model qualification. The [contribution
 contract](CONTRIBUTING.md) explains required validation, evidence and migration
-notes.
+notes. Public issues, pull requests and examples must also follow the
+[public repository hygiene guide](docs/public-repository-hygiene.md).
 
 ## Documentation map
 
 - [Consumer adoption and handoff](docs/consumer-adoption-v4.md)
+- [Project profile selection](docs/profile-selection-v4.md)
+- [Public repository hygiene](docs/public-repository-hygiene.md)
 - [Runtime operations](docs/runtime-v4-operations.md)
 - [Control plane](docs/control-plane-v4.md)
 - [Frontend/backend practice packs](docs/delegation-practice-packs-v4.md)

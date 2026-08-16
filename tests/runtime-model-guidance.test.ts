@@ -52,8 +52,12 @@ test('binds model guidance into qualification identity and loads the current sub
 
   const snapshot = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/runtime.chatgpt-subscription.example.yaml', import.meta.url), 'utf8')));
   assert.equal(snapshot.bindings.executor.model, 'gpt-5.6-luna');
+  assert.equal(snapshot.bindings.executor.authentication, 'provider-api-key');
   assert.equal(snapshot.bindings.executor.guidance.reasoningEffort, 'low');
   assert.equal(snapshot.bindings.orchestrator.model, 'gpt-5.6-sol');
+  assert.equal(snapshot.bindings.orchestrator.authentication, 'chatgpt-subscription');
+  assert.equal(snapshot.bindings.frontierExecutor.authentication, 'provider-api-key');
+  assert.equal(snapshot.bindings.reviewer.authentication, 'chatgpt-subscription');
   assert.equal(snapshot.bindings.reviewer.guidance.id, 'openai-gpt-5p6-sol');
 
   const nan = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/nan-opencode.example.yaml', import.meta.url), 'utf8')));

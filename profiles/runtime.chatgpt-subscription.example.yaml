@@ -5,6 +5,7 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    authentication: chatgpt-subscription
     capability: frontier_reasoning
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
@@ -26,6 +27,7 @@ bindings:
     harness: opencode
     provider: openai
     model: gpt-5.6-luna
+    authentication: provider-api-key
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
@@ -48,6 +50,7 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    authentication: provider-api-key
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
