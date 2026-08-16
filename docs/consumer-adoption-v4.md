@@ -40,7 +40,7 @@ unit even when its friendly name is unchanged.
 ```powershell
 git clone https://github.com/Huntsman1756/agent-orchestration-starter.git
 cd agent-orchestration-starter
-git checkout v0.3.0
+git checkout v0.3.1
 npm ci
 npm run validate
 npm run build

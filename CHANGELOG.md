@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-08-16
+
+### Fixed
+
+- Stabilized the Shift-Left static AST security test under CI by resolving its
+  fixture from the test module URL, rejecting ignored or mismatched paths
+  explicitly, and priming the typed ESLint flat configuration before asserting
+  that `eval` is reported.
+- `v0.3.0` was not published because release validation was blocked by a
+  nondeterministic Shift-Left test involving CI path/configuration resolution;
+  `v0.3.1` contains the patch-only correction and leaves `v0.3.0` immutable.
+
 ## 0.3.0 - 2026-08-16
 
 ### Added

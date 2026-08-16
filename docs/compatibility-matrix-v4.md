@@ -34,7 +34,7 @@ coordinator, sandbox or composition certificate requires dependency-aware
 recertification and a new installation identity.
 
 `broker_version` in broker-owned qualification evidence is the package version
-with the Runtime schema suffix (for example `0.3.0-v4`). It is centralized in
+with the Runtime schema suffix (for example `0.3.1-v4`). It is centralized in
 the runtime and covered by a package-version parity test. A package version
 change therefore creates a new broker identity and invalidates prior sandbox
 qualification evidence unless an explicit future compatibility policy says
