@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import { createJournalV4 } from '../src/runtime/journal.js';
 import {
   initialBrokerStateV4,
@@ -77,6 +78,42 @@ test('durably reaches review acceptance only from exact post-reinspection eviden
   assert.throws(() => reduceBrokerStateV4(ready, evidence), /BROKER_STATE_CORRUPT/);
   assert.throws(() => reduceBrokerStateV4(reinspected, { ...evidence, validation_results: [] }), /BROKER_STATE_CORRUPT/);
   assert.throws(() => reduceBrokerStateV4(reinspected, { ...evidence, changed_files: ['outside.ts'] }), /BROKER_STATE_CORRUPT/);
+});
+
+test('records a hash-bound frontier verdict without turning approval into publication', () => {
+  const acceptedCommand = accepted();
+  const ready = reduceBrokerStateV4(initialBrokerStateV4(), acceptedCommand);
+  const executing = reduceBrokerStateV4(ready, { type: 'EXTERNAL_PROCESS_STARTED', command_id: 'started-for-verdict', run_id: acceptedCommand.run_id, process: { pid: 43, boot_nonce: 'process-boot' } });
+  const waiting = reduceBrokerStateV4(executing, { type: 'ATTEMPT_RECORDED', command_id: 'attempt-for-verdict', run_id: acceptedCommand.run_id, attempt: { attempt: 1, executor_binding_ref: 'fixture-executor', result_hash: 'b'.repeat(64) } });
+  const reinspected = reduceBrokerStateV4(waiting, { type: 'PATHS_REINSPECTED', command_id: 'reinspect-for-verdict', run_id: acceptedCommand.run_id, inspection_epoch: 2 });
+  const reviewed = reduceBrokerStateV4(reinspected, {
+    type: 'CANDIDATE_ACCEPTED',
+    command_id: 'candidate-accepted',
+    run_id: acceptedCommand.run_id,
+    validation_results: [{ validation_id: 'test', exit_code: 0, result_hash: 'c'.repeat(64) }],
+    diff_hash: 'd'.repeat(64),
+    tree_hash: 'e'.repeat(64),
+    changed_files: ['src/greeting.ts'],
+    review_attestation_hash: 'f'.repeat(64),
+  });
+  const verdictBody = { schema_version: 4, run_id: acceptedCommand.run_id, review_packet_hash: '1'.repeat(64), contract_hash: acceptedCommand.contract.contract_hash, diff_hash: reviewed.runs[acceptedCommand.run_id].result.diff_hash, tree_hash: reviewed.runs[acceptedCommand.run_id].result.tree_hash, verdict: 'APPROVED' as const, reason: 'Independent review passed.' };
+  const verdict: Extract<BrokerCommandV4, { type: 'REVIEW_VERDICT_RECORDED' }> = {
+    type: 'REVIEW_VERDICT_RECORDED',
+    command_id: 'verdict-approved',
+    run_id: acceptedCommand.run_id,
+    review_packet_hash: verdictBody.review_packet_hash,
+    contract_hash: verdictBody.contract_hash,
+    diff_hash: verdictBody.diff_hash,
+    tree_hash: verdictBody.tree_hash,
+    verdict: verdictBody.verdict,
+    reason: verdictBody.reason,
+    verdict_hash: hashCanonicalV4(verdictBody),
+  };
+  const approved = reduceBrokerStateV4(reviewed, verdict);
+  assert.equal(approved.runs[acceptedCommand.run_id].result.state, 'REVIEW_ACCEPTED');
+  assert.equal(approved.runs[acceptedCommand.run_id].review_verdict?.verdict, 'APPROVED');
+  assert.throws(() => reduceBrokerStateV4(approved, { ...verdict, command_id: 'verdict-replayed', verdict: 'REJECTED', verdict_hash: hashCanonicalV4({ ...verdictBody, verdict: 'REJECTED' }) }), /BROKER_STATE_CORRUPT/);
+  assert.throws(() => reduceBrokerStateV4(reviewed, { ...verdict, command_id: 'verdict-forged', diff_hash: '4'.repeat(64) }), /BROKER_STATE_CORRUPT/);
 });
 
 test('records authenticated abort as a distinct terminal transition', () => {
