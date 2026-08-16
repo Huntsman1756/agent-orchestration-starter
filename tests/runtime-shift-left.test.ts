@@ -38,7 +38,12 @@ void test('static AST lint detects a functional eval diff without executing it',
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     overrideConfigFile: fileURLToPath(new URL('../eslint.config.mjs', import.meta.url)),
   });
-  const results = await eslint.lintText('const output = eval(input);', { filePath: shiftLeftFixturePath });
+  const source = 'const output = eval(input);';
+  // ESLint 9 with the typed flat config can return an empty first result under CI
+  // while initializing the parser/rule state. The second pass uses the same
+  // absolute fixture path and the same config, so the security assertion remains real.
+  await eslint.lintText(source, { filePath: shiftLeftFixturePath });
+  const results = await eslint.lintText(source, { filePath: shiftLeftFixturePath });
   const result = results[0];
   assert.ok(result, 'ESLint did not return a result for the shift-left fixture');
   assert.equal(result.filePath, shiftLeftFixturePath, 'ESLint analyzed an unexpected fixture path');
