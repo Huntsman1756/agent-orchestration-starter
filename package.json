@@ -1,6 +1,6 @@
 {
   "name": "agent-orchestration-starter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Provider-neutral agent orchestration runtime and control plane",
   "license": "MIT",
   "type": "module",

@@ -7,13 +7,13 @@ checks are not mistaken for hard isolation.
 
 ## Choose and name the adoption level
 
-| Level | What is present | Permitted claim | Not yet established |
-| --- | --- | --- | --- |
-| `PATTERN_ONLY` | role split, bounded prompt and independent human/frontier review | "inspired by Agent Orchestration Starter" | enforced contracts, clean execution, durable evidence |
-| `BOUNDED_LOCAL` | typed contract, clean isolated worktree, exact path checks, deterministic validation and no worker publication | "bounded local delegation" | certified sandbox, durable daemon, autonomous publication |
-| `ANALYSIS_ONLY` | installed Runtime V4 contracts, repository policy/profile and hash-bound activation | "Runtime V4 analysis activation" | model execution or publication authority |
-| `ISOLATED_EXECUTION` | complete certified host evidence and publication disabled | "certified isolated execution for this exact binding" | autonomous publication |
-| `AUTONOMOUS_PUBLICATION` | isolated execution plus GitHub lease, publication policy and post-merge verification | "certified autonomous publication for this exact binding" | deployment, production mutation or global routing authority |
+| Level                    | What is present                                                                                                | Permitted claim                                           | Not yet established                                         |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| `PATTERN_ONLY`           | role split, bounded prompt and independent human/frontier review                                               | "inspired by Agent Orchestration Starter"                 | enforced contracts, clean execution, durable evidence       |
+| `BOUNDED_LOCAL`          | typed contract, clean isolated worktree, exact path checks, deterministic validation and no worker publication | "bounded local delegation"                                | certified sandbox, durable daemon, autonomous publication   |
+| `ANALYSIS_ONLY`          | installed Runtime V4 contracts, repository policy/profile and hash-bound activation                            | "Runtime V4 analysis activation"                          | model execution or publication authority                    |
+| `ISOLATED_EXECUTION`     | complete certified host evidence and publication disabled                                                      | "certified isolated execution for this exact binding"     | autonomous publication                                      |
+| `AUTONOMOUS_PUBLICATION` | isolated execution plus GitHub lease, publication policy and post-merge verification                           | "certified autonomous publication for this exact binding" | deployment, production mutation or global routing authority |
 
 Adoption is monotonic only through evidence. A project does not become
 `ISOLATED_EXECUTION` because a worker obeyed instructions, OpenCode denied some
@@ -40,7 +40,7 @@ unit even when its friendly name is unchanged.
 ```powershell
 git clone https://github.com/Huntsman1756/agent-orchestration-starter.git
 cd agent-orchestration-starter
-git checkout v0.2.0
+git checkout v0.3.0
 npm ci
 npm run validate
 npm run build

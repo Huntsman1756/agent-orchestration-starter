@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-08-16
+
+### Added
+
+- Added the authenticated MCP broker surface with STDIO and Streamable HTTP
+  adapters, seven bounded tools, hash-bound review packets and durable verdict
+  handling. `APPROVED` remains evidence only; `REJECTED` reuses repair flow.
+- Added strict SDD contract matrices for Planner-authored `acceptance_tests`
+  and Economy-owned `implementation_targets`, including a fail-closed diff
+  interceptor that emits `ECONOMY_POLICY_VIOLATION`.
+- Added static TypeScript AST capability snapshots with bounded dependency
+  traversal, dynamic-import exclusion, signature fallback and content hashes.
+- Added shift-left lint/format security gates that emit bounded Repair Packets
+  before independent Frontier review.
+- Added the append-only, hash-chained audit ledger with secret redaction,
+  durable broker projection and `npm run audit:verify`.
+- Added the master MCP/SDD architecture guide, Mermaid lifecycle diagram and
+  explicit Planner/Executor/Reviewer rules in `AGENTS.md`.
+
 ### Changed
 
 - Added opt-in, provider-neutral delegation provenance enforcement. A trusted
