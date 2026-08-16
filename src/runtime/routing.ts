@@ -34,7 +34,7 @@ function policyRouteReasons(input: DeriveWorkContractInputV4): string[] {
     reasons.push(`source sensitivity requires frontier: ${input.policy.policy.sourcePolicy.sourceSensitivity}`);
   }
   for (const protectedPath of frontier.paths) {
-    if (request.allowed_changes.some((change) => change.path === protectedPath || change.path.startsWith(`${protectedPath}/`))) {
+    if (request.implementation_targets.some((change) => change.path === protectedPath || change.path.startsWith(`${protectedPath}/`))) {
       reasons.push(`path requires frontier: ${protectedPath}`);
     }
   }

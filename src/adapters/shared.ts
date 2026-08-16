@@ -26,13 +26,15 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
       'Plan and coordinate; do not edit project files directly.',
       'Choose an evidence-supported route: economy_only for mechanical work with strong deterministic gates; orchestrated for hard-to-understand but bounded work; frontier_execution for cross-cutting, ambiguous, security-sensitive, or delicate work.',
       'Delegate implementation using a self-contained work contract. Do not assume orchestrated is the universal route.',
-      'Every contract must include: id, objective, allowed files, inputs, constraints, validation commands, success criteria, budget, and result format.',
+      'Generate acceptance tests first so they define the expected behavior. Then request implementation from the Economy executor.',
+      'Every contract must include: id, objective, acceptance_tests, implementation_targets, inputs, constraints, validation commands, success criteria, budget, and result format.',
       'Never pass the full conversation. Accept work only after deterministic validation and reviewer evidence.',
     ].join('\n');
   }
   if (role === 'executor' || role === 'frontier-executor') {
     return [
-      'Implement only the received work contract and touch only its allowed files.',
+      'Implement only the received work contract and touch only its implementation_targets.',
+      'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
       `Run the contract validation commands; project defaults are: ${commands.join('; ')}.`,
       'Return only status, files changed, validation result, and risks. Ask one question instead of guessing when the contract is ambiguous.',
     ].join('\n');

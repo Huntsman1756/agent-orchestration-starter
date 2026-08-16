@@ -7,12 +7,35 @@ import { isNormalizedRepositoryRelativePathV4 } from './contract-schemas.js';
 import type { AllowedChangeV4, ChangeOperationV4 } from './contracts.js';
 import { gitTextV4, runGit } from './git-runner.js';
 
+export const ECONOMY_POLICY_REPAIR_INSTRUCTION_V4 = 'Intentaste modificar los tests de aceptación. Esto está prohibido por el contrato. Solo modifica los archivos de implementación.';
+
+export class EconomyPolicyViolationErrorV4 extends Error {
+  readonly code = 'ECONOMY_POLICY_VIOLATION' as const;
+  readonly violation_path: string;
+  readonly repair_instruction = ECONOMY_POLICY_REPAIR_INSTRUCTION_V4;
+  readonly evidence_hash: string;
+
+  constructor(path: string) {
+    super(`ECONOMY_POLICY_VIOLATION: ${ECONOMY_POLICY_REPAIR_INSTRUCTION_V4} Path: ${path}`);
+    this.name = 'EconomyPolicyViolationErrorV4';
+    this.violation_path = path;
+    this.evidence_hash = hashCanonicalV4({ schema_version: 4, code: this.code, path, repair_instruction: this.repair_instruction });
+  }
+}
+
 export interface DiffPolicyInputV4 {
   readonly repository_root: string;
   readonly base_sha: string;
   readonly allowed_changes: readonly AllowedChangeV4[];
+  readonly acceptance_tests?: readonly string[];
+  readonly reject_acceptance_test_changes?: boolean;
   readonly max_files_changed: number;
   readonly max_changed_lines: number;
+}
+
+export interface EconomyDiffPolicyInputV4 extends Omit<DiffPolicyInputV4, 'allowed_changes' | 'acceptance_tests' | 'reject_acceptance_test_changes'> {
+  readonly acceptance_tests: readonly string[];
+  readonly implementation_targets: readonly AllowedChangeV4[];
 }
 
 export interface DiffPolicyChangeV4 {
@@ -30,6 +53,7 @@ export interface DiffPolicyResultV4 {
 }
 
 function reject(message: string): never { throw new Error(`OUT_OF_SCOPE_CHANGE: ${message}`); }
+function rejectEconomyPolicy(path: string): never { throw new EconomyPolicyViolationErrorV4(path); }
 function nulFields(buffer: Buffer): string[] {
   try { return new TextDecoder('utf-8', { fatal: true }).decode(buffer).split('\0').filter((value) => value.length > 0); } catch {
     return reject('Git emitted a non-UTF-8 path');
@@ -46,6 +70,7 @@ export async function enforceDiffPolicy(input: DiffPolicyInputV4): Promise<DiffP
 
   const classified = new Map<string, ChangeOperationV4>();
   const trackedChangedPaths = new Set<string>();
+  const acceptanceTests = new Set((input.acceptance_tests ?? []).map((path) => path.toLocaleLowerCase('en-US')));
   const names = nulFields((await runGit(input.repository_root, ['diff', '--name-status', '-z', '--no-renames', input.base_sha, '--'])).stdout);
   for (let index = 0; index < names.length; index += 2) {
     const status = names[index] ?? '';
@@ -79,6 +104,7 @@ export async function enforceDiffPolicy(input: DiffPolicyInputV4): Promise<DiffP
   const changes: DiffPolicyChangeV4[] = [];
   for (const [path, operation] of [...classified].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
     if (!isNormalizedRepositoryRelativePathV4(path)) reject(`invalid changed path: ${path}`);
+    if (input.reject_acceptance_test_changes === true && acceptanceTests.has(path.toLocaleLowerCase('en-US'))) rejectEconomyPolicy(path);
     const policy = allowed.get(path.toLowerCase());
     if (policy === undefined || policy.path !== path || !policy.operations.includes(operation)) reject(`change not allowed: ${path} (${operation})`);
     let contentHash: string | null = null;
@@ -100,5 +126,20 @@ export async function enforceDiffPolicy(input: DiffPolicyInputV4): Promise<DiffP
     changed_lines: changedLines,
     diff_hash: hashCanonicalV4({ schema_version: 4, base_sha: input.base_sha, changes: frozen }),
     tree_hash: hashCanonicalV4({ schema_version: 4, parent_tree: input.base_sha, applied_changes: frozen }),
+  });
+}
+
+/**
+ * Economy-only write interceptor. The whole repository remains readable, but
+ * only implementation_targets are writable and acceptance_tests are immutable.
+ * It runs against the observed Git tree, so a model cannot smuggle a test edit
+ * through a different tool or an untracked-file path.
+ */
+export async function interceptEconomyDiffV4(input: EconomyDiffPolicyInputV4): Promise<DiffPolicyResultV4> {
+  return enforceDiffPolicy({
+    ...input,
+    allowed_changes: input.implementation_targets,
+    acceptance_tests: input.acceptance_tests,
+    reject_acceptance_test_changes: true,
   });
 }

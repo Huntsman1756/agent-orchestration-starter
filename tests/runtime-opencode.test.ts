@@ -56,7 +56,7 @@ test('runs the profile-selected model and agent with only broker config and leas
       lease: async () => ({ lease_id: 'lease_fixture', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }),
       revoke: async (id) => { assert.equal(id, 'lease_fixture'); revoked = true; },
     };
-    const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
+    const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_economy_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
     const result = await runner.execute({
       execution_id: 'exec_fixture_0001', binding, capability, capsule_root: capsule, worktree_root: worktree,
       agent: 'executor', objective: 'Change greeting', base_sha: '1'.repeat(40),
@@ -126,7 +126,7 @@ test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', 
         run: async (request) => ({ execution_id: request.execution_id, exit_code: 0, signal: null, timed_out: false, stdout, stderr: '', stdout_truncated: false, stderr_truncated: false, duration_ms: 1 }),
         terminate: async () => {},
       };
-      const runner = createOpenCodeRunner({ sandbox, credentials, harness_argv: ['opencode'], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => { diffChecks += 1; return { changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }; } });
+  const runner = createOpenCodeRunner({ sandbox, credentials, harness_argv: ['opencode'], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_economy_diff: async () => { diffChecks += 1; return { changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }; } });
       await assert.rejects(() => runner.execute({ execution_id: `exec_invalid_${index}`, binding, capability, capsule_root: capsule, worktree_root: worktree, agent: 'executor', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64) }), /EXECUTOR_INVALID_OUTPUT/);
     }
     assert.equal(diffChecks, outputs.length, 'every malformed harness attempt must still be inspected');

@@ -210,7 +210,7 @@ export function loadIterativeStoryPlanV4(value: unknown, contract: RuntimeWorkCo
   const plan = planSchema.parse(structuredClone(value));
   exactHash(plan as unknown as Record<string, unknown>, 'plan_hash', 'plan');
   if (plan.run_id !== contract.run_id || plan.contract_hash !== contract.contract_hash || plan.base_sha !== contract.base_sha) invalid('plan identity does not match the work contract');
-  const allowed = new Map(contract.allowed_changes.map((change) => [change.path, new Set(change.operations)]));
+  const allowed = new Map(contract.implementation_targets.map((change) => [change.path, new Set(change.operations)]));
   const validationIds = new Set(contract.allowed_validation_ids);
   const worker = loadWorkerCapabilityV4(workerInput);
   if (plan.worker_capability_hash !== worker.worker_capability_hash) invalid('plan worker capability does not match the active worker');

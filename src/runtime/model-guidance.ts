@@ -7,6 +7,26 @@ export interface ModelPromptInputV4 {
   readonly context?: string;
 }
 
+export function strictSddPlannerInstructionsV4(): readonly string[] {
+  return Object.freeze([
+    'Use strict Spec-Driven Development: generate the acceptance tests first so they define the expected behavior.',
+    'Only after the acceptance tests are frozen may you request implementation from the Economy executor.',
+    'The Work Contract must separate acceptance_tests (read-only) from implementation_targets (write-only).',
+  ]);
+}
+
+export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tests: readonly string[]; readonly implementation_targets: readonly { readonly path: string; readonly operations: readonly string[] }[] }): readonly string[] {
+  const acceptanceTests = input.acceptance_tests.join(', ');
+  const implementationTargets = input.implementation_targets.map((change) => `${change.path} [${change.operations.join(', ')}]`).join(', ');
+  return Object.freeze([
+    'SDD STRICT: the repository snapshot is readable, but write authority is limited to the implementation targets below.',
+    `Acceptance tests (READ-ONLY, immutable): ${acceptanceTests}`,
+    `Implementation targets (READ-WRITE only): ${implementationTargets}`,
+    'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
+    'If a repair packet is supplied, follow its bounded instruction without widening the implementation target list.',
+  ]);
+}
+
 function xml(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 }

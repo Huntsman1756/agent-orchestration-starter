@@ -52,7 +52,7 @@ Database, authentication, authorization, deployment, infrastructure and security
 
 ## Frontend delegation example
 
-The planner should emit a small story body equivalent to:
+The planner first freezes the work contract's `acceptance_tests`; those files are read-only for Economy. Story `allowed_changes` below therefore contains implementation targets only:
 
 ```yaml
 story_id: story_password_form
@@ -62,8 +62,6 @@ priority: 1
 depends_on: []
 allowed_changes:
   - path: src/features/account/password-recovery.tsx
-    operations: [CREATE]
-  - path: tests/account/password-recovery.test.tsx
     operations: [CREATE]
 validation_ids: [typecheck, frontend-unit, frontend-build, browser-flow]
 acceptance_criteria:
@@ -92,8 +90,6 @@ priority: 2
 depends_on: [story_recovery_contract]
 allowed_changes:
   - path: src/api/account/password-recovery.ts
-    operations: [CREATE]
-  - path: tests/api/account/password-recovery.test.ts
     operations: [CREATE]
 validation_ids: [typecheck, backend-unit, api-contract, integration]
 acceptance_criteria:

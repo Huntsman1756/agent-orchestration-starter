@@ -300,7 +300,7 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
     nextRun = { ...run, result: { ...run.result, state: 'EXECUTION_STARTED' }, external_process: command.process };
   } else if (command.type === 'CANDIDATE_ACCEPTED') {
     const allowedValidationIds = new Set(run.contract.allowed_validation_ids);
-    const allowedChangePaths = new Set(run.contract.allowed_changes.map((change) => change.path.toLocaleLowerCase('en-US')));
+    const allowedChangePaths = new Set(run.contract.implementation_targets.map((change) => change.path.toLocaleLowerCase('en-US')));
     if (run.result.state !== 'READY_FOR_EXECUTOR' || run.result.attempts.length < 1 || run.inspection_required || run.external_process !== null
       || command.validation_results.length !== run.contract.allowed_validation_ids.length
       || command.validation_results.some((result, index) => result.validation_id !== run.contract.allowed_validation_ids[index] || !allowedValidationIds.has(result.validation_id))

@@ -56,6 +56,48 @@ const allowedChangeSchema = z.object({
   operations: uniqueArray(z.enum(['CREATE', 'MODIFY', 'DELETE']), { min: 1 }),
 }).strict();
 
+const acceptanceTestPathSchema = normalizedRepositoryRelativePathV4Schema.refine(
+  (value) => /\.(?:spec|test)\.tsx?$/u.test(value),
+  'acceptance tests must be .spec.ts[x] or .test.ts[x] files',
+);
+
+const implementationTargetSchema = z.object({
+  path: normalizedRepositoryRelativePathV4Schema.refine(
+    (value) => /\.tsx?$/u.test(value) && !/\.(?:spec|test)\.tsx?$/u.test(value),
+    'implementation targets must be non-test TypeScript files',
+  ),
+  operations: uniqueArray(z.enum(['CREATE', 'MODIFY', 'DELETE']), { min: 1 }),
+}).strict();
+
+type SddStrictPolicyValue = {
+  allowed_changes: readonly { path: string; operations: readonly string[] }[];
+  acceptance_tests: readonly string[];
+  implementation_targets: readonly { path: string; operations: readonly string[] }[];
+};
+
+function changeKey(change: { path: string; operations: readonly string[] }): string {
+  return `${change.path}\u0000${[...change.operations].sort().join(',')}`;
+}
+
+function refineSddStrictPolicy(value: SddStrictPolicyValue, context: z.RefinementCtx): void {
+  const acceptanceTests = new Set(value.acceptance_tests.map((path) => path.toLocaleLowerCase('en-US')));
+  const targets = new Set(value.implementation_targets.map((change) => change.path.toLocaleLowerCase('en-US')));
+  if (acceptanceTests.size !== value.acceptance_tests.length) {
+    context.addIssue({ code: 'custom', path: ['acceptance_tests'], message: 'acceptance test paths must be unique case-insensitively' });
+  }
+  if (targets.size !== value.implementation_targets.length) {
+    context.addIssue({ code: 'custom', path: ['implementation_targets'], message: 'implementation target paths must be unique case-insensitively' });
+  }
+  for (const path of acceptanceTests) {
+    if (targets.has(path)) context.addIssue({ code: 'custom', path: ['implementation_targets'], message: 'acceptance tests cannot be implementation targets' });
+  }
+  const allowed = value.allowed_changes.map(changeKey).sort();
+  const implementation = value.implementation_targets.map(changeKey).sort();
+  if (allowed.length !== implementation.length || allowed.some((entry, index) => entry !== implementation[index])) {
+    context.addIssue({ code: 'custom', path: ['implementation_targets'], message: 'implementation_targets must exactly mirror allowed_changes' });
+  }
+}
+
 const taskRequestFields = {
   schema_version: z.literal(4),
   task_id: identifierSchema,
@@ -66,6 +108,8 @@ const taskRequestFields = {
   requested_risk_class: identifierSchema,
   requested_route: z.enum(['AUTO', 'ECONOMY', 'FRONTIER']),
   allowed_changes: z.array(allowedChangeSchema).min(1).max(256),
+  acceptance_tests: uniqueArray(acceptanceTestPathSchema, { min: 1, max: 64 }),
+  implementation_targets: z.array(implementationTargetSchema).min(1).max(256),
   allowed_validation_ids: uniqueArray(identifierSchema, { min: 1, max: 64 }),
   inputs: z.array(z.string().max(2_000)).max(64),
   constraints: z.array(z.string().max(2_000)).max(64),
@@ -77,7 +121,7 @@ const taskRequestFields = {
   result_schema_version: z.literal(4),
 };
 
-export const runtimeTaskRequestV4Schema = z.object(taskRequestFields).strict();
+export const runtimeTaskRequestV4Schema = z.object(taskRequestFields).strict().superRefine(refineSddStrictPolicy);
 
 const bindingSchema = z.object({
   harness: identifierSchema,
@@ -168,7 +212,7 @@ export const runtimeWorkContractV4Schema = z.object({
   policy_hash: hashSchema,
   profile_hash: hashSchema,
   contract_hash: hashSchema,
-}).strict();
+}).strict().superRefine(refineSddStrictPolicy);
 
 const failureSchema = z.object({
   code: z.enum(RUNTIME_FAILURE_CODES_V4),

@@ -32,8 +32,10 @@ test('compiles explicit Codex custom agents with role-specific sandboxes', () =>
   assert.match(config, /^sandbox_mode = "read-only"/m);
   assert.match(orchestrator, /model = "frontier-main"/);
   assert.match(orchestrator, /sandbox_mode = "read-only"/);
+  assert.match(orchestrator, /acceptance tests first/i);
   assert.match(executor, /model = "economy-code"/);
   assert.match(executor, /sandbox_mode = "workspace-write"/);
+  assert.match(executor, /PROHIBITED from editing.*acceptance-test/i);
   assert.match(reviewer, /sandbox_mode = "read-only"/);
 });
 
@@ -57,6 +59,7 @@ test('compiles OpenCode agents with explicit models and permissions', () => {
   assert.match(orchestrator, /bash:\n\s+["']\*["']: deny/);
   assert.match(executor, /model: economy-vendor\/economy-code/);
   assert.match(executor, /edit: allow/);
+  assert.match(executor, /PROHIBITED from editing.*acceptance-test/i);
   assert.match(executor, /bash:\n\s+["']\*["']: ask/);
   assert.match(reviewer, /edit: deny/);
   assert.match(reviewer, /bash:\n\s+["']\*["']: deny/);
@@ -74,6 +77,8 @@ test('compiles a Hermes distribution with frontier parent and economy delegation
   assert.deepEqual(config.fallback_providers, []);
   assert.match(soul, /deterministic validation/i);
   assert.match(soul, /work contract/i);
+  assert.match(soul, /acceptance tests first/i);
+  assert.match(soul, /PROHIBITED from editing/i);
 });
 
 test('uses harness-specific provider aliases without changing the canonical model identity', () => {

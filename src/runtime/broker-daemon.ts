@@ -286,7 +286,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
         const baseSha = await deps.resolveBaseSha(registration, policy);
         await (deps.inspectChanges ?? inspectAllowedChanges)({
           repositoryRoot: registration.canonical_root,
-          changes: request.allowed_changes,
+          changes: request.implementation_targets,
           platform: process.platform,
         });
         const runId = (deps.generateRunId ?? defaultRunId)();
@@ -339,7 +339,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       const run = state?.runs[runId];
       if (run === undefined) throw new Error(`INVALID_CONTRACT: unknown run_id ${runId}`);
       const registration = loadRepositoryRegistration(run.contract.repository_id, deps.registry);
-      await (deps.inspectChanges ?? inspectAllowedChanges)({ repositoryRoot: registration.canonical_root, changes: run.contract.allowed_changes, platform: process.platform });
+      await (deps.inspectChanges ?? inspectAllowedChanges)({ repositoryRoot: registration.canonical_root, changes: run.contract.implementation_targets, platform: process.platform });
       await persist({ type: 'PATHS_REINSPECTED', command_id: commandId('reinspect'), run_id: runId, inspection_epoch: run.inspection_epoch + 1 });
     }),
     recordExternalProcessStarted: (runId, process) => serialize(async () => {

@@ -18,7 +18,7 @@ const contentHash = createHash('sha256').update(bytes).digest('hex');
 function contract(): RuntimeWorkContractV4 {
   const body = {
     schema_version: 4 as const, task_id: 'TASK-1', request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', repository_id: 'fixture-repo', objective: 'Change the greeting', task_class: 'mechanical-change', requested_risk_class: 'normal', requested_route: 'AUTO' as const,
-    allowed_changes: [{ path: 'src/x.ts', operations: ['MODIFY' as const] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['tests pass'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push'], result_schema_version: 4 as const,
+    allowed_changes: [{ path: 'src/x.ts', operations: ['MODIFY' as const] }], acceptance_tests: ['tests/x.test.ts'], implementation_targets: [{ path: 'src/x.ts', operations: ['MODIFY' as const] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['tests pass'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push'], result_schema_version: 4 as const,
     run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', repository_root_hash: '1'.repeat(64), base_sha: baseSha, effective_risk_class: 'normal', effective_route: 'ECONOMY' as const, route_decision_reasons: ['eligible'], route_decision_hash: '2'.repeat(64), effective_data_scope: 'SOURCE_CODE_ONLY' as const, effective_source_sensitivity: 'PUBLIC' as const, sandbox_profile_hashes: { executor: '3'.repeat(64) }, policy_hash: policyHash, profile_hash: profileHash,
   };
   return { ...body, contract_hash: hashCanonicalV4(body) };

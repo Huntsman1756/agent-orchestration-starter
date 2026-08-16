@@ -24,6 +24,8 @@ export function validTaskRequest() {
     requested_risk_class: 'normal',
     requested_route: 'AUTO',
     allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
+    acceptance_tests: ['tests/greeting.test.ts'],
+    implementation_targets: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
     allowed_validation_ids: ['test'],
     inputs: [],
     constraints: [],
@@ -197,6 +199,20 @@ test('rejects duplicate allowed change operations', () => {
   const request = validTaskRequest();
   request.allowed_changes[0].operations.push('MODIFY');
   assert.throws(() => loadRuntimeTaskRequestV4(request), /duplicate/i);
+});
+
+test('requires separate planner acceptance tests and Economy implementation targets', () => {
+  const mismatch = validTaskRequest();
+  mismatch.implementation_targets[0].path = 'src/other.ts';
+  assert.throws(() => loadRuntimeTaskRequestV4(mismatch), /implementation_targets.*mirror|allowed_changes/i);
+
+  const overlap = validTaskRequest();
+  overlap.acceptance_tests[0] = 'src/greeting.ts';
+  assert.throws(() => loadRuntimeTaskRequestV4(overlap), /acceptance.*implementation|\.test\.ts|\.spec\.ts/i);
+
+  const invalidExtensions = validTaskRequest();
+  invalidExtensions.acceptance_tests[0] = 'tests/greeting.js';
+  assert.throws(() => loadRuntimeTaskRequestV4(invalidExtensions), /acceptance.*test|\.test\.ts/i);
 });
 
 test('rejects non-normalized repository-relative paths in changes and approved instructions', () => {

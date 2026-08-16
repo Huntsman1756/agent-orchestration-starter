@@ -6,9 +6,9 @@ import { parse } from 'yaml';
 
 import { resolveBinding } from '../src/runtime/bindings.js';
 import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
-import { codexBrokerProviderConfigArgvV4, codexModelConfigArgvV4, openCodeModelOptionsV4, renderModelPromptV4 } from '../src/runtime/model-guidance.js';
+import { codexBrokerProviderConfigArgvV4, codexModelConfigArgvV4, openCodeModelOptionsV4, renderModelPromptV4, strictSddExecutorInstructionsV4, strictSddPlannerInstructionsV4 } from '../src/runtime/model-guidance.js';
 import { isProviderGatewayPathAllowedV4 } from '../src/runtime/provider-egress-gateway.js';
-import { validModelGuidance, validRuntimeProfile } from './runtime-contracts.test.js';
+import { validModelGuidance, validRuntimeProfile, validWorkContract } from './runtime-contracts.test.js';
 
 test('renders the selected model guidance without changing stable authority', () => {
   const markdown = renderModelPromptV4({ guidance: validModelGuidance(), stableInstructions: ['Stable boundary.'], task: 'Change greeting.', context: '{"trusted":true}' });
@@ -19,6 +19,15 @@ test('renders the selected model guidance without changing stable authority', ()
   assert.ok(xml.indexOf('<task>') < xml.indexOf('<context>'));
   assert.match(xml, /Use &lt;repo&gt;\./);
   assert.match(xml, /A&amp;B/);
+});
+
+test('renders strict SDD planner and executor boundaries', () => {
+  assert.match(strictSddPlannerInstructionsV4().join('\n'), /acceptance tests first/i);
+  const instructions = strictSddExecutorInstructionsV4(validWorkContract()).join('\n');
+  assert.match(instructions, /READ-ONLY.*immutable/i);
+  assert.match(instructions, /PROHIBITED from editing/i);
+  assert.match(instructions, /src\/greeting\.ts/);
+  assert.match(instructions, /tests\/greeting\.test\.ts/);
 });
 
 test('maps only bounded cross-provider controls and rejects unsupported Codex effort', () => {

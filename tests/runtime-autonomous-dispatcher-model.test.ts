@@ -78,6 +78,8 @@ function requestFor(index: number): RuntimeTaskRequestV4 {
     requested_risk_class: 'normal',
     requested_route: 'AUTO',
     allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
+    acceptance_tests: ['tests/greeting.test.ts'],
+    implementation_targets: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
     allowed_validation_ids: ['test'],
     inputs: [],
     constraints: [],

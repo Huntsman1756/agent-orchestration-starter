@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { ResolvedBindingV4 } from './bindings.js';
 import type { AllowedChangeV4 } from './contracts.js';
+import { EconomyPolicyViolationErrorV4 } from './diff-policy.js';
 import { openCodeModelOptionsV4 } from './model-guidance.js';
 
 export interface OpenCodeConfigResultV4 {
@@ -16,7 +17,8 @@ export async function writeBrokerOpenCodeConfigV4(input: {
   readonly capsule_root: string;
   readonly binding: ResolvedBindingV4;
   readonly provider_endpoint: string;
-  readonly allowed_changes: readonly AllowedChangeV4[];
+  readonly acceptance_tests: readonly string[];
+  readonly implementation_targets: readonly AllowedChangeV4[];
 }): Promise<OpenCodeConfigResultV4> {
   if (input.binding.binding.harness !== 'opencode' || input.binding.binding.permissions !== 'contract-write') {
     throw new Error('EXECUTOR_POLICY_VIOLATION: binding cannot run the OpenCode executor');
@@ -27,7 +29,11 @@ export async function writeBrokerOpenCodeConfigV4(input: {
     throw new Error('EXECUTOR_POLICY_VIOLATION: provider gateway endpoint is not the broker-owned internal origin');
   }
   const edit: Record<string, 'allow' | 'deny'> = { '*': 'deny' };
-  for (const change of input.allowed_changes) edit[`repo/${change.path}`] = 'allow';
+  const acceptanceTests = new Set(input.acceptance_tests.map((path) => path.toLocaleLowerCase('en-US')));
+  for (const change of input.implementation_targets) {
+    if (acceptanceTests.has(change.path.toLocaleLowerCase('en-US'))) throw new EconomyPolicyViolationErrorV4(change.path);
+    edit[`repo/${change.path}`] = 'allow';
+  }
   const provider = input.binding.binding.provider;
   const model = input.binding.binding.model;
   const config = {

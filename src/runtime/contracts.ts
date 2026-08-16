@@ -41,6 +41,10 @@ export interface RuntimeTaskRequestV4 {
   requested_risk_class: string;
   requested_route: RequestedRouteV4;
   allowed_changes: readonly AllowedChangeV4[];
+  /** Planner-authored acceptance tests. Executors may read them but never write them. */
+  acceptance_tests: readonly string[];
+  /** Economy write authority. This is deliberately separate from acceptance_tests. */
+  implementation_targets: readonly AllowedChangeV4[];
   allowed_validation_ids: readonly string[];
   inputs: readonly string[];
   constraints: readonly string[];

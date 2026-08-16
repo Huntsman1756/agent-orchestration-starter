@@ -1520,6 +1520,7 @@ const PUBLIC_FAILURE_MESSAGES_V4: Readonly<Record<RuntimeFailureCodeV4, string>>
   PROVIDER_UNAVAILABLE: 'provider is unavailable',
   EXECUTOR_INVALID_OUTPUT: 'executor output is invalid',
   EXECUTOR_POLICY_VIOLATION: 'executor policy was violated',
+  ECONOMY_POLICY_VIOLATION: 'economy executor attempted to modify acceptance tests',
   OUT_OF_SCOPE_CHANGE: 'change is outside the allowed scope',
   VALIDATION_FAILED: 'validation failed',
   REVIEW_REJECTED: 'review rejected the result',

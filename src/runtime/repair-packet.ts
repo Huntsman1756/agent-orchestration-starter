@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { hashCanonicalV4 } from './canonical.js';
 import { normalizedRepositoryRelativePathV4Schema } from './contract-schemas.js';
+import { EconomyPolicyViolationErrorV4 } from './diff-policy.js';
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/);
@@ -56,4 +57,26 @@ export function loadRepairPacketV4(input: unknown): RepairPacketV4 {
     ...packet,
     findings: Object.freeze(packet.findings.map((finding) => Object.freeze({ ...finding }))),
   }) as unknown as RepairPacketV4;
+}
+
+export function createEconomyPolicyRepairPacketV4(input: {
+  readonly story_id: string;
+  readonly failed_attempt: number;
+  readonly violation: EconomyPolicyViolationErrorV4;
+}): RepairPacketV4 {
+  const body = {
+    schema_version: 4 as const,
+    story_id: input.story_id,
+    failed_attempt: input.failed_attempt,
+    findings: [{
+      finding_id: `economy-policy-${input.violation.evidence_hash.slice(0, 24)}`,
+      source: 'VALIDATION' as const,
+      category_code: 'economy_policy_violation',
+      path: input.violation.violation_path,
+      line: null,
+      instruction: input.violation.repair_instruction,
+      evidence_hash: input.violation.evidence_hash,
+    }],
+  };
+  return loadRepairPacketV4({ ...body, packet_hash: hashCanonicalV4(body) });
 }

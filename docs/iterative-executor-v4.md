@@ -17,6 +17,15 @@ The story plan includes `worker_capability_hash`. A different provider, model re
 
 This supports Qwen, OpenAI, Anthropic, Gemini, local models and future providers through the same contract. Replacing a model requires a new capability snapshot and plan, not a core-code change.
 
+## Strict SDD write boundary
+
+Every V4 work contract now carries two explicit path matrices:
+
+- `acceptance_tests`: Planner-authored `.spec.ts` and `.test.ts` files. The Economy executor may read the complete repository snapshot, including these tests, but may never write them.
+- `implementation_targets`: non-test `.ts` files and their approved operations. These are the only write targets granted to the Economy executor.
+
+`allowed_changes` remains a hash-bound compatibility projection and must exactly mirror `implementation_targets`; it is not an independent authority. The broker inspects the implementation targets before launch, OpenCode denies every other edit path, and the economy diff interceptor rejects any observed acceptance-test change as `ECONOMY_POLICY_VIOLATION` before the candidate can be accepted. The normalized repair instruction is: `Intentaste modificar los tests de aceptación. Esto está prohibido por el contrato. Solo modifica los archivos de implementación.`
+
 ## Bounded decomposition
 
 Every story declares exact allowed paths and operations, validation IDs, acceptance criteria, dependency edges, required capabilities and these budgets:
@@ -35,7 +44,7 @@ The worker snapshot separately caps files, lines, context, acceptance-criteria c
 1. The broker snapshots the exact activated worker capability.
 2. The frontier planner emits a strict plan bound to the work contract, base SHA and worker capability hash.
 3. The broker selects one highest-priority dependency-ready story and opens a fresh executor session.
-4. The executor receives only the active story, last accepted tree hash, structured predecessor receipts and, on retries, one verified repair packet. It receives no prior model reasoning or free-form progress log.
+4. The executor receives only the active story, the immutable acceptance-test list, implementation-target authority, last accepted tree hash, structured predecessor receipts and, on retries, one verified repair packet. It receives no prior model reasoning or free-form progress log.
 5. Broker-owned path inspection and deterministic validation run before an independent fresh review.
 6. The host atomically persists the iteration event and promotes only an accepted candidate tree. Rejected bytes are never promoted; retry starts from the last accepted tree.
 7. Repeated normalized failure signatures escalate as `NO_PROGRESS` before wasting the remaining attempt budget. A different unresolved failure may retry until `ATTEMPT_LIMIT`. The plan's global iteration limit remains final.

@@ -15,7 +15,7 @@ const reply = { request_id: requestId, run_id: runId, state: 'READY_FOR_EXECUTOR
 const reviewPacket = { schema_version: 4, run_id: runId, request_id: requestId, state: 'REVIEW_ACCEPTED', contract_hash: 'b'.repeat(64), base_sha: 'c'.repeat(40), diff_hash: 'd'.repeat(64), tree_hash: 'e'.repeat(64), validation_manifest_hash: 'f'.repeat(64), envelope: {}, packet_hash: 'a'.repeat(64) } as any;
 
 function request(): RuntimeTaskRequestV4 {
-  return { schema_version: 4, task_id: 'TASK-1', request_id: requestId, repository_id: 'fixture-repo', objective: 'Change greeting', task_class: 'mechanical-change', requested_risk_class: 'normal', requested_route: 'AUTO', allowed_changes: [{ path: 'src/x.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['tests pass'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push'], result_schema_version: 4 };
+  return { schema_version: 4, task_id: 'TASK-1', request_id: requestId, repository_id: 'fixture-repo', objective: 'Change greeting', task_class: 'mechanical-change', requested_risk_class: 'normal', requested_route: 'AUTO', allowed_changes: [{ path: 'src/x.ts', operations: ['MODIFY'] }], acceptance_tests: ['tests/x.test.ts'], implementation_targets: [{ path: 'src/x.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['tests pass'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push'], result_schema_version: 4 };
 }
 
 function fakeClient(): McpBrokerControlClientV4 & { calls: string[] } {

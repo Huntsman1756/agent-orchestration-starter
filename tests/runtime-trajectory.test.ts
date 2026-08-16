@@ -16,7 +16,7 @@ import { validWorkContract } from './runtime-contracts.test.js';
 const h = (value: string) => value.repeat(64);
 
 function contract(): RuntimeWorkContractV4 {
-  const body = { ...validWorkContract(), allowed_changes: [{ path: 'src/a.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'] } as Record<string, unknown>;
+  const body = { ...validWorkContract(), allowed_changes: [{ path: 'src/a.ts', operations: ['MODIFY'] }], implementation_targets: [{ path: 'src/a.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'] } as Record<string, unknown>;
   delete body.contract_hash;
   return { ...body, contract_hash: hashCanonicalV4(body) } as unknown as RuntimeWorkContractV4;
 }

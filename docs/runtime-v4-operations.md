@@ -96,4 +96,6 @@ Successful finalization creates a deterministic local commit and updates only th
 
 ## Typed failures
 
-Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `DELEGATION_PROVENANCE_INVALID`, `DELEGATION_PROVENANCE_REQUIRED`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, `PUBLICATION_POLICY_DENIED`, `PUBLICATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.
+Failures use the closed V4 catalog, including `CAPABILITY_UNVERIFIED`, `PROCESS_SANDBOX_UNAVAILABLE`, `EXECUTOR_POLICY_VIOLATION`, `ECONOMY_POLICY_VIOLATION`, `VALIDATION_FAILED`, `REVIEW_REJECTED`, `REVIEW_ATTESTATION_INVALID`, `EVIDENCE_HASH_MISMATCH`, `DELEGATION_PROVENANCE_INVALID`, `DELEGATION_PROVENANCE_REQUIRED`, `FINALIZATION_ISOLATION_FAILED`, `FINALIZATION_FAILED`, `PUBLICATION_POLICY_DENIED`, `PUBLICATION_FAILED`, and `ABORTED`. Unknown internal details are normalized to `UNKNOWN_FAILURE` at IPC/MCP boundaries.
+
+Strict SDD keeps Planner-authored acceptance tests in a read-only matrix and grants Economy write authority only over `implementation_targets`. A diff touching an acceptance test is rejected as `ECONOMY_POLICY_VIOLATION` and carries the bounded repair instruction from the work contract.
