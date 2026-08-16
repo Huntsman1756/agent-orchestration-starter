@@ -60,7 +60,7 @@ automatic `delegate -> review -> repair/retry -> escalate` loop. A local script
 that launches the worker once and returns `AWAITING_FRONTIER_REVIEW` is only a
 one-shot adapter and must not be reported as autonomous orchestration.
 
-Generated `.codex/config.toml` keeps the primary frontier context read-only, marks `agent_orchestration_v4` required, and enables only `run_coding_task`, `repair_coding_task`, `finalize_coding_task`, `abort_coding_task`, and `get_coding_task_status`. Existing unmanaged or locally modified config is never overwritten.
+Generated `.codex/config.toml` keeps the primary frontier context read-only, marks `agent_orchestration_v4` required, and enables the five lifecycle tools plus `broker.get_review_packet` and `broker.submit_verdict`. Existing unmanaged or locally modified config is never overwritten.
 
 ## Intended lifecycle
 
@@ -74,9 +74,9 @@ agent-orchestration runtime doctor --activation <activation-v4.json>
 agent-orchestration runtime status --run-id run_... --activation <activation-v4.json>
 ```
 
-The STDIO MCP adapter performs short authenticated control calls only. `createRuntimeHostCompositionV4` binds it to the durable daemon and exact host operations. Before the root can do that, the loader independently verifies task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification ports. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.
+The STDIO MCP adapter performs short authenticated control calls only; the Streamable HTTP adapter exposes the same seven tools at an authenticated `/mcp` endpoint. `createRuntimeHostCompositionV4` binds them to the durable daemon and exact host operations. Before the root can do that, the loader independently verifies task intake, issue planning, practice-pack resolution, credential gateway, sandbox coordination, capability issuance, GitHub publication and post-merge verification ports. The daemon owns idempotency, one scheduled pipeline flight, model execution, validation, review, repair/escalation, finalization, journal recovery, failures, aborts and locks. Replaying a canonical `request_id` returns its original `run_id` without scheduling duplicate work.
 
-The IPC wire contract now carries all five MCP operations and binds replies back to authoritative daemon status. Mutating retries reuse deterministic command IDs. See [`control-plane-v4.md`](control-plane-v4.md). This protocol completion does not by itself certify a production host.
+The IPC wire contract now carries all seven MCP operations and binds replies back to authoritative daemon status. Mutating retries reuse deterministic command IDs; verdicts additionally require the exact review-packet hash. See [`control-plane-v4.md`](control-plane-v4.md). This protocol completion does not by itself certify a production host.
 
 ## Security and credentials
 

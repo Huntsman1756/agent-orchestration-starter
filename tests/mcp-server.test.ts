@@ -12,6 +12,7 @@ import type { BrokerIpcClientV4 } from '../src/runtime/broker-ipc.js';
 const runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
 const requestId = 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
 const reply = { request_id: requestId, run_id: runId, state: 'READY_FOR_EXECUTOR', status_token: 'a'.repeat(64) };
+const reviewPacket = { schema_version: 4, run_id: runId, request_id: requestId, state: 'REVIEW_ACCEPTED', contract_hash: 'b'.repeat(64), base_sha: 'c'.repeat(40), diff_hash: 'd'.repeat(64), tree_hash: 'e'.repeat(64), validation_manifest_hash: 'f'.repeat(64), envelope: {}, packet_hash: 'a'.repeat(64) } as any;
 
 function request(): RuntimeTaskRequestV4 {
   return { schema_version: 4, task_id: 'TASK-1', request_id: requestId, repository_id: 'fixture-repo', objective: 'Change greeting', task_class: 'mechanical-change', requested_risk_class: 'normal', requested_route: 'AUTO', allowed_changes: [{ path: 'src/x.ts', operations: ['MODIFY'] }], allowed_validation_ids: ['test'], inputs: [], constraints: [], success_criteria: ['tests pass'], max_files_changed: 1, max_changed_lines: 20, max_attempts: 3, prohibited_actions: ['push'], result_schema_version: 4 };
@@ -26,6 +27,8 @@ function fakeClient(): McpBrokerControlClientV4 & { calls: string[] } {
     finalize: async (value) => { calls.push(`finalize:${value}`); return reply; },
     abort: async (value) => { calls.push(`abort:${value}`); return { ...reply, state: 'ABORTED' }; },
     status: async (value) => { calls.push(`status:${value}`); return reply; },
+    getReviewPacket: async (value) => { calls.push(`packet:${value}`); return reviewPacket; },
+    submitVerdict: async (value) => { calls.push(`verdict:${value.run_id}:${value.verdict}`); return reply; },
     close: async () => { calls.push('close'); },
   };
 }
@@ -38,7 +41,7 @@ async function connected(broker: McpBrokerControlClientV4) {
   return { server, client };
 }
 
-test('initializes with the mandatory rule and exposes only five strict domain tools', async (context) => {
+test('initializes with the mandatory rule and exposes the seven strict broker tools', async (context) => {
   const broker = fakeClient();
   const { server, client } = await connected(broker);
   context.after(async () => { await client.close(); await server.close(); });
@@ -62,7 +65,9 @@ test('all mutations are short daemon calls and schemas reject unknown authority'
   await client.callTool({ name: 'finalize_coding_task', arguments: { run_id: runId } });
   await client.callTool({ name: 'abort_coding_task', arguments: { run_id: runId } });
   await client.callTool({ name: 'get_coding_task_status', arguments: { run_id: runId } });
-  assert.deepEqual(broker.calls, [`run:${requestId}`, `repair:${runId}`, `finalize:${runId}`, `abort:${runId}`, `status:${runId}`]);
+  await client.callTool({ name: 'broker.get_review_packet', arguments: { run_id: runId } });
+  await client.callTool({ name: 'broker.submit_verdict', arguments: { run_id: runId, packet_hash: reviewPacket.packet_hash, verdict: 'APPROVED', reason: 'Independent review passed.' } });
+  assert.deepEqual(broker.calls, [`run:${requestId}`, `repair:${runId}`, `finalize:${runId}`, `abort:${runId}`, `status:${runId}`, `packet:${runId}`, `verdict:${runId}:APPROVED`]);
   assert.equal((await client.callTool({ name: 'finalize_coding_task', arguments: { run_id: runId, force: true } })).isError, true);
   assert.equal((await client.callTool({ name: 'run_coding_task', arguments: { ...request(), run_id: runId } })).isError, true);
 });
@@ -101,6 +106,8 @@ test('bridges all five MCP controls to the authenticated IPC client', async () =
     finalize: async (value) => { calls.push(`finalize:${value}`); return reply; },
     abort: async (value) => { calls.push(`abort:${value}`); return reply; },
     status: async (value) => { calls.push(`status:${value}`); return reply; },
+    getReviewPacket: async (value) => { calls.push(`packet:${value}`); return reviewPacket; },
+    submitVerdict: async (value) => { calls.push(`verdict:${value.run_id}:${value.verdict}`); return reply; },
     close: async () => { calls.push('close'); },
   };
   const bridge = createIpcMcpControlClientV4(ipc);
@@ -109,6 +116,8 @@ test('bridges all five MCP controls to the authenticated IPC client', async () =
   await bridge.finalize(runId);
   await bridge.abort(runId);
   await bridge.status(runId);
+  await bridge.getReviewPacket!(runId);
+  await bridge.submitVerdict!({ run_id: runId, packet_hash: reviewPacket.packet_hash, verdict: 'APPROVED', reason: 'passed' });
   await bridge.close();
-  assert.deepEqual(calls, [`run:${requestId}`, `repair:${runId}:finding-1`, `finalize:${runId}`, `abort:${runId}`, `status:${runId}`, 'close']);
+  assert.deepEqual(calls, [`run:${requestId}`, `repair:${runId}:finding-1`, `finalize:${runId}`, `abort:${runId}`, `status:${runId}`, `packet:${runId}`, `verdict:${runId}:APPROVED`, 'close']);
 });

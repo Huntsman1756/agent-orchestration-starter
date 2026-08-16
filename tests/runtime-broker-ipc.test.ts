@@ -535,7 +535,7 @@ test('client sends no request when connected server ownership is rejected', asyn
 
 for (const [name, payload] of [
   ['malformed JSON', Buffer.from('{', 'utf8')],
-  ['oversized frame', Buffer.alloc(1_048_577)],
+  ['oversized frame', Buffer.alloc(4_194_305)],
   ['unknown command', Buffer.from(canonicalJsonV4({ token: 'TOKEN', command: { type: 'SHELL', command_id: 'x' } }), 'utf8')],
 ] as const) {
   test(`rejects ${name} without a journal mutation`, async () => {

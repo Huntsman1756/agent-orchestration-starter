@@ -3,12 +3,14 @@ import { createBrokerDaemon, type BrokerDaemonDependenciesV4, type BrokerDaemonV
 import { createBrokerIpcServer, type BrokerIpcControlPlaneV4, type BrokerIpcDependenciesV4, type BrokerIpcFindingV4, type BrokerIpcServerV4 } from './broker-ipc.js';
 import type { RuntimeFailureV4 } from './failures.js';
 import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
+import { createBrokerVerdictRecord, loadBrokerReviewPacketV4, type BrokerReviewPacketV4, type BrokerVerdictInputV4 } from './review-packet.js';
 
 export interface RuntimeHostOperationsV4 {
   advance(runId: string, daemon: BrokerDaemonV4): Promise<void>;
   prepareRepair(input: { command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }, daemon: BrokerDaemonV4): Promise<void>;
   finalize(input: { command_id: string; run_id: string }, daemon: BrokerDaemonV4): Promise<void>;
   stopExternal(runId: string, daemon: BrokerDaemonV4): Promise<void>;
+  getReviewPacket?(runId: string, daemon: BrokerDaemonV4): Promise<BrokerReviewPacketV4>;
   shutdown?(): Promise<void>;
 }
 
@@ -117,6 +119,36 @@ export function composeRuntimeHostControlV4(
         aborting.delete(input.run_id);
         throw error;
       }
+    },
+    getReviewPacket: async (input: { command_id: string; run_id: string }) => {
+      if (operations.getReviewPacket === undefined) throw new Error('CAPABILITY_UNVERIFIED: review packet provider is unavailable');
+      const result = await baseDaemon.status(input.run_id);
+      if (result.state !== 'REVIEW_ACCEPTED') throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
+      const packet = loadBrokerReviewPacketV4(await operations.getReviewPacket(input.run_id, baseDaemon));
+      if (packet.run_id !== result.run_id || packet.request_id !== result.request_id || packet.contract_hash !== result.contract_hash
+        || packet.base_sha !== result.base_sha || packet.diff_hash !== result.diff_hash || packet.tree_hash !== result.tree_hash) {
+        throw new Error('REVIEW_PACKET_INVALID: provider packet is not bound to the durable run');
+      }
+      return packet;
+    },
+    submitVerdict: async (input: { command_id: string; run_id: string; packet_hash: string; verdict: BrokerVerdictInputV4['verdict']; reason: string }) => {
+      if (flights.has(input.run_id)) throw new Error('REPOSITORY_BUSY: run pipeline is still active');
+      if (operations.getReviewPacket === undefined || baseDaemon.recordReviewVerdict === undefined) throw new Error('CAPABILITY_UNVERIFIED: durable verdict control is unavailable');
+      const result = await baseDaemon.status(input.run_id);
+      if (result.state !== 'REVIEW_ACCEPTED') throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
+      const packet = loadBrokerReviewPacketV4(await operations.getReviewPacket(input.run_id, baseDaemon));
+      if (packet.run_id !== result.run_id || packet.request_id !== result.request_id || packet.contract_hash !== result.contract_hash
+        || packet.base_sha !== result.base_sha || packet.diff_hash !== result.diff_hash || packet.tree_hash !== result.tree_hash) {
+        throw new Error('REVIEW_PACKET_INVALID: provider packet is not bound to the durable run');
+      }
+      const verdict = createBrokerVerdictRecord(input, packet);
+      await baseDaemon.recordReviewVerdict(input.run_id, verdict);
+      if (input.verdict === 'REJECTED') {
+        const finding = { id: `frontier-review-${verdict.verdict_hash.slice(0, 32)}`, evidence_hash: verdict.verdict_hash };
+        await operations.prepareRepair({ command_id: input.command_id, run_id: input.run_id, findings: [finding] }, baseDaemon);
+        await schedule(input.run_id);
+      }
+      return replyFor(baseDaemon, input.run_id);
     },
   });
 

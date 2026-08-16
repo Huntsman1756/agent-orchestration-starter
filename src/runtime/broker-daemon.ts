@@ -15,6 +15,7 @@ import {
   reduceBrokerStateV4,
   writeBrokerStateCacheV4,
   type BrokerCommandV4,
+  type BrokerReviewVerdictV4,
   type BrokerStateV4,
   type ExternalProcessIdentityV4,
 } from './run-state.js';
@@ -35,6 +36,7 @@ export interface BrokerDaemonV4 {
   reinspect(runId: string): Promise<void>;
   recordExternalProcessStarted(runId: string, process: ExternalProcessIdentityV4): Promise<void>;
   recordAcceptedCandidate?(event: Extract<BrokerCommandV4, { type: 'CANDIDATE_ACCEPTED' }>): Promise<void>;
+  recordReviewVerdict?(runId: string, verdict: BrokerReviewVerdictV4): Promise<void>;
   recordFailure?(runId: string, failure: RuntimeFailureV4, commandId?: string): Promise<void>;
   recordAbort?(runId: string, commandId?: string): Promise<void>;
   recordCommitCreated?(event: Extract<BrokerCommandV4, { type: 'COMMIT_CREATED' }>): Promise<void>;
@@ -349,6 +351,22 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       requireOpen();
       await ensureRecovered();
       await persist(event);
+    }),
+    recordReviewVerdict: (runId, verdict) => serialize(async () => {
+      requireOpen();
+      await ensureRecovered();
+      await persist({
+        type: 'REVIEW_VERDICT_RECORDED',
+        command_id: `review-verdict:${runId}:${verdict.verdict_hash.slice(0, 32)}`,
+        run_id: runId,
+        review_packet_hash: verdict.review_packet_hash,
+        contract_hash: verdict.contract_hash,
+        diff_hash: verdict.diff_hash,
+        tree_hash: verdict.tree_hash,
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        verdict_hash: verdict.verdict_hash,
+      });
     }),
     recordFailure: (runId, failure, suppliedCommandId) => serialize(async () => {
       requireOpen();

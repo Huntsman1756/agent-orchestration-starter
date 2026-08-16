@@ -11,10 +11,11 @@ import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { BrokerDaemonV4, BrokerReplyV4 } from './broker-daemon.js';
 import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureCodeV4 } from './failures.js';
 import type { ReclamationCoordinatorV4 } from './repository-lock.js';
+import { loadBrokerReviewPacketV4, type BrokerReviewPacketV4, type BrokerVerdictInputV4 } from './review-packet.js';
 import { loadRuntimeResultV4, loadRuntimeTaskRequestV4 } from './load.js';
 import type { BrokerCommandV4 } from './run-state.js';
 
-const MAX_FRAME_BYTES_V4 = 1_048_576;
+const MAX_FRAME_BYTES_V4 = 4 * 1024 * 1024;
 const TOKEN_FILE_V4 = 'broker.token';
 const MAX_LINUX_BROKER_QUARANTINES_V4 = 64;
 const LINUX_BROKER_QUARANTINE_PREFIX_V4 = '.broker.sock.quarantine-';
@@ -36,6 +37,7 @@ const BROKER_REPLY_STATES_V4 = new Set([
   'READY_FOR_EXECUTOR',
   'EXECUTION_STARTED',
   'AWAITING_REINSPECTION',
+  'REVIEW_ACCEPTED',
   'READY_FOR_PUBLICATION',
   'PUBLICATION_PUSHED',
   'PULL_REQUEST_OPEN',
@@ -56,18 +58,23 @@ export type BrokerIpcControlCommandV4 =
   | Readonly<{ type: 'STATUS_CODING_TASK'; command_id: string; run_id: string }>
   | Readonly<{ type: 'REPAIR_CODING_TASK'; command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }>
   | Readonly<{ type: 'FINALIZE_CODING_TASK'; command_id: string; run_id: string }>
-  | Readonly<{ type: 'ABORT_CODING_TASK'; command_id: string; run_id: string }>;
+  | Readonly<{ type: 'ABORT_CODING_TASK'; command_id: string; run_id: string }>
+  | Readonly<{ type: 'GET_REVIEW_PACKET'; command_id: string; run_id: string }>
+  | Readonly<{ type: 'SUBMIT_VERDICT'; command_id: string; run_id: string; packet_hash: string; verdict: BrokerVerdictInputV4['verdict']; reason: string }>;
 interface BrokerIpcWireRequestV4 { readonly token: string; readonly command: BrokerIpcControlCommandV4; }
 
 export interface BrokerIpcControlPlaneV4 {
   repair(input: { command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }): Promise<BrokerReplyV4>;
   finalize(input: { command_id: string; run_id: string }): Promise<BrokerReplyV4>;
   abort(input: { command_id: string; run_id: string }): Promise<BrokerReplyV4>;
+  getReviewPacket?(input: { command_id: string; run_id: string }): Promise<BrokerReviewPacketV4>;
+  submitVerdict?(input: { command_id: string; run_id: string; packet_hash: string; verdict: BrokerVerdictInputV4['verdict']; reason: string }): Promise<BrokerReplyV4>;
 }
 
 export interface BrokerIpcResponseV4 {
   ok: boolean;
   reply?: BrokerReplyV4;
+  review_packet?: BrokerReviewPacketV4;
   error?: string;
 }
 
@@ -217,6 +224,8 @@ export interface BrokerIpcClientV4 {
   repair(input: { run_id: string; findings: readonly BrokerIpcFindingV4[] }): Promise<BrokerReplyV4>;
   finalize(runId: string): Promise<BrokerReplyV4>;
   abort(runId: string): Promise<BrokerReplyV4>;
+  getReviewPacket?(runId: string): Promise<BrokerReviewPacketV4>;
+  submitVerdict?(input: BrokerVerdictInputV4): Promise<BrokerReplyV4>;
   close(): Promise<void>;
 }
 
@@ -1475,9 +1484,16 @@ function loadBrokerIpcControlCommandV4(value: unknown): BrokerIpcControlCommandV
     });
     return Object.freeze({ type: command.type, command_id: commandId, run_id: loadRunId(command.run_id), findings: Object.freeze(findings) });
   }
-  if (command.type === 'STATUS_CODING_TASK' || command.type === 'FINALIZE_CODING_TASK' || command.type === 'ABORT_CODING_TASK') {
+  if (command.type === 'STATUS_CODING_TASK' || command.type === 'FINALIZE_CODING_TASK' || command.type === 'ABORT_CODING_TASK' || command.type === 'GET_REVIEW_PACKET') {
     exactKeys(command, ['type', 'command_id', 'run_id'], 'command');
     return Object.freeze({ type: command.type, command_id: commandId, run_id: loadRunId(command.run_id) });
+  }
+  if (command.type === 'SUBMIT_VERDICT') {
+    exactKeys(command, ['type', 'command_id', 'run_id', 'packet_hash', 'verdict', 'reason'], 'command');
+    if (typeof command.packet_hash !== 'string' || !/^[a-f0-9]{64}$/.test(command.packet_hash)) invalid('packet_hash is invalid');
+    if (command.verdict !== 'APPROVED' && command.verdict !== 'REJECTED') invalid('verdict is invalid');
+    if (typeof command.reason !== 'string' || command.reason.trim().length < 1 || command.reason.length > 4_000 || command.reason.includes('\u0000')) invalid('verdict reason is invalid');
+    return Object.freeze({ type: command.type, command_id: commandId, run_id: loadRunId(command.run_id), packet_hash: command.packet_hash, verdict: command.verdict, reason: command.reason });
   }
   invalid(`unknown command ${String(command.type)}`);
 }
@@ -1560,6 +1576,10 @@ export function loadBrokerIpcResponseV4(payload: string): BrokerIpcResponseV4 {
       return Object.freeze({ ok: false, error: normalizeBrokerResponseErrorV4(response.error) });
     }
     if (response.ok !== true) responseRejected();
+    if (response.review_packet !== undefined) {
+      exactKeys(response, ['ok', 'review_packet'], 'response');
+      return Object.freeze({ ok: true, review_packet: loadBrokerReviewPacketV4(response.review_packet) });
+    }
     exactKeys(response, ['ok', 'reply'], 'response');
     if (response.reply === null || typeof response.reply !== 'object' || Array.isArray(response.reply)) responseRejected();
     const reply = response.reply as Record<string, unknown>;
@@ -1863,6 +1883,11 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
       exactKeys(request, ['token', 'command'], 'request');
       if (!equalToken(token, request.token)) throw new Error('AUTHENTICATION_FAILED: token mismatch');
       const command = loadBrokerIpcControlCommandV4(request.command);
+      if (command.type === 'GET_REVIEW_PACKET') {
+        if (deps.controlPlane?.getReviewPacket === undefined) throw new Error('CAPABILITY_UNVERIFIED: review packet control plane is unavailable');
+        const review_packet = await callAdapter(() => deps.controlPlane!.getReviewPacket!({ command_id: command.command_id, run_id: command.run_id }));
+        return loadBrokerIpcResponseV4(canonicalJsonV4({ ok: true, review_packet }));
+      }
       let reply: BrokerReplyV4;
       if (command.type === 'RUN_CODING_TASK') reply = await callAdapter(() => deps.daemon.submit(command));
       else if (command.type === 'STATUS_CODING_TASK') reply = replyFromStatusV4(loadRuntimeResultV4(await callAdapter(() => deps.daemon.status(command.run_id))));
@@ -1870,7 +1895,11 @@ export async function createBrokerIpcServer(deps: BrokerIpcDependenciesV4): Prom
         if (deps.controlPlane === undefined) throw new Error('CAPABILITY_UNVERIFIED: broker control plane is unavailable');
         if (command.type === 'REPAIR_CODING_TASK') reply = await callAdapter(() => deps.controlPlane!.repair(command));
         else if (command.type === 'FINALIZE_CODING_TASK') reply = await callAdapter(() => deps.controlPlane!.finalize(command));
-        else reply = await callAdapter(() => deps.controlPlane!.abort(command));
+        else if (command.type === 'ABORT_CODING_TASK') reply = await callAdapter(() => deps.controlPlane!.abort(command));
+        else {
+          if (deps.controlPlane!.submitVerdict === undefined) throw new Error('CAPABILITY_UNVERIFIED: verdict control plane is unavailable');
+          reply = await callAdapter(() => deps.controlPlane!.submitVerdict!(command));
+        }
       }
       const response = loadBrokerIpcResponseV4(canonicalJsonV4({ ok: true, reply }));
       if (!response.ok || response.reply === undefined) responseRejected();
@@ -2054,7 +2083,7 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
   }
   const acceptedRuns = new Map<string, string>();
   let closed = false;
-  const send = async (command: BrokerIpcControlCommandV4): Promise<BrokerReplyV4> => {
+  const send = async (command: BrokerIpcControlCommandV4, expectedResponse: 'reply' | 'review_packet' = 'reply'): Promise<BrokerReplyV4 | BrokerReviewPacketV4> => {
       if (closed) throw new Error('AUTHENTICATION_FAILED: IPC client is closed');
       let submittedCommand: BrokerIpcControlCommandV4;
       try { submittedCommand = loadBrokerIpcControlCommandV4(command); }
@@ -2062,7 +2091,7 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
       const request: BrokerIpcWireRequestV4 = { token: config.token, command: submittedCommand };
       const frame = encodeFrame(request);
       let endpoint = config.endpoint;
-      const submitOverSocket = (socket: Socket): Promise<BrokerReplyV4> => new Promise<BrokerReplyV4>((resolvePromise, reject) => {
+      const submitOverSocket = (socket: Socket): Promise<BrokerReplyV4 | BrokerReviewPacketV4> => new Promise<BrokerReplyV4 | BrokerReviewPacketV4>((resolvePromise, reject) => {
         let buffer = Buffer.alloc(0);
         let expectedLength: number | null = null;
         const fail = (error: Error) => { socket.destroy(); reject(new Error(normalizedBoundaryMessage(error))); };
@@ -2087,10 +2116,14 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
             let response: BrokerIpcResponseV4;
             try { response = loadBrokerIpcResponseV4(buffer.toString('utf8')); } catch (error) { return fail(error as Error); }
             socket.end();
-            if (!response.ok || response.reply === undefined) {
+            if (!response.ok) {
               reject(new Error(normalizeBrokerResponseErrorV4(response.error)));
-            }
-            else {
+            } else if (expectedResponse === 'review_packet') {
+              if (submittedCommand.type !== 'GET_REVIEW_PACKET' || response.review_packet === undefined || response.review_packet.run_id !== submittedCommand.run_id) return fail(new Error('UNKNOWN_FAILURE: broker response rejected'));
+              resolvePromise(response.review_packet);
+            } else if (response.reply === undefined) {
+              reject(new Error('UNKNOWN_FAILURE: broker response rejected'));
+            } else {
               if (submittedCommand.type === 'RUN_CODING_TASK') {
                 const priorRunId = acceptedRuns.get(submittedCommand.request.request_id);
                 if (response.reply.request_id !== submittedCommand.request.request_id || (priorRunId !== undefined && priorRunId !== response.reply.run_id)) return fail(new Error('UNKNOWN_FAILURE: broker response rejected'));
@@ -2123,11 +2156,13 @@ export function createBrokerIpcClient(config: BrokerIpcClientConfigV4): BrokerIp
   };
   const commandId = (kind: string, payload: unknown) => `ipc-${kind}-${hashCanonicalV4(payload).slice(0, 32)}`;
   return {
-    submit: async (command) => send(command as BrokerIpcControlCommandV4),
-    status: async (runId) => send({ type: 'STATUS_CODING_TASK', command_id: commandId('status', { run_id: runId }), run_id: runId }),
-    repair: async (input) => send({ type: 'REPAIR_CODING_TASK', command_id: commandId('repair', input), run_id: input.run_id, findings: input.findings }),
-    finalize: async (runId) => send({ type: 'FINALIZE_CODING_TASK', command_id: commandId('finalize', { run_id: runId }), run_id: runId }),
-    abort: async (runId) => send({ type: 'ABORT_CODING_TASK', command_id: commandId('abort', { run_id: runId }), run_id: runId }),
+    submit: async (command) => send(command as BrokerIpcControlCommandV4) as Promise<BrokerReplyV4>,
+    status: async (runId) => send({ type: 'STATUS_CODING_TASK', command_id: commandId('status', { run_id: runId }), run_id: runId }) as Promise<BrokerReplyV4>,
+    repair: async (input) => send({ type: 'REPAIR_CODING_TASK', command_id: commandId('repair', input), run_id: input.run_id, findings: input.findings }) as Promise<BrokerReplyV4>,
+    finalize: async (runId) => send({ type: 'FINALIZE_CODING_TASK', command_id: commandId('finalize', { run_id: runId }), run_id: runId }) as Promise<BrokerReplyV4>,
+    abort: async (runId) => send({ type: 'ABORT_CODING_TASK', command_id: commandId('abort', { run_id: runId }), run_id: runId }) as Promise<BrokerReplyV4>,
+    getReviewPacket: async (runId) => send({ type: 'GET_REVIEW_PACKET', command_id: commandId('review-packet', { run_id: runId }), run_id: runId }, 'review_packet') as Promise<BrokerReviewPacketV4>,
+    submitVerdict: async (input) => send({ type: 'SUBMIT_VERDICT', command_id: commandId('verdict', input), run_id: input.run_id, packet_hash: input.packet_hash, verdict: input.verdict, reason: input.reason }) as Promise<BrokerReplyV4>,
     close: async () => { closed = true; },
   };
 }

@@ -36,7 +36,7 @@ export function renderCodexProjectConfig(input: CodexProjectConfigInputV4): Gene
       'command = "node"',
       `args = [${args.map(toml).join(', ')}]`,
       'required = true',
-      'enabled_tools = ["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status"]',
+    'enabled_tools = ["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status", "broker.get_review_packet", "broker.submit_verdict"]',
       'startup_timeout_sec = 10',
       'tool_timeout_sec = 30',
       'default_tools_approval_mode = "auto"',

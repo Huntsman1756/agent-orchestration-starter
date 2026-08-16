@@ -13,6 +13,17 @@ import { registerRequestV4 } from './request-idempotency.js';
 export const STATE_CACHE_FILE_V4 = 'current-state.v4.json';
 
 export type ExternalProcessIdentityV4 = Readonly<{ pid: number; boot_nonce: string }>;
+export type BrokerVerdictV4 = 'APPROVED' | 'REJECTED';
+export interface BrokerReviewVerdictV4 {
+  readonly schema_version: 4;
+  readonly review_packet_hash: string;
+  readonly contract_hash: string;
+  readonly diff_hash: string;
+  readonly tree_hash: string;
+  readonly verdict: BrokerVerdictV4;
+  readonly reason: string;
+  readonly verdict_hash: string;
+}
 
 export type BrokerCommandV4 =
   | Readonly<{ type: 'RUN_CODING_TASK'; command_id: string; request: RuntimeTaskRequestV4 }>
@@ -21,6 +32,7 @@ export type BrokerCommandV4 =
   | Readonly<{ type: 'PATHS_REINSPECTED'; command_id: string; run_id: string; inspection_epoch: number }>
   | Readonly<{ type: 'EXTERNAL_PROCESS_STARTED'; command_id: string; run_id: string; process: ExternalProcessIdentityV4 }>
   | Readonly<{ type: 'CANDIDATE_ACCEPTED'; command_id: string; run_id: string; validation_results: readonly RuntimeValidationResultV4[]; diff_hash: string; tree_hash: string; changed_files: readonly string[]; review_attestation_hash: string }>
+  | Readonly<{ type: 'REVIEW_VERDICT_RECORDED'; command_id: string; run_id: string; review_packet_hash: string; contract_hash: string; diff_hash: string; tree_hash: string; verdict: BrokerVerdictV4; reason: string; verdict_hash: string }>
   | Readonly<{ type: 'COMMIT_CREATED'; command_id: string; run_id: string; task_ref: string; base_sha: string; git_tree_sha: string; evidence_tree_hash: string; commit_sha: string; contract_hash: string; diff_hash: string; validation_manifest_hash: string; review_attestation_hash: string }>
   | Readonly<{ type: 'BRANCH_PUSHED'; command_id: string; run_id: string; commit_sha: string; branch: string; remote: string; publication_policy_hash: string }>
   | Readonly<{ type: 'PULL_REQUEST_RECORDED'; command_id: string; run_id: string; commit_sha: string; pull_request: number; pull_request_url: string; base_branch: string; publication_policy_hash: string }>
@@ -37,6 +49,7 @@ export interface BrokerRunStateV4 {
   inspection_epoch: number;
   inspection_required: boolean;
   external_process: ExternalProcessIdentityV4 | null;
+  review_verdict?: BrokerReviewVerdictV4 | null;
 }
 
 export interface BrokerStateV4 {
@@ -159,6 +172,19 @@ export function loadJournalCommandV4(value: unknown): Exclude<BrokerCommandV4, {
       if (new Set(changed_files.map((item) => item.toLocaleLowerCase('en-US'))).size !== changed_files.length) corrupt('changed_files is ambiguous or duplicated');
       return { type, command_id, run_id: runId(command.run_id), validation_results, diff_hash: hash(command.diff_hash, 'diff_hash'), tree_hash: hash(command.tree_hash, 'tree_hash'), changed_files, review_attestation_hash: hash(command.review_attestation_hash, 'review_attestation_hash') };
     }
+    if (type === 'REVIEW_VERDICT_RECORDED') {
+      exactKeys(command, ['type', 'command_id', 'run_id', 'review_packet_hash', 'contract_hash', 'diff_hash', 'tree_hash', 'verdict', 'reason', 'verdict_hash'], 'REVIEW_VERDICT_RECORDED');
+      if (command.verdict !== 'APPROVED' && command.verdict !== 'REJECTED') corrupt('review verdict is invalid');
+      if (typeof command.reason !== 'string' || command.reason.trim().length < 1 || command.reason.length > 4_000 || command.reason.includes('\u0000')) corrupt('review verdict reason is invalid');
+      const run_id = runId(command.run_id);
+      const review_packet_hash = hash(command.review_packet_hash, 'review_packet_hash');
+      const contract_hash = hash(command.contract_hash, 'contract_hash');
+      const diff_hash = hash(command.diff_hash, 'diff_hash');
+      const tree_hash = hash(command.tree_hash, 'tree_hash');
+      const verdict_hash = hash(command.verdict_hash, 'verdict_hash');
+      if (hashCanonicalV4({ schema_version: 4, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, verdict: command.verdict, reason: command.reason }) !== verdict_hash) corrupt('review verdict hash is forged');
+      return { type, command_id, run_id, review_packet_hash, contract_hash, diff_hash, tree_hash, verdict: command.verdict, reason: command.reason, verdict_hash };
+    }
     if (type === 'COMMIT_CREATED') {
       exactKeys(command, ['type', 'command_id', 'run_id', 'task_ref', 'base_sha', 'git_tree_sha', 'evidence_tree_hash', 'commit_sha', 'contract_hash', 'diff_hash', 'validation_manifest_hash', 'review_attestation_hash'], 'COMMIT_CREATED');
       if (typeof command.task_ref !== 'string' || !/^refs\/heads\/codex\/auto\/[A-Za-z0-9][A-Za-z0-9._/-]{0,191}$/.test(command.task_ref)) corrupt('task_ref is invalid');
@@ -211,6 +237,7 @@ function freezeState(state: BrokerStateV4): BrokerStateV4 {
       contract: Object.freeze({ ...run.contract }),
       result: Object.freeze({ ...run.result, attempts: Object.freeze([...run.result.attempts]), validation_results: Object.freeze([...run.result.validation_results]), changed_files: Object.freeze([...run.result.changed_files]), publication: Object.freeze({ ...run.result.publication }) }),
       external_process: run.external_process === null ? null : Object.freeze({ ...run.external_process }),
+      review_verdict: run.review_verdict === undefined || run.review_verdict === null ? null : Object.freeze({ ...run.review_verdict }),
     })]))),
   });
 }
@@ -245,6 +272,7 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
           inspection_epoch: command.inspection_epoch,
           inspection_required: false,
           external_process: null,
+          review_verdict: null,
         },
       },
     });
@@ -261,6 +289,7 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
       result: { ...run.result, state: 'AWAITING_REINSPECTION', attempts: [...run.result.attempts, command.attempt] },
       inspection_required: true,
       external_process: null,
+      review_verdict: null,
     };
   } else if (command.type === 'PATHS_REINSPECTED') {
     if (run.result.state !== 'AWAITING_REINSPECTION' || !run.inspection_required || run.external_process !== null) corrupt(`reinspection is not pending for ${command.run_id}`);
@@ -287,6 +316,23 @@ export function reduceBrokerStateV4(state: BrokerStateV4, command: BrokerCommand
         tree_hash: command.tree_hash,
         changed_files: command.changed_files,
         review_attestation_hash: command.review_attestation_hash,
+      },
+      review_verdict: null,
+    };
+  } else if (command.type === 'REVIEW_VERDICT_RECORDED') {
+    if (run.result.state !== 'REVIEW_ACCEPTED' || run.result.contract_hash !== command.contract_hash || run.result.diff_hash !== command.diff_hash || run.result.tree_hash !== command.tree_hash
+      || run.review_verdict !== undefined && run.review_verdict !== null) corrupt(`review verdict is not authorized for ${command.run_id}`);
+    nextRun = {
+      ...run,
+      review_verdict: {
+        schema_version: 4,
+        review_packet_hash: command.review_packet_hash,
+        contract_hash: command.contract_hash,
+        diff_hash: command.diff_hash,
+        tree_hash: command.tree_hash,
+        verdict: command.verdict,
+        reason: command.reason,
+        verdict_hash: command.verdict_hash,
       },
     };
   } else if (command.type === 'COMMIT_CREATED') {

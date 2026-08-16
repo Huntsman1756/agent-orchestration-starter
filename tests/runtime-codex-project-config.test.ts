@@ -19,7 +19,7 @@ test('renders required fail-closed project activation with one canonical runtime
   assert.match(generated.content, /^model = "frontier-model"\nmodel_reasoning_effort = "high"\ncli_auth_credentials_store = "keyring"\nforced_login_method = "chatgpt"\napproval_policy = "never"\nsandbox_mode = "read-only"/);
   assert.match(generated.content, /args = \["\.agent-orchestration\/runtime\/dist\/cli\/main\.js", "runtime", "mcp-stdio"\]/);
   assert.match(generated.content, /required = true/);
-  assert.match(generated.content, /enabled_tools = \["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status"\]/);
+  assert.match(generated.content, /enabled_tools = \["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status", "broker\.get_review_packet", "broker\.submit_verdict"\]/);
   assert.doesNotMatch(generated.content, /env\s*=/);
 });
 
