@@ -13,6 +13,7 @@ import { ShiftLeftValidationFailureErrorV4, runReviewAfterDeterministicValidatio
 const treeHash = 'a'.repeat(64);
 const resultHash = 'b'.repeat(64);
 const diffHash = 'c'.repeat(64);
+const shiftLeftFixturePath = fileURLToPath(new URL('./runtime-shift-left.test.ts', import.meta.url));
 const contract = {
   task_id: 'lint-red-team',
   effective_route: 'FRONTIER',
@@ -37,10 +38,15 @@ void test('static AST lint detects a functional eval diff without executing it',
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     overrideConfigFile: fileURLToPath(new URL('../eslint.config.mjs', import.meta.url)),
   });
-  const results = await eslint.lintText('const output = eval(input);', { filePath: 'tests/runtime-shift-left.test.ts' });
+  const results = await eslint.lintText('const output = eval(input);', { filePath: shiftLeftFixturePath });
   const result = results[0];
-  assert.ok(result);
-  assert.ok(result.errorCount > 0);
+  assert.ok(result, 'ESLint did not return a result for the shift-left fixture');
+  assert.equal(result.filePath, shiftLeftFixturePath, 'ESLint analyzed an unexpected fixture path');
+  const ignoredMessage = result.messages.find(
+    (message) => message.ruleId === null && /ignored|no matching configuration/i.test(message.message),
+  );
+  assert.equal(ignoredMessage, undefined, `ESLint ignored the shift-left fixture: ${JSON.stringify(result.messages)}`);
+  assert.ok(result.errorCount > 0, `ESLint did not report the eval violation: ${JSON.stringify(result.messages)}`);
   assert.ok(result.messages.some((message) => message.ruleId === 'no-eval' || message.ruleId === 'security/detect-eval-with-expression'));
 });
 
