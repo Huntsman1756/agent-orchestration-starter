@@ -57,8 +57,22 @@ test('binds model guidance into qualification identity and loads the current sub
   assert.equal(snapshot.bindings.reviewer.guidance.id, 'openai-gpt-5p6-sol');
 
   const nan = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/nan-opencode.example.yaml', import.meta.url), 'utf8')));
+  assert.equal(nan.bindings.orchestrator.harness, 'codex');
+  assert.equal(nan.bindings.orchestrator.model, 'gpt-5.6-sol');
+  assert.equal(nan.bindings.orchestrator.authentication, 'chatgpt-subscription');
+  assert.equal(nan.bindings.reviewer.harness, 'codex');
+  assert.equal(nan.bindings.reviewer.authentication, 'chatgpt-subscription');
+  assert.equal(nan.bindings.executor.harness, 'opencode');
+  assert.equal(nan.bindings.executor.model, 'qwen3.6');
+  assert.equal(nan.bindings.executor.authentication, 'provider-api-key');
   assert.equal(nan.bindings.executor.guidance.id, 'qwen3p6-nan');
-  assert.equal(nan.bindings.escalationExecutor.guidance.id, 'gemma4-nan');
+  assert.equal(nan.bindings.escalationExecutor.model, 'deepseek-v4-flash');
+  assert.equal(nan.bindings.escalationExecutor.guidance.id, 'deepseek-v4-flash-nan');
+  assert.equal(nan.bindings.frontierExecutor.harness, 'opencode');
+  assert.equal(nan.bindings.frontierExecutor.provider, 'nan');
+  assert.equal(nan.bindings.frontierExecutor.model, 'deepseek-v4-flash');
+  assert.equal(nan.bindings.frontierExecutor.authentication, 'provider-api-key');
+  assert.equal(nan.runtime.maxEconomyParallelRequests, 1);
 });
 
 test('requires guidance for every model binding and HTTPS provenance', () => {

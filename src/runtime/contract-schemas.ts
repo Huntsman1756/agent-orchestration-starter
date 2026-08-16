@@ -83,6 +83,7 @@ const bindingSchema = z.object({
   harness: identifierSchema,
   provider: identifierSchema,
   model: identifierSchema,
+  authentication: z.enum(['provider-api-key', 'chatgpt-subscription']).optional(),
   capability: identifierSchema,
   allowedDataScopes: uniqueArray(dataScopeSchema, { min: 1, max: 1 }),
   allowedSourceSensitivity: uniqueArray(sourceSensitivitySchema, { min: 1, max: 2 }),
@@ -104,7 +105,16 @@ export const runtimeProfileV4Schema = z.object({
     maxEconomyParallelRequests: z.number().int().positive().max(64),
     maxConcurrentRunsPerRepository: z.number().int().positive().max(64),
   }).strict(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const roles = ['orchestrator', 'executor', 'escalationExecutor', 'frontierExecutor', 'reviewer'] as const;
+  for (const role of roles) {
+    const binding = value.bindings[role];
+    if (binding.authentication !== 'chatgpt-subscription') continue;
+    if (binding.harness !== 'codex' || binding.permissions !== 'read-only' || (role !== 'orchestrator' && role !== 'reviewer')) {
+      context.addIssue({ code: 'custom', path: ['bindings', role, 'authentication'], message: 'ChatGPT subscription authentication is restricted to read-only Codex orchestrator and reviewer bindings' });
+    }
+  }
+});
 
 const validationSchema = z.object({
   argv: z.array(identifierSchema).min(1).max(32),

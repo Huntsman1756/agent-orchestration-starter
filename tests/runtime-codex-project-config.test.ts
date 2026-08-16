@@ -16,7 +16,7 @@ function policy(): ResolvedPolicy {
 test('renders required fail-closed project activation with one canonical runtime argv value', () => {
   const generated = renderCodexProjectConfig({ frontier_model: 'frontier-model', reasoning_effort: 'high' });
   assert.equal(generated.path, '.codex/config.toml');
-  assert.match(generated.content, /^model = "frontier-model"\nmodel_reasoning_effort = "high"\nsandbox_mode = "read-only"/);
+  assert.match(generated.content, /^model = "frontier-model"\nmodel_reasoning_effort = "high"\ncli_auth_credentials_store = "keyring"\nforced_login_method = "chatgpt"\napproval_policy = "never"\nsandbox_mode = "read-only"/);
   assert.match(generated.content, /args = \["\.agent-orchestration\/runtime\/dist\/cli\/main\.js", "runtime", "mcp-stdio"\]/);
   assert.match(generated.content, /required = true/);
   assert.match(generated.content, /enabled_tools = \["run_coding_task", "repair_coding_task", "finalize_coding_task", "abort_coding_task", "get_coding_task_status"\]/);

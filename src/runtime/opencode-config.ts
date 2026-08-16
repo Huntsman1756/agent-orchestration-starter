@@ -28,17 +28,30 @@ export async function writeBrokerOpenCodeConfigV4(input: {
   }
   const edit: Record<string, 'allow' | 'deny'> = { '*': 'deny' };
   for (const change of input.allowed_changes) edit[`repo/${change.path}`] = 'allow';
+  const provider = input.binding.binding.provider;
+  const model = input.binding.binding.model;
   const config = {
+    $schema: 'https://opencode.ai/config.json',
     share: 'disabled',
     autoupdate: false,
-    enabled_providers: [input.binding.binding.provider],
-    provider: { [input.binding.binding.provider]: { options: { baseURL: endpoint.toString() } } },
+    enabled_providers: [provider],
+    provider: {
+      [provider]: {
+        npm: '@ai-sdk/openai-compatible',
+        name: `Broker-routed ${provider}`,
+        options: {
+          baseURL: endpoint.toString(),
+          apiKey: '{env:PROVIDER_GATEWAY_TOKEN}',
+        },
+        models: { [model]: { name: model } },
+      },
+    },
     plugin: [],
     agent: {
       [input.binding.role]: {
         description: `Broker-owned ${input.binding.role} agent`,
         mode: 'primary',
-        model: `${input.binding.binding.provider}/${input.binding.binding.model}`,
+        model: `${provider}/${model}`,
         ...openCodeModelOptionsV4(input.binding.binding.guidance),
       },
     },

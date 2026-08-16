@@ -124,6 +124,24 @@ analysis-only activation, certified isolated execution or autonomous
 publication. The guide provides a clone-to-analysis walkthrough and a handoff
 checklist based on real consumer integration patterns.
 
+`profiles/nan-opencode.example.yaml` keeps ChatGPT-authenticated Codex as the
+orchestrator and reviewer, with OpenCode using `qwen3.6` for the first NaN
+attempt and its bounded repair. A rejected repair resolves the distinct
+`escalationExecutor` binding to `deepseek-v4-flash`; direct `FRONTIER` work
+resolves `frontierExecutor` independently. The broker routes the
+OpenAI-compatible Chat Completions API through its gateway: the capsule sees
+only the non-secret `broker-gateway` value, while the real NaN key remains in
+the gateway. Economy concurrency is one to avoid multiplying usage pressure.
+Codex runs outside the capsule through the fail-closed
+[ChatGPT subscription host bridge](docs/host-codex-subscription-v4.md); it has
+read-only review authority and never receives an executor binding.
+
+NaN currently documents 500M monthly tokens for DeepSeek V4 Flash, 1.0B for
+MiMo V2.5, and separate premium GLM 5.2 limits. Qwen3.6 and Gemma4 do not list
+an equivalent monthly quota on that page. Treat quotas as dated operational
+metadata, not routing authority, and qualify the exact live binding before
+unattended execution.
+
 Pin a release tag and full commit for every pilot. A project-local wrapper,
 model permission rule or post-run path check can be useful, but none of them is
 Runtime V4 hard-isolation evidence by itself.

@@ -24,6 +24,7 @@ export interface ExecutorAttemptInputV4 {
   readonly repair_finding_hashes?: readonly string[];
   readonly review_rejection_hashes?: readonly string[];
   readonly escalation_decision_hash?: string;
+  readonly route_decision_hash?: string;
 }
 
 export interface ExecutorAttemptResultV4 {
@@ -112,12 +113,26 @@ export function createOpenCodeRunner(deps: OpenCodeRunnerDependenciesV4): OpenCo
       if (input.attempt_number === 2 && ((input.repair_finding_hashes?.length ?? 0) < 1 || !input.repair_finding_hashes?.every(validHash))) {
         throw new Error('EXECUTOR_POLICY_VIOLATION: repair attempt lacks persisted findings');
       }
-      if (input.binding.role === 'frontierExecutor'
-        && ((input.review_rejection_hashes?.length ?? 0) < 2
+      if (input.binding.role === 'escalationExecutor'
+        && (input.attempt_number !== 1
+          || input.route_decision_hash !== undefined
+          || (input.review_rejection_hashes?.length ?? 0) !== 2
           || !input.review_rejection_hashes?.every(validHash)
           || input.escalation_decision_hash === undefined
           || !validHash(input.escalation_decision_hash))) {
-        throw new Error('EXECUTOR_POLICY_VIOLATION: frontier execution lacks persisted escalation authority');
+        throw new Error('EXECUTOR_POLICY_VIOLATION: model escalation lacks persisted escalation authority');
+      }
+      if (input.binding.role === 'frontierExecutor'
+        && (input.attempt_number !== 1
+          || input.review_rejection_hashes !== undefined
+          || input.escalation_decision_hash !== undefined
+          || input.route_decision_hash === undefined
+          || !validHash(input.route_decision_hash))) {
+        throw new Error('EXECUTOR_POLICY_VIOLATION: frontier execution lacks persisted frontier route authority');
+      }
+      if (input.binding.role === 'executor'
+        && (input.review_rejection_hashes !== undefined || input.escalation_decision_hash !== undefined || input.route_decision_hash !== undefined)) {
+        throw new Error('EXECUTOR_POLICY_VIOLATION: economy execution contains foreign execution authority');
       }
       const sandboxProbe = await deps.sandbox.probe('EXECUTOR_NETWORKED');
       if (sandboxProbe.status !== 'SUPPORTED'

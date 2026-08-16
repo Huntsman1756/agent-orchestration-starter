@@ -4,6 +4,7 @@ import type { EffectiveRouteV4, RuntimeBindingV4, RuntimeProfileV4, RuntimeRoleV
 export interface BindingResolutionInputV4 {
   profile: RuntimeProfileV4;
   route: EffectiveRouteV4;
+  stage?: 'PRIMARY' | 'ESCALATION';
   sourceSensitivity: SourceSensitivityV4;
 }
 
@@ -22,8 +23,17 @@ function deepFreeze<T>(value: T): T {
 }
 
 export function resolveBinding(input: BindingResolutionInputV4): ResolvedBindingV4 {
-  const role: RuntimeRoleV4 = input.route === 'FRONTIER' ? 'frontierExecutor' : 'executor';
+  const stage = input.stage ?? 'PRIMARY';
+  if (input.route === 'FRONTIER' && stage === 'ESCALATION') {
+    throw new Error('INVALID_CONTRACT: direct frontier routes cannot select the economy escalation binding');
+  }
+  const role: RuntimeRoleV4 = input.route === 'FRONTIER'
+    ? 'frontierExecutor'
+    : stage === 'ESCALATION' ? 'escalationExecutor' : 'executor';
   const binding = input.profile.bindings[role];
+  if (binding === undefined) {
+    throw new Error(`INVALID_CONTRACT: required ${role} binding is unavailable`);
+  }
   if (binding.permissions !== 'contract-write') {
     throw new Error(`INVALID_CONTRACT: ${role} must have contract-write permission`);
   }
