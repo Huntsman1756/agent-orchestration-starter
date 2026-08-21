@@ -42,6 +42,15 @@ read/search/edit operations and exposes no shell, subagent, skill or publication
 permission. `--pure` disables external plugins and `/capsule` prevents a
 repository from selecting the execution root.
 
+Project initialization creates a managed `opencode.json` at the activated
+repository root. Configuration changes must remain in that file and are subject
+to the same unmanaged/local-modification conflict checks as other generated
+files. The generated instructions prohibit personal, user-level, home-directory
+and global OpenCode configuration. Runtime execution is stronger still: it sets
+`OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` to an immutable broker-owned capsule,
+uses an empty capsule home/config/cache, and never exposes the operator's
+personal OpenCode configuration to the worker.
+
 OpenCode 1.18.15 and 1.18.16 emit JSONL envelopes named `step_start`, `text`,
 `tool_use` and `step_finish`, with `sessionID` at the event level and a final
 `step_finish` whose reason is `stop`. Runtime V4 validates that native envelope,

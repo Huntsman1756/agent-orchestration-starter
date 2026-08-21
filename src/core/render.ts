@@ -42,6 +42,7 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
       'The reviewer stays read-only and cannot overrule failed deterministic validation. Exclude planner rationale, executor reasoning, and prior verdicts from review evidence.',
       `Required write isolation: ${policy.isolation.required}. A degraded harness requires exact explicit acceptance and records its effective guarantee in the manifest.`,
       'Fallback is allowed only for typed provider/model availability failures. Authentication, policy, invalid output, grounding, and validation failures fail closed.',
+      'OpenCode configuration is project-local: change only the repository-root `opencode.json` for this repository. Never read, edit, or depend on personal, user-level, home-directory, or global OpenCode configuration.',
       '',
       'Project validation commands:',
       ...policy.validation.commands.map((command) => `- \`${command}\``),

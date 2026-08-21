@@ -28,6 +28,7 @@ test('renders strict SDD planner and executor boundaries', () => {
   assert.match(instructions, /PROHIBITED from editing/i);
   assert.match(instructions, /src\/greeting\.ts/);
   assert.match(instructions, /tests\/greeting\.test\.ts/);
+  assert.match(instructions, /repository-root opencode\.json.*never.*personal.*global/is);
 });
 
 test('maps only bounded cross-provider controls and rejects unsupported Codex effort', () => {

@@ -50,16 +50,20 @@ test('compiles a writable frontier executor for direct frontier execution', () =
 });
 
 test('compiles OpenCode agents with explicit models and permissions', () => {
+  const projectConfig = JSON.parse(file('opencode', 'opencode.json'));
   const orchestrator = file('opencode', '.opencode/agents/orchestrator.md');
   const executor = file('opencode', '.opencode/agents/executor.md');
   const reviewer = file('opencode', '.opencode/agents/reviewer.md');
 
+  assert.deepEqual(projectConfig, { $schema: 'https://opencode.ai/config.json', share: 'disabled', autoupdate: false, plugin: [] });
   assert.match(orchestrator, /model: frontier-vendor\/frontier-main/);
+  assert.match(orchestrator, /repository-root `opencode\.json`.*never.*personal.*global/is);
   assert.match(orchestrator, /edit: deny/);
   assert.match(orchestrator, /bash:\n\s+["']\*["']: deny/);
   assert.match(executor, /model: economy-vendor\/economy-code/);
   assert.match(executor, /edit: allow/);
   assert.match(executor, /PROHIBITED from editing.*acceptance-test/i);
+  assert.match(executor, /repository-root `opencode\.json`.*never.*personal.*global/is);
   assert.match(executor, /bash:\n\s+["']\*["']: ask/);
   assert.match(reviewer, /edit: deny/);
   assert.match(reviewer, /bash:\n\s+["']\*["']: deny/);

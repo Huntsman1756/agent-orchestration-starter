@@ -29,6 +29,7 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
       'Generate acceptance tests first so they define the expected behavior. Then request implementation from the Economy executor.',
       'Every contract must include: id, objective, acceptance_tests, implementation_targets, inputs, constraints, validation commands, success criteria, budget, and result format.',
       'Never pass the full conversation. Accept work only after deterministic validation and reviewer evidence.',
+      'If OpenCode configuration must change, authorize only the repository-root `opencode.json`; never edit or rely on personal, user-level, home-directory, or global OpenCode configuration.',
     ].join('\n');
   }
   if (role === 'executor' || role === 'frontier-executor') {
@@ -38,6 +39,7 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
       `Run every contract validation command, including static lint and format gates; project defaults are: ${commands.join('; ')}.`,
       'A failed static quality or security gate is deterministic evidence, not a warning. Repair it before reporting completion.',
       'Return only status, files changed, validation result, and risks. Ask one question instead of guessing when the contract is ambiguous.',
+      'For OpenCode configuration work, edit only the repository-root `opencode.json` when it is an explicit implementation target; never edit personal, user-level, home-directory, or global OpenCode configuration.',
     ].join('\n');
   }
   return [
@@ -46,5 +48,6 @@ export function contractInstructions(role: 'orchestrator' | 'executor' | 'fronti
     'Exclude planner rationale, executor reasoning, prior verdicts, and the orchestration transcript from review evidence.',
     `Treat deterministic validation as authoritative: ${commands.join('; ')}.`,
     'Reject scope drift, missing tests, unsafe changes, or failed gates. Return findings with file evidence.',
+    'Reject any OpenCode change outside the repository-root `opencode.json`, including personal, user-level, home-directory, or global configuration.',
   ].join('\n');
 }

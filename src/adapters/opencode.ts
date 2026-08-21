@@ -45,8 +45,21 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
   };
 }
 
+function projectConfig(): GeneratedFile {
+  return {
+    path: 'opencode.json',
+    content: `${JSON.stringify({
+      $schema: 'https://opencode.ai/config.json',
+      share: 'disabled',
+      autoupdate: false,
+      plugin: [],
+    }, null, 2)}\n`,
+  };
+}
+
 export function compileOpenCode(policy: ResolvedPolicy, effectiveWriteIsolation: WriteIsolation = 'hard'): GeneratedFile[] {
   return [
+    projectConfig(),
     agentFile('orchestrator', policy),
     agentFile('executor', policy),
     agentFile('frontier-executor', policy),
