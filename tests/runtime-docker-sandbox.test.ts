@@ -762,7 +762,7 @@ test('broker container transaction recovers partial and delayed create effects a
       "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
       "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
       `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),2500)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
-      `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setInterval(()=>{},2147483647);}`,
+      `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setTimeout(()=>process.exit(1),5000);}`,
       `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
     ].join(''));
     await writeFile(join(root, 'container'), [
