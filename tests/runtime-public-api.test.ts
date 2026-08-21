@@ -13,6 +13,8 @@ test('runtime-v4 keeps an intentional entry-point module surface', async () => {
     './model-guidance.js',
     './readiness.js',
     './routing.js',
+    './adaptive-execution.js',
+    './execution-efficiency.js',
     './iterative-executor.js',
     './frontier-supervisor.js',
     './autonomous-dispatcher.js',

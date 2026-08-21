@@ -4,7 +4,7 @@ import type { EffectiveRouteV4, RuntimeBindingV4, RuntimeProfileV4, RuntimeRoleV
 export interface BindingResolutionInputV4 {
   profile: RuntimeProfileV4;
   route: EffectiveRouteV4;
-  stage?: 'PRIMARY' | 'ESCALATION';
+  stage?: 'PRIMARY' | 'REASONING' | 'ESCALATION';
   sourceSensitivity: SourceSensitivityV4;
 }
 
@@ -29,7 +29,7 @@ export function resolveBinding(input: BindingResolutionInputV4): ResolvedBinding
   }
   const role: RuntimeRoleV4 = input.route === 'FRONTIER'
     ? 'frontierExecutor'
-    : stage === 'ESCALATION' ? 'escalationExecutor' : 'executor';
+    : stage === 'ESCALATION' ? 'escalationExecutor' : stage === 'REASONING' ? 'reasoningExecutor' : 'executor';
   const binding = input.profile.bindings[role];
   if (binding === undefined) {
     throw new Error(`INVALID_CONTRACT: required ${role} binding is unavailable`);

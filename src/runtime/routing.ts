@@ -5,6 +5,7 @@ import type { RuntimeProfileV4, RuntimeTaskRequestV4, RuntimeWorkContractV4, Eff
 import type { FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import type { RegisteredRepositoryV4 } from './repository-registry.js';
 import { analyzeRuntimeRouteCoverageV4, type RuntimeRouteCoverageV4 } from './readiness.js';
+import { resolveAdaptiveExecutionPolicyV4 } from './adaptive-execution.js';
 
 const requestedRank = { AUTO: 0, ECONOMY: 1, FRONTIER: 2 } as const;
 
@@ -72,8 +73,21 @@ export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWor
     }
   }
   assertRouteCoverage(route, coverage);
-  if (routeReasons.length === 0) routeReasons.push('eligible for economy route');
-  resolveBinding({ profile: input.profile, route, sourceSensitivity: input.policy.policy.sourcePolicy.sourceSensitivity });
+  const executionPolicy = resolveAdaptiveExecutionPolicyV4({
+    request: input.request,
+    profile: input.profile,
+    sourceSensitivity: input.policy.policy.sourcePolicy.sourceSensitivity,
+    forceFrontier: route === 'FRONTIER',
+  });
+  route = executionPolicy.lane === 'FRONTIER_EXECUTION' ? 'FRONTIER' : 'ECONOMY';
+  if (executionPolicy.reasons.some((reason) => reason.includes('lack the required'))) routeReasons.push(...executionPolicy.reasons.filter((reason) => reason.includes('lack the required')));
+  if (routeReasons.length === 0) routeReasons.push(`eligible for ${executionPolicy.lane.toLowerCase()}`);
+  resolveBinding({
+    profile: input.profile,
+    route,
+    stage: executionPolicy.executorRole === 'reasoningExecutor' ? 'REASONING' : 'PRIMARY',
+    sourceSensitivity: input.policy.policy.sourcePolicy.sourceSensitivity,
+  });
 
   const routeDecisionHash = hashCanonicalV4({ effective_route: route, reasons: routeReasons });
   const profileHash = hashCanonicalV4(input.profile);
@@ -86,6 +100,7 @@ export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWor
     effective_route: route,
     route_decision_reasons: routeReasons,
     route_decision_hash: routeDecisionHash,
+    execution_policy: executionPolicy,
     effective_data_scope: input.policy.policy.sourcePolicy.dataScope,
     effective_source_sensitivity: input.policy.policy.sourcePolicy.sourceSensitivity,
     sandbox_profile_hashes: sandboxProfileHashes(input),

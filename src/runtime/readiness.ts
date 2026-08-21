@@ -68,8 +68,8 @@ const hostCheckCodes: readonly RuntimeHostCheckCodeV4[] = [
 const executionChecks = hostCheckCodes.filter((code) => !['GITHUB_PUBLICATION_LEASE', 'V3_TELEMETRY_ADAPTER'].includes(code));
 
 function roleCoverage(profile: RuntimeProfileV4, roles: readonly RuntimeRoleV4[], sensitivity: SourceSensitivityV4, permission: 'read-only' | 'contract-write'): RuntimeRouteCoverageReasonV4 {
-  if (roles.some((role) => profile.bindings[role].permissions !== permission)) return 'PERMISSION_MISMATCH';
-  if (roles.some((role) => !profile.bindings[role].allowedSourceSensitivity.includes(sensitivity))) return 'SOURCE_SENSITIVITY_UNSUPPORTED';
+  if (roles.some((role) => profile.bindings[role]?.permissions !== permission)) return 'PERMISSION_MISMATCH';
+  if (roles.some((role) => !profile.bindings[role]?.allowedSourceSensitivity.includes(sensitivity))) return 'SOURCE_SENSITIVITY_UNSUPPORTED';
   return 'SUPPORTED';
 }
 

@@ -32,7 +32,10 @@ function contractInput(): DeriveWorkContractInputV4 {
 }
 
 test('keeps a public normal task on the economy route', () => {
-  assert.equal(deriveWorkContract(contractInput()).effective_route, 'ECONOMY');
+  const contract = deriveWorkContract(contractInput());
+  assert.equal(contract.effective_route, 'ECONOMY');
+  assert.equal(contract.execution_policy?.lane, 'MECHANICAL_ECONOMY');
+  assert.equal(contract.execution_policy?.executorRole, 'executor');
 });
 
 test('elevates private-source work to the frontier route', () => {
