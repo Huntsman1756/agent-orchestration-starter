@@ -104,6 +104,8 @@ export interface RuntimeBindingV4 {
   harness: string;
   provider: string;
   model: string;
+  /** Provider-neutral responsibility class. It is a routing contract, not a vendor claim. */
+  tier: 'frontier' | 'economy';
   authentication?: RuntimeAuthenticationV4;
   capability: string;
   allowedDataScopes: readonly DataScopeV4[];

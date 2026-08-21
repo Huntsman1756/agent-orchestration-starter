@@ -37,6 +37,13 @@ export function resolveBinding(input: BindingResolutionInputV4): ResolvedBinding
   if (binding.permissions !== 'contract-write') {
     throw new Error(`INVALID_CONTRACT: ${role} must have contract-write permission`);
   }
+  const expectedTier = role === 'frontierExecutor' ? 'frontier' : 'economy';
+  if (binding.tier !== expectedTier) {
+    throw new Error(`INVALID_CONTRACT: ${role} must use the ${expectedTier} tier`);
+  }
+  if (binding.execution === undefined) {
+    throw new Error(`CAPABILITY_UNVERIFIED: ${role} lacks an explicit execution envelope`);
+  }
   if (!binding.allowedSourceSensitivity.includes(input.sourceSensitivity)) {
     throw new Error(`SOURCE_SENSITIVITY_UNSUPPORTED: ${role} cannot process ${input.sourceSensitivity}`);
   }

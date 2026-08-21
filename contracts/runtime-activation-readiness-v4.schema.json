@@ -12,13 +12,13 @@
     "policyHash": { "$ref": "#/$defs/hash" },
     "profileHash": { "$ref": "#/$defs/hash" },
     "routeCoverage": { "$ref": "#/$defs/routeCoverage" },
-    "checks": { "type": "array", "minItems": 11, "maxItems": 11, "items": { "$ref": "#/$defs/check" } },
+    "checks": { "type": "array", "minItems": 12, "maxItems": 12, "items": { "$ref": "#/$defs/check" } },
     "reportHash": { "$ref": "#/$defs/hash" }
   },
   "$defs": {
     "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "route": { "type": "object", "additionalProperties": false, "required": ["available", "reason"], "properties": { "available": { "type": "boolean" }, "reason": { "enum": ["SUPPORTED", "SOURCE_SENSITIVITY_UNSUPPORTED", "PERMISSION_MISMATCH"] } } },
+    "route": { "type": "object", "additionalProperties": false, "required": ["available", "reason"], "properties": { "available": { "type": "boolean" }, "reason": { "enum": ["SUPPORTED", "SOURCE_SENSITIVITY_UNSUPPORTED", "PERMISSION_MISMATCH", "TIER_MISMATCH"] } } },
     "routeCoverage": { "type": "object", "additionalProperties": false, "required": ["economy", "frontier", "automaticRoute"], "properties": { "economy": { "$ref": "#/$defs/route" }, "frontier": { "$ref": "#/$defs/route" }, "automaticRoute": { "enum": ["ECONOMY", "FRONTIER", null] } } },
-    "check": { "type": "object", "additionalProperties": false, "required": ["code", "status", "evidenceHash"], "properties": { "code": { "enum": ["CORE_ROLE_COVERAGE", "ROUTE_COVERAGE", "PUBLICATION_BOUNDARY", "NATIVE_HOST_COMPOSITION", "IMMUTABLE_RUNTIME_BUNDLE", "CREDENTIAL_ISOLATION", "PROVIDER_GATEWAY_COMPATIBILITY", "CAPABILITY_QUALIFICATION", "DOCKER_SANDBOX_CERTIFICATION", "GITHUB_PUBLICATION_LEASE", "V3_TELEMETRY_ADAPTER"] }, "status": { "enum": ["PASS", "WARNING", "BLOCKED"] }, "evidenceHash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] } } }
+    "check": { "type": "object", "additionalProperties": false, "required": ["code", "status", "evidenceHash"], "properties": { "code": { "enum": ["DELEGATION_TOPOLOGY", "CORE_ROLE_COVERAGE", "ROUTE_COVERAGE", "PUBLICATION_BOUNDARY", "NATIVE_HOST_COMPOSITION", "IMMUTABLE_RUNTIME_BUNDLE", "CREDENTIAL_ISOLATION", "PROVIDER_GATEWAY_COMPATIBILITY", "CAPABILITY_QUALIFICATION", "DOCKER_SANDBOX_CERTIFICATION", "GITHUB_PUBLICATION_LEASE", "V3_TELEMETRY_ADAPTER"] }, "status": { "enum": ["PASS", "WARNING", "BLOCKED"] }, "evidenceHash": { "anyOf": [{ "$ref": "#/$defs/hash" }, { "type": "null" }] } } }
   }
 }

@@ -133,6 +133,7 @@ const bindingSchema = z.object({
   harness: identifierSchema,
   provider: identifierSchema,
   model: identifierSchema,
+  tier: z.enum(['frontier', 'economy']),
   authentication: z.enum(['provider-api-key', 'chatgpt-subscription']).optional(),
   capability: identifierSchema,
   allowedDataScopes: uniqueArray(dataScopeSchema, { min: 1, max: 1 }),
@@ -166,9 +167,26 @@ export const runtimeProfileV4Schema = z.object({
   }).strict(),
 }).strict().superRefine((value, context) => {
   const roles = ['orchestrator', 'executor', 'reasoningExecutor', 'escalationExecutor', 'frontierExecutor', 'reviewer'] as const;
+  const expected = {
+    orchestrator: { tier: 'frontier', permissions: 'read-only' },
+    executor: { tier: 'economy', permissions: 'contract-write' },
+    reasoningExecutor: { tier: 'economy', permissions: 'contract-write' },
+    escalationExecutor: { tier: 'economy', permissions: 'contract-write' },
+    frontierExecutor: { tier: 'frontier', permissions: 'contract-write' },
+    reviewer: { tier: 'frontier', permissions: 'read-only' },
+  } as const;
   for (const role of roles) {
     const binding = value.bindings[role];
     if (binding === undefined) continue;
+    if (binding.tier !== expected[role].tier) {
+      context.addIssue({ code: 'custom', path: ['bindings', role, 'tier'], message: `${role} must use the ${expected[role].tier} tier` });
+    }
+    if (binding.permissions !== expected[role].permissions) {
+      context.addIssue({ code: 'custom', path: ['bindings', role, 'permissions'], message: `${role} must use ${expected[role].permissions} permissions` });
+    }
+    if (binding.permissions === 'contract-write' && binding.execution === undefined) {
+      context.addIssue({ code: 'custom', path: ['bindings', role, 'execution'], message: `${role} must declare an explicit qualified execution envelope` });
+    }
     if (binding.authentication !== 'chatgpt-subscription') continue;
     if (binding.harness !== 'codex' || binding.permissions !== 'read-only' || (role !== 'orchestrator' && role !== 'reviewer')) {
       context.addIssue({ code: 'custom', path: ['bindings', role, 'authentication'], message: 'ChatGPT subscription authentication is restricted to read-only Codex orchestrator and reviewer bindings' });

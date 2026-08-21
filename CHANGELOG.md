@@ -4,6 +4,11 @@
 
 ### Added
 
+- Added a built-in, provider-neutral `runtime doctor` delegation preflight that
+  exposes route collapse, exact role/model identities, qualified task traits
+  and same-model frontier fallbacks without requiring a host driver.
+- Added explicit `frontier`/`economy` responsibility tiers to Runtime V4
+  bindings and a readiness topology check.
 - Added a durable worktree ownership lifecycle with exact local task branches,
   terminal evidence retention, bounded quotas, safe automatic reconciliation,
   cleanup tombstones and a hash-bound `runtime worktree-gc` operator command.
@@ -28,6 +33,11 @@
 
 ### Changed
 
+- Writable Runtime V4 bindings now require an explicit qualified execution
+  envelope; the runtime no longer accepts profiles that infer write capability
+  limits from generic model guidance. Existing V4 profiles must add `tier` to
+  every binding and `execution` to every `contract-write` binding before
+  reactivation and fresh qualification.
 - Renamed the deliberately scoped Prettier gate to
   `format:critical:check`, removed incompatible legacy examples, and made the
   packaged audit verifier use the built CLI.

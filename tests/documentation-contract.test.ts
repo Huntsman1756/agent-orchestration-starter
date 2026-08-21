@@ -40,9 +40,9 @@ test('README Quick start commands execute through the public CLI', async () => {
   try {
     const markdown = await readFile(resolve(root, 'README.md'), 'utf8');
     const commands = quickStartCommands(markdown);
-    assert.deepEqual(commands.map(([command]) => command), ['init', 'init', 'check', 'doctor']);
+    assert.deepEqual(commands.map(([command]) => command), ['init', 'runtime', 'init', 'check', 'doctor']);
     assert.ok(commands[0]?.includes('--dry-run'), 'the first init must be an inspection-only dry run');
-    assert.equal(commands[1]?.includes('--dry-run'), false, 'the second init must explicitly materialize the configuration');
+    assert.equal(commands[2]?.includes('--dry-run'), false, 'the second init must explicitly materialize the configuration');
 
     for (const [index, documented] of commands.entries()) {
       const argv = [...documented];

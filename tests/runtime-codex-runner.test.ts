@@ -20,7 +20,7 @@ const identity = { profile_hash: 'a'.repeat(64), harness: 'codex', harness_versi
 const capability = await probeRuntimeBinding({ identity, probed_at: '2026-08-10T08:00:00.000Z', ttl_seconds: 3600, run_probe: async (iteration) => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, capsule_only: true, credential_separation: true, tool_network_denied: true, shell_used: false, transcript_hash: String(iteration + 1).repeat(64) }) });
 
 function binding(): ResolvedBindingV4 {
-  return { role: 'frontierExecutor', binding: { harness: 'codex', provider: 'profile-frontier-provider', model: 'profile-frontier-model', capability: 'frontier-coding', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC', 'PRIVATE'], permissions: 'contract-write', guidance: { ...validModelGuidance(), reasoningEffort: 'high' } }, binding_hash: 'f'.repeat(64) };
+  return { role: 'frontierExecutor', binding: { harness: 'codex', provider: 'profile-frontier-provider', model: 'profile-frontier-model', tier: 'frontier', capability: 'frontier-coding', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC', 'PRIVATE'], permissions: 'contract-write', guidance: { ...validModelGuidance(), reasoningEffort: 'high' } }, binding_hash: 'f'.repeat(64) };
 }
 
 function localSandbox(requests: SandboxRunRequestV4[]): ProcessSandboxBackendV4 {

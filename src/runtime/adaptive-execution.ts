@@ -24,20 +24,14 @@ function inferredTraits(taskClass: string): readonly RuntimeTaskTraitV4[] {
   return ['localized'];
 }
 
-function executionEnvelope(binding: RuntimeBindingV4, fallbackTraits: readonly RuntimeTaskTraitV4[]) {
-  return binding.execution ?? {
-    supportedTaskTraits: fallbackTraits,
-    maxSteps: binding.guidance.maxSteps,
-    maxToolUses: Math.min(256, binding.guidance.maxSteps * 2),
-    maxNoMutationSteps: Math.min(8, Math.max(3, Math.ceil(binding.guidance.maxSteps / 4))),
-    timeoutSeconds: 300,
-    supportsFailedCandidateRepair: false,
-  };
+function executionEnvelope(binding: RuntimeBindingV4) {
+  if (binding.execution === undefined) throw new Error('CAPABILITY_UNVERIFIED: writable binding lacks an explicit execution envelope');
+  return binding.execution;
 }
 
-function qualified(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[], fallbackTraits: readonly RuntimeTaskTraitV4[]): binding is RuntimeBindingV4 {
+function qualified(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[]): binding is RuntimeBindingV4 {
   if (binding === undefined || binding.permissions !== 'contract-write' || !binding.allowedSourceSensitivity.includes(sensitivity)) return false;
-  const supported = new Set(executionEnvelope(binding, fallbackTraits).supportedTaskTraits);
+  const supported = new Set(executionEnvelope(binding).supportedTaskTraits);
   return traits.every((trait) => supported.has(trait));
 }
 
@@ -67,10 +61,10 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
   let lane = requested;
   let executorRole: RuntimeExecutionPolicyV4['executorRole'];
   let binding: RuntimeBindingV4;
-  const executorQualified = qualified(input.profile.bindings.executor, input.sourceSensitivity, traits, ['mechanical', 'localized']);
+  const executorQualified = qualified(input.profile.bindings.executor, input.sourceSensitivity, traits);
   const executorHealthy = executorQualified && healthy(input.profile.bindings.executor, traits, bindingHealth);
   const reasoningBinding = input.profile.bindings.reasoningExecutor;
-  const reasoningQualified = qualified(reasoningBinding, input.sourceSensitivity, traits, ['semantic-debugging', 'cross-file-reasoning', 'multimodal']);
+  const reasoningQualified = qualified(reasoningBinding, input.sourceSensitivity, traits);
   const reasoningHealthy = reasoningQualified && healthy(reasoningBinding, traits, bindingHealth);
   if (executorQualified && !executorHealthy) reasons.push('primary economy binding is quarantined for a requested task trait');
   if (reasoningQualified && !reasoningHealthy) reasons.push('reasoning economy binding is quarantined for a requested task trait');
@@ -86,14 +80,14 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
     lane = 'FRONTIER_EXECUTION';
     executorRole = 'frontierExecutor';
     binding = input.profile.bindings.frontierExecutor;
-    if (!qualified(binding, input.sourceSensitivity, traits, traits)) {
+    if (!qualified(binding, input.sourceSensitivity, traits)) {
       throw new Error('CAPABILITY_UNVERIFIED: no writable binding supports the requested task traits and source sensitivity');
     }
     if (!healthy(binding, traits, bindingHealth)) throw new Error('CAPABILITY_UNVERIFIED: frontier binding is quarantined for a requested task trait');
     if (requested !== lane) reasons.push('economy bindings lack the required qualified traits');
   }
 
-  const envelope = executionEnvelope(binding, traits);
+  const envelope = executionEnvelope(binding);
   const files = input.request.implementation_targets.length;
   const criteria = requirements?.acceptanceCriteriaCount ?? input.request.success_criteria.length;
   const laneFloor = lane === 'MECHANICAL_ECONOMY' ? 8 : lane === 'REASONING_ECONOMY' ? 16 : 24;

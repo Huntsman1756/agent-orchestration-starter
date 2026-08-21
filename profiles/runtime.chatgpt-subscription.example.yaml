@@ -15,6 +15,7 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    tier: frontier
     authentication: chatgpt-subscription
     capability: frontier_reasoning
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -37,11 +38,19 @@ bindings:
     harness: opencode
     provider: openai
     model: gpt-5.6-luna
+    tier: economy
     authentication: provider-api-key
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    execution: &economy_execution
+      supportedTaskTraits: [mechanical, localized]
+      maxSteps: 32
+      maxToolUses: 64
+      maxNoMutationSteps: 6
+      timeoutSeconds: 420
+      supportsFailedCandidateRepair: false
     guidance: &luna_guidance
       id: openai-gpt-5p6-luna
       revision: official-2026-08-10
@@ -60,11 +69,19 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    tier: frontier
     authentication: provider-api-key
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning, multimodal, long-horizon, architecture, security-sensitive, migration]
+      maxSteps: 64
+      maxToolUses: 128
+      maxNoMutationSteps: 12
+      timeoutSeconds: 900
+      supportsFailedCandidateRepair: false
     guidance: *sol_guidance
   reviewer: *frontier_read
 runtime:

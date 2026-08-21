@@ -218,3 +218,19 @@ test('runtime lifecycle commands dispatch exact bounded operations and fail clos
   assert.match(errors.join('\n'), /CAPABILITY_UNVERIFIED/);
   assert.equal(await runCli(['runtime', 'status', '--run-id', 'main'], { stderr: (line) => errors.push(line) }), 2);
 });
+
+test('runtime doctor diagnoses delegation without a privileged host composition', async () => {
+  const output: string[] = [];
+  const code = await runCli([
+    'runtime', 'doctor',
+    '--repository-policy', join(process.cwd(), 'policies', 'repository-policy.example.yaml'),
+    '--profile', join(process.cwd(), 'profiles', 'nan-opencode.example.yaml'),
+  ], { stdout: (line) => output.push(line) });
+
+  assert.equal(code, 0);
+  assert.match(output.join('\n'), /delegation: DEGRADED/);
+  assert.match(output.join('\n'), /executor: economy nan\/qwen3\.6 via opencode/);
+  assert.match(output.join('\n'), /reasoningExecutor: economy nan\/deepseek-v4-flash via opencode/);
+  assert.match(output.join('\n'), /reviewer: frontier openai\/gpt-5\.6-sol via codex/);
+  assert.match(output.join('\n'), /FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL/);
+});
