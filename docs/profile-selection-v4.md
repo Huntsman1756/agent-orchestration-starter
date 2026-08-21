@@ -31,9 +31,15 @@ operational input for a dated profile, never routing authority.
    `chatgpt-subscription` binding is valid only for read-only Codex
    orchestration or review. A writable OpenAI, NaN or other API binding uses
    `provider-api-key` behind the broker gateway.
-5. Qualify the exact provider, model deployment, harness, parser, guidance,
+5. Preserve the schema-enforced tiers and authority: frontier read-only for
+   planning/review, economy contract-write for ordinary workers and frontier
+   contract-write for the protected fallback. Every writable role requires an
+   explicit `execution` envelope.
+6. Run `runtime doctor --repository-policy <path> --profile <path>` and inspect
+   route collapse, trait coverage and same-model fallback warnings.
+7. Qualify the exact provider, model deployment, harness, parser, guidance,
    tool bundle, platform and sandbox as one capability identity.
-6. Benchmark representative project tasks. Keep the previous profile available
+8. Benchmark representative project tasks. Keep the previous profile available
    for rollback and do not reuse its qualification evidence.
 
 Private source must never be relabelled as public to fit a cheaper worker. If
@@ -50,6 +56,9 @@ the route escalates or fails closed.
   on mechanical failure instead of spending another model call blindly.
 - Treat direct frontier execution and economy-model escalation as different
   authorities even when they currently resolve to the same physical model.
+- Do not describe a same-provider/model fallback as a stronger-model
+  escalation. It may have separate authority and budgets, but `runtime doctor`
+  correctly reports it as degraded.
 - Re-evaluate a profile when a project changes language, framework, source
   sensitivity, validation surface or publication authority.
 

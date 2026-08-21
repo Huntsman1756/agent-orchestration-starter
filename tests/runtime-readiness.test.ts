@@ -67,7 +67,7 @@ test('AUTO elevates incompatible private economy work to a compatible frontier b
   assert.throws(() => deriveWorkContract(input), /SOURCE_SENSITIVITY_UNSUPPORTED/);
 });
 
-test('AUTO never selects a read-only execution binding and explicit execution fails closed', () => {
+test('profile loading rejects a read-only execution binding before routing', () => {
   const input = contractInput();
   input.profile = {
     ...input.profile,
@@ -76,10 +76,7 @@ test('AUTO never selects a read-only execution binding and explicit execution fa
       executor: { ...input.profile.bindings.executor, allowedSourceSensitivity: ['PRIVATE'], permissions: 'read-only' },
     },
   };
-  assert.equal(deriveWorkContract(input).effective_route, 'FRONTIER');
-
-  input.request.requested_route = 'ECONOMY';
-  assert.throws(() => deriveWorkContract(input), /incompatible role permissions/);
+  assert.throws(() => deriveWorkContract(input), /contract-write permissions/);
 });
 
 test('analysis-only exposes route collapse and host gaps as warnings without authorizing execution', () => {

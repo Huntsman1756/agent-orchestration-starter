@@ -82,6 +82,15 @@ test('rejects a budget changed after the broker bound the execution policy', () 
   assert.throws(() => verifyRuntimeExecutionPolicyV4({ ...policy, maxSteps: policy.maxSteps + 1 }), /policy hash is invalid/);
 });
 
+test('never infers write capabilities from generic model guidance', () => {
+  const value = profile();
+  delete value.bindings.executor.execution;
+  assert.throws(
+    () => resolveAdaptiveExecutionPolicyV4({ request: request(['mechanical']), profile: value, sourceSensitivity: 'PUBLIC' }),
+    /explicit execution envelope/,
+  );
+});
+
 test('automatically contracts routing away from a quarantined exact binding', () => {
   const value = profile();
   value.bindings.reasoningExecutor = {

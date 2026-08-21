@@ -3,6 +3,7 @@ export * from './audit-trail.js';
 export * from './failures.js';
 export * from './model-guidance.js';
 export * from './readiness.js';
+export * from './delegation-diagnostics.js';
 export * from './routing.js';
 export * from './adaptive-execution.js';
 export * from './execution-efficiency.js';

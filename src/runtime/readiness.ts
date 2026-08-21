@@ -5,7 +5,7 @@ import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeRoleV4, Source
 export type RuntimeActivationTargetV4 = 'ANALYSIS_ONLY' | 'ISOLATED_EXECUTION' | 'AUTONOMOUS_PUBLICATION';
 export type RuntimeReadinessStatusV4 = 'READY' | 'BLOCKED';
 export type RuntimeReadinessCheckStatusV4 = 'PASS' | 'WARNING' | 'BLOCKED';
-export type RuntimeRouteCoverageReasonV4 = 'SUPPORTED' | 'SOURCE_SENSITIVITY_UNSUPPORTED' | 'PERMISSION_MISMATCH';
+export type RuntimeRouteCoverageReasonV4 = 'SUPPORTED' | 'SOURCE_SENSITIVITY_UNSUPPORTED' | 'PERMISSION_MISMATCH' | 'TIER_MISMATCH';
 export type RuntimeHostCheckCodeV4 =
   | 'NATIVE_HOST_COMPOSITION'
   | 'IMMUTABLE_RUNTIME_BUNDLE'
@@ -29,7 +29,7 @@ export interface RuntimeRouteCoverageV4 {
 }
 
 export interface RuntimeReadinessCheckV4 {
-  readonly code: 'CORE_ROLE_COVERAGE' | 'ROUTE_COVERAGE' | 'PUBLICATION_BOUNDARY' | RuntimeHostCheckCodeV4;
+  readonly code: 'DELEGATION_TOPOLOGY' | 'CORE_ROLE_COVERAGE' | 'ROUTE_COVERAGE' | 'PUBLICATION_BOUNDARY' | RuntimeHostCheckCodeV4;
   readonly status: RuntimeReadinessCheckStatusV4;
   readonly evidenceHash: string | null;
 }
@@ -67,16 +67,17 @@ const hostCheckCodes: readonly RuntimeHostCheckCodeV4[] = [
 ];
 const executionChecks = hostCheckCodes.filter((code) => !['GITHUB_PUBLICATION_LEASE', 'V3_TELEMETRY_ADAPTER'].includes(code));
 
-function roleCoverage(profile: RuntimeProfileV4, roles: readonly RuntimeRoleV4[], sensitivity: SourceSensitivityV4, permission: 'read-only' | 'contract-write'): RuntimeRouteCoverageReasonV4 {
+function roleCoverage(profile: RuntimeProfileV4, roles: readonly RuntimeRoleV4[], sensitivity: SourceSensitivityV4, permission: 'read-only' | 'contract-write', tier?: 'frontier' | 'economy'): RuntimeRouteCoverageReasonV4 {
   if (roles.some((role) => profile.bindings[role]?.permissions !== permission)) return 'PERMISSION_MISMATCH';
+  if (tier !== undefined && roles.some((role) => profile.bindings[role]?.tier !== tier)) return 'TIER_MISMATCH';
   if (roles.some((role) => !profile.bindings[role]?.allowedSourceSensitivity.includes(sensitivity))) return 'SOURCE_SENSITIVITY_UNSUPPORTED';
   return 'SUPPORTED';
 }
 
 export function analyzeRuntimeRouteCoverageV4(profileInput: RuntimeProfileV4, sensitivity: SourceSensitivityV4): RuntimeRouteCoverageV4 {
   const profile = loadRuntimeProfileV4(structuredClone(profileInput));
-  const economyReason = roleCoverage(profile, ['executor', 'escalationExecutor'], sensitivity, 'contract-write');
-  const frontierReason = roleCoverage(profile, ['frontierExecutor'], sensitivity, 'contract-write');
+  const economyReason = roleCoverage(profile, ['executor', 'escalationExecutor'], sensitivity, 'contract-write', 'economy');
+  const frontierReason = roleCoverage(profile, ['frontierExecutor'], sensitivity, 'contract-write', 'frontier');
   const economy = economyReason === 'SUPPORTED';
   const frontier = frontierReason === 'SUPPORTED';
   return Object.freeze({
@@ -112,7 +113,14 @@ export function assessRuntimeActivationV4(input: AssessRuntimeActivationInputV4)
   const executionTarget = input.target !== 'ANALYSIS_ONLY';
   const checks: RuntimeReadinessCheckV4[] = [];
 
-  const coreReason = roleCoverage(profile, ['orchestrator', 'reviewer'], policy.sourcePolicy.sourceSensitivity, 'read-only');
+  const topologyValid = profile.bindings.orchestrator.tier === 'frontier'
+    && profile.bindings.reviewer.tier === 'frontier'
+    && profile.bindings.executor.tier === 'economy'
+    && profile.bindings.escalationExecutor.tier === 'economy'
+    && profile.bindings.frontierExecutor.tier === 'frontier'
+    && (profile.bindings.reasoningExecutor === undefined || profile.bindings.reasoningExecutor.tier === 'economy');
+  checks.push(check('DELEGATION_TOPOLOGY', topologyValid ? 'PASS' : executionTarget ? 'BLOCKED' : 'WARNING'));
+  const coreReason = roleCoverage(profile, ['orchestrator', 'reviewer'], policy.sourcePolicy.sourceSensitivity, 'read-only', 'frontier');
   checks.push(check('CORE_ROLE_COVERAGE', coreReason === 'SUPPORTED' ? 'PASS' : executionTarget ? 'BLOCKED' : 'WARNING'));
   checks.push(check('ROUTE_COVERAGE', routeCoverage.automaticRoute !== null ? 'PASS' : executionTarget ? 'BLOCKED' : 'WARNING'));
 

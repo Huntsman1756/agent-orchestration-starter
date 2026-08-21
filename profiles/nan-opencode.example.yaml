@@ -3,6 +3,9 @@
 #   MCP transport is not configured by adding a profile field.
 # - The ChatGPT subscription binding is read-only Codex orchestration/review;
 #   Nano/OpenCode executor credentials remain outside the repository.
+# - `tier` is a profile responsibility, not a vendor ranking. This example
+#   reuses DeepSeek for reasoning and direct writable fallback, so `runtime
+#   doctor` reports DEGRADED rather than pretending it is a stronger model.
 # - The generated local STDIO server is required and exposes the seven broker
 #   tools, including hash-bound review packet and verdict controls.
 # See ../docs/architecture-mcp-sdd.md for activation and HTTP details.
@@ -13,6 +16,7 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    tier: frontier
     authentication: chatgpt-subscription
     capability: planning
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -34,6 +38,7 @@ bindings:
     harness: opencode
     provider: nan
     model: qwen3.6
+    tier: economy
     authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -62,6 +67,7 @@ bindings:
     harness: opencode
     provider: nan
     model: deepseek-v4-flash
+    tier: economy
     authentication: provider-api-key
     capability: semantic-coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -90,6 +96,7 @@ bindings:
     harness: opencode
     provider: nan
     model: deepseek-v4-flash
+    tier: economy
     authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -101,6 +108,7 @@ bindings:
     harness: opencode
     provider: nan
     model: deepseek-v4-flash
+    tier: frontier
     authentication: provider-api-key
     capability: coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
@@ -118,6 +126,7 @@ bindings:
     harness: codex
     provider: openai
     model: gpt-5.6-sol
+    tier: frontier
     authentication: chatgpt-subscription
     capability: review
     allowedDataScopes: [SOURCE_CODE_ONLY]

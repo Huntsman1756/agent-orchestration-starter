@@ -13,6 +13,7 @@ export * from './capability-contract.js';
 export * from './trajectory.js';
 export * from './a2a-adapter.js';
 export * from './readiness.js';
+export * from './delegation-diagnostics.js';
 export * from './host-composition.js';
 export * from './host-installation.js';
 export * from './host-driver.js';

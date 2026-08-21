@@ -111,6 +111,23 @@ After inspecting the proposed files, run the same initialization without
 to verify the same selected harnesses. The CLI does not write credentials or
 global tool configuration.
 
+Before activating Runtime V4, run the provider-neutral delegation preflight.
+It shows the actual planner, economical workers, writable frontier fallback,
+source-sensitivity collapse and qualified task envelopes without requiring a
+privileged host driver:
+
+```powershell
+node dist/cli/main.js runtime doctor `
+  --repository-policy policies/repository-policy.example.yaml `
+  --profile profiles/nan-opencode.example.yaml
+```
+
+`READY` means the declared routing topology is complete. `DEGRADED` is usable
+but names work that will elevate or a fallback that reuses an economy model.
+`BLOCKED` means autonomous execution must not start. This checks configuration,
+not the separately required host, sandbox, credentials or fresh binding
+qualification. See the [operator golden path](docs/operator-golden-path-v4.md).
+
 For OpenCode, initialization manages only `<target>/opencode.json` and the
 target repository's `.opencode/agents/`. It never writes personal, user-level,
 home-directory or global OpenCode configuration; an existing unmanaged project
@@ -208,7 +225,9 @@ failed candidate tree. Semantic debugging and cross-file tasks use
 the separately qualified `reasoningExecutor`; rejected repairs use
 `escalationExecutor`, while direct `FRONTIER` work resolves
 `frontierExecutor` independently. The example currently binds those three
-roles to `deepseek-v4-flash`, but the roles and routing are model-neutral. The broker routes the
+roles to `deepseek-v4-flash`, but the roles and routing are model-neutral. This
+is separate authority and frontier supervision, not a stronger-model fallback;
+the delegation preflight reports it as `DEGRADED`. The broker routes the
 OpenAI-compatible Chat Completions API through its gateway: the capsule sees
 only the non-secret `broker-gateway` value, while the real NaN key remains in
 the gateway. Economy concurrency is one to avoid multiplying usage pressure.
@@ -352,6 +371,7 @@ notes. Public issues, pull requests and examples must also follow the
 - [Consumer adoption and handoff](docs/consumer-adoption-v4.md)
 - [Project profile selection](docs/profile-selection-v4.md)
 - [Adaptive provider-neutral execution](docs/adaptive-execution-v4.md)
+- [Operator golden path and troubleshooting](docs/operator-golden-path-v4.md)
 - [Public repository hygiene](docs/public-repository-hygiene.md)
 - [Runtime operations](docs/runtime-v4-operations.md)
 - [MCP, strict SDD and context culling](docs/architecture-mcp-sdd.md)

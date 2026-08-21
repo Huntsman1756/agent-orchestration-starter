@@ -14,6 +14,7 @@ bindings:
     harness: codex
     provider: frontier-provider
     model: frontier-model
+    tier: frontier
     capability: frontier_reasoning
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
@@ -34,10 +35,18 @@ bindings:
     harness: opencode
     provider: economy-provider
     model: economy-model
+    tier: economy
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    execution: &economy_execution
+      supportedTaskTraits: [mechanical, localized]
+      maxSteps: 24
+      maxToolUses: 48
+      maxNoMutationSteps: 5
+      timeoutSeconds: 300
+      supportsFailedCandidateRepair: false
     guidance: &economy_guidance
       id: economy-guidance
       revision: vendor-reviewed-1
@@ -55,10 +64,18 @@ bindings:
     harness: opencode
     provider: frontier-provider
     model: frontier-model
+    tier: frontier
     capability: agentic_tool_execution
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC, PRIVATE]
     permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning, multimodal, long-horizon, architecture, security-sensitive, migration]
+      maxSteps: 64
+      maxToolUses: 128
+      maxNoMutationSteps: 12
+      timeoutSeconds: 900
+      supportsFailedCandidateRepair: false
     guidance: *frontier_guidance
   reviewer: *frontier_read
 runtime:

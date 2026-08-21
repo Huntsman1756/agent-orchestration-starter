@@ -8,7 +8,19 @@ The three lanes are:
 - `REASONING_ECONOMY`: debugging and cross-file reasoning handled by a separately qualified economical worker;
 - `FRONTIER_EXECUTION`: architecture, security-sensitive, migrations, long-horizon work, explicit frontier requests, or any task for which no economical binding is qualified.
 
-Each writable profile binding may declare an `execution` envelope: supported task traits, step/tool/time limits, mutation-latency limit and failed-candidate repair support. Changing provider, model, harness, parser, guidance or policy invalidates the exact qualification; copying an envelope to a new model does not certify it.
+Each writable profile binding must declare an `execution` envelope: supported task traits, step/tool/time limits, mutation-latency limit and failed-candidate repair support. Changing provider, model, harness, parser, guidance or policy invalidates the exact qualification; copying an envelope to a new model does not certify it.
+
+Every binding also declares a provider-neutral `tier`. The schema enforces the
+topology rather than trusting role names: orchestrator/reviewer are read-only
+`frontier`; primary, reasoning and escalation workers are writable `economy`;
+the direct fallback is writable `frontier`. Every writable binding must provide
+an explicit `execution` envelope. There are no inferred write capabilities.
+
+`tier` describes responsibility in this profile, not a vendor ranking. Reusing
+the same provider/model as both an economy worker and `frontierExecutor` can
+still provide a separately qualified budget or supervised retry, but it is not
+a stronger-model escalation. `runtime doctor` reports that topology as
+`DEGRADED` so operators can distinguish the two cases.
 
 The broker derives and hashes `execution_policy` into the work contract. OpenCode receives that exact budget and fails closed when it exceeds steps, tool uses, time, attempts or the allowed pre-mutation exploration. A reasoning task never falls back to an unqualified mechanical worker: it uses `reasoningExecutor` or elevates to frontier.
 

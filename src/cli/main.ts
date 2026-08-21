@@ -28,6 +28,8 @@ import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
 import { verifyDelegationProvenanceV4 } from '../runtime/delegation-provenance.js';
 import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../runtime/audit-trail.js';
 import { createWorktreeManagerV4 } from '../runtime/worktree.js';
+import { diagnoseRuntimeDelegationV4, renderRuntimeDelegationDiagnosticV4 } from '../runtime/delegation-diagnostics.js';
+import { loadRuntimeProfileV4, loadRuntimeRepositoryPolicyV4 } from '../runtime/load.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -247,9 +249,15 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         const repositoryPolicy = option(argv, '--repository-policy');
         const profile = option(argv, '--profile');
         if (repositoryPolicy === undefined || profile === undefined || argv.length !== 6) throw new Error('INVALID_CONTRACT: runtime doctor requires exact --repository-policy and --profile options');
-        if (io.runtimeDoctor === undefined) throw new Error('CAPABILITY_UNVERIFIED: runtime doctor composition is unavailable');
-        for (const line of await io.runtimeDoctor({ repository_policy: repositoryPolicy, profile })) stdout(line);
-        return 0;
+        if (io.runtimeDoctor !== undefined) {
+          for (const line of await io.runtimeDoctor({ repository_policy: repositoryPolicy, profile })) stdout(line);
+          return 0;
+        }
+        const policyDocument = loadRuntimeRepositoryPolicyV4(parseYaml(await readFile(repositoryPolicy, 'utf8')));
+        const profileDocument = loadRuntimeProfileV4(parseYaml(await readFile(profile, 'utf8')));
+        const diagnostic = diagnoseRuntimeDelegationV4(policyDocument, profileDocument);
+        for (const line of renderRuntimeDelegationDiagnosticV4(diagnostic)) stdout(line);
+        return diagnostic.status === 'BLOCKED' ? 1 : 0;
       }
       if (subcommand === 'status') {
         const runId = option(argv, '--run-id');

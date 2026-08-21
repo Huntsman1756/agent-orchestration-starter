@@ -54,3 +54,19 @@ test('rejects a route whose selected binding cannot process private source', () 
     /SOURCE_SENSITIVITY_UNSUPPORTED/,
   );
 });
+
+test('rejects a writable binding with the wrong tier or no qualified envelope', () => {
+  const wrongTier = validRuntimeProfile() as RuntimeProfileV4;
+  wrongTier.bindings.executor = { ...wrongTier.bindings.executor, tier: 'frontier' };
+  assert.throws(
+    () => resolveBinding({ profile: wrongTier, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' }),
+    /economy tier/,
+  );
+
+  const missingEnvelope = validRuntimeProfile() as RuntimeProfileV4;
+  missingEnvelope.bindings.executor = { ...missingEnvelope.bindings.executor, execution: undefined };
+  assert.throws(
+    () => resolveBinding({ profile: missingEnvelope, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' }),
+    /explicit execution envelope/,
+  );
+});
