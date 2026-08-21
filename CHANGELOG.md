@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added a durable worktree ownership lifecycle with exact local task branches,
+  terminal evidence retention, bounded quotas, safe automatic reconciliation,
+  cleanup tombstones and a hash-bound `runtime worktree-gc` operator command.
 - Added binding/task-trait health quarantine with hash-bound admission evidence,
   cooldown and broker-owned canary recovery.
 - Added bounded MCP HTTP session capacity and idle expiry, macOS framework CI,

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-orchestration.local/contracts/runtime-worktree-record-v4.schema.json",
+  "title": "Runtime Worktree Ownership Record V4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "repository_root", "worktree_parent", "path", "branch", "base_sha", "created_at", "ownership_nonce", "terminal", "cleanup", "manifest_hash"],
+  "properties": {
+    "schema_version": { "const": 4 },
+    "run_id": { "type": "string", "pattern": "^run_[A-Za-z0-9_-]{1,92}$" },
+    "repository_root": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "worktree_parent": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "branch": { "type": "string", "pattern": "^codex/auto/run_[A-Za-z0-9_-]{1,92}$" },
+    "base_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "ownership_nonce": { "$ref": "#/$defs/hash" },
+    "terminal": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "disposition", "recorded_at", "evidence_hash"],
+          "properties": {
+            "state": { "enum": ["FINALIZED", "FAILED", "ABORTED"] },
+            "disposition": { "enum": ["MERGED", "DISCARD_AFTER_RETENTION", "KEEP_BRANCH"] },
+            "recorded_at": { "type": "string", "format": "date-time" },
+            "evidence_hash": { "$ref": "#/$defs/hash" }
+          }
+        }
+      ]
+    },
+    "cleanup": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cleaned_at", "worktree_removed", "branch_deleted"],
+          "properties": {
+            "cleaned_at": { "type": "string", "format": "date-time" },
+            "worktree_removed": { "const": true },
+            "branch_deleted": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "manifest_hash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

@@ -90,7 +90,13 @@ Validation is networkless and credential-free. Review uses a fresh read-only evi
 
 Artifacts are content-addressed and bounded. Runtime V4 telemetry is append-only, hash-chained, strict, and excludes prompts, responses, reasoning, transcripts, diffs, source, environment, credentials, and credential-shaped values. Telemetry export cannot change a runtime gate. The concrete V3 telemetry adapter is intentionally unavailable; V4 reports `V3_RUNTIME_NOT_INSTALLED` and does not invent V3 evidence.
 
-Retained failed-run worktrees and artifacts require a future explicit cleanup command. Do not delete them automatically because they may be the only failure evidence.
+Managed worktrees use durable ownership records, terminal-state retention and
+bounded reconciliation. Finalized runs are eligible for immediate exact cleanup;
+failed runs retain evidence for seven days and aborted runs for one day by
+default. The manager never deletes unowned or indeterminate paths and never
+deletes remote branches. Operators can inspect and apply a hash-bound report
+with `runtime worktree-gc`; certified hosts call the same API from durable
+terminal transitions. See [`worktree-lifecycle-v4.md`](worktree-lifecycle-v4.md).
 
 ## Broker-owned publication
 
