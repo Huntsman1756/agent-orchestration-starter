@@ -558,6 +558,7 @@ test('certification transcript contains exactly one artifact of each required ki
 
 test('terminate aborts blocked Docker identity commands and releases the execution ID', { timeout: 30_000 }, async () => {
   const root = await makeTrustedFixtureRoot('ao-cli-block-');
+  const descendantPids: number[] = [];
   try {
     await Promise.all([mkdir(join(root, 'active')), mkdir(join(root, 'broker'))]);
     const dockerExecutable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
@@ -596,6 +597,7 @@ test('terminate aborts blocked Docker identity commands and releases the executi
       }
     }
     assert.notEqual(descendantPid, undefined, 'the fake Docker identity command must reach its blocked descendant');
+    descendantPids.push(descendantPid!);
     const started = Date.now();
     await backend.terminate(request.execution_id);
     assert.equal(Date.now() - started < 5_000, true, 'terminate must abort the blocked CLI within the bounded cleanup contract rather than await its natural exit');
@@ -605,11 +607,26 @@ test('terminate aborts blocked Docker identity commands and releases the executi
       'the blocked identity command descendant must not retain inherited stdio',
     );
 
+    await rm(join(root, 'info-child.pid'), { force: true });
     const reused = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    let reusedDescendantPid: number | undefined;
+    const reusedPidDeadline = Date.now() + 10_000;
+    while (reusedDescendantPid === undefined && Date.now() < reusedPidDeadline) {
+      reusedDescendantPid = await readFile(join(root, 'info-child.pid'), 'utf8').then(Number, () => undefined);
+      if (reusedDescendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.notEqual(reusedDescendantPid, undefined, 'the reused execution ID must reach a new blocked descendant');
+    descendantPids.push(reusedDescendantPid!);
     await backend.terminate(request.execution_id);
     await reused;
+    await assertProcessNotRunning(
+      reusedDescendantPid!,
+      'the reused blocked identity command descendant must not retain inherited stdio',
+    );
   } finally {
+    for (const pid of descendantPids) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already absent */ }
+    }
     await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });

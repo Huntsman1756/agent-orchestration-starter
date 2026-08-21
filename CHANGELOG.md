@@ -21,7 +21,8 @@
 
 - Bounded the fake Docker executor used by container-transaction recovery
   tests so a failed platform-specific process-tree cancellation cannot retain
-  the test runner until the outer CI job timeout.
+  the test runner until the outer CI job timeout, and made repeated blocked
+  identity-command probes prove and clean every descendant they create.
 - Preserved shared repository locks until every active run releases ownership
   and removed partially written orphan locks after failed acquisition. macOS
   now derives fail-closed boot and process-start identities for those locks.
