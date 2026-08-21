@@ -95,6 +95,21 @@ async function platformIdentity(pid: number): Promise<LockProcessIdentityV4 | nu
       return typeof value.boot_id === 'string' && typeof value.process_start_id === 'string' ? value as LockProcessIdentityV4 : null;
     } catch { return null; }
   }
+  if (process.platform === 'darwin') {
+    try {
+      const [{ stdout: bootTime }, { stdout: processStart }] = await Promise.all([
+        execFileAsync('/usr/sbin/sysctl', ['-n', 'kern.boottime'], { maxBuffer: 4_096 }),
+        execFileAsync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { maxBuffer: 4_096 }),
+      ]);
+      const bootValue = bootTime.trim();
+      const processValue = processStart.trim();
+      if (bootValue.length === 0 || processValue.length === 0) return null;
+      return {
+        boot_id: createHash('sha256').update(bootValue, 'utf8').digest('hex'),
+        process_start_id: createHash('sha256').update(processValue, 'utf8').digest('hex'),
+      };
+    } catch { return null; }
+  }
   return null;
 }
 

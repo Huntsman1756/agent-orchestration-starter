@@ -12,7 +12,8 @@
 ### Fixed
 
 - Preserved shared repository locks until every active run releases ownership
-  and removed partially written orphan locks after failed acquisition.
+  and removed partially written orphan locks after failed acquisition. macOS
+  now derives fail-closed boot and process-start identities for those locks.
 - Made lost dispatcher leases durably terminal, required merged publication for
   autonomous dispatch, and replaced timestamp-only temporary names with random
   collision-resistant identities.
