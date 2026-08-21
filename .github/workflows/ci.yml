@@ -37,6 +37,8 @@ jobs:
 
       - name: Diagnose portable broker behavior
         if: matrix.os == 'macos-latest'
+        env:
+          AO_CI_MACOS_DIAGNOSTIC: '1'
         run: npx tsx --test tests/runtime-broker-daemon.test.ts
 
       - name: Validate
