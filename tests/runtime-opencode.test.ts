@@ -70,7 +70,7 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.match(result.capability_snapshot_hash, /^[a-f0-9]{64}$/);
     assert.equal(revoked, true);
     const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-opencode-capture.json'), 'utf8'));
-    assert.equal(capture.cwd, await realpath(capsule));
+    assert.equal(capture.cwd, process.platform === 'darwin' ? await realpath(capsule) : capsule);
     assert.ok(capture.argv.includes('--pure'));
     assert.ok(capture.argv.includes('--auto'));
     assert.ok(capture.argv.includes('--dir=/capsule'));

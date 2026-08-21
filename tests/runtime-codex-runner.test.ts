@@ -83,7 +83,7 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   assert.match(prompt, /"instruction_manifest_hash":"4{64}"/);
   assert.doesNotMatch(prompt, new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-codex-capture.json'), 'utf8'));
-  assert.equal(capture.cwd, await realpath(capsule));
+  assert.equal(capture.cwd, process.platform === 'darwin' ? await realpath(capsule) : capsule);
 });
 
 test('rejects stale isolation before credential lease or harness launch', async () => {
