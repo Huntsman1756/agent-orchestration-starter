@@ -49,7 +49,21 @@ test('dry run reports planned files without writing them', async () => {
   const report = await renderProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['opencode'], dryRun: true });
 
   assert.ok(report.created.includes('.opencode/agents/executor.md'));
+  assert.ok(report.created.includes('opencode.json'));
   await assert.rejects(readFile(join(directory, '.opencode', 'agents', 'executor.md'), 'utf8'), /ENOENT/);
+});
+
+test('creates only repository-local OpenCode configuration and preserves an unmanaged project config', async () => {
+  const directory = await target();
+  const configPath = join(directory, 'opencode.json');
+  await writeFile(configPath, '{"userOwned":true}\n', 'utf8');
+
+  const report = await renderProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['opencode'] });
+
+  assert.deepEqual(report.conflicts.find((entry) => entry.path === 'opencode.json'), { path: 'opencode.json', reason: 'unmanaged' });
+  assert.equal(await readFile(configPath, 'utf8'), '{"userOwned":true}\n');
+  assert.match(await readFile(join(directory, 'AGENTS.md'), 'utf8'), /repository-root `opencode\.json`.*never.*personal.*global/is);
+  assert.ok(report.created.every((path) => !path.startsWith('/') && !/^[A-Za-z]:[\\/]/u.test(path)));
 });
 
 test('check reports an unmanaged generated file consistently when it matches desired content', async () => {

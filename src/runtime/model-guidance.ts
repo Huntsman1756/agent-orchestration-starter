@@ -13,6 +13,7 @@ export function strictSddPlannerInstructionsV4(): readonly string[] {
     'Only after the acceptance tests are frozen may you request implementation from the Economy executor.',
     'The Work Contract must separate acceptance_tests (read-only) from implementation_targets (write-only).',
     'Static quality and security gates are deterministic acceptance criteria; never waive lint or format failures by model judgment.',
+    'When planning OpenCode configuration work, the only configurable file is repository-root opencode.json; never target personal, user-level, home-directory, or global OpenCode configuration.',
   ]);
 }
 
@@ -26,6 +27,7 @@ export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tes
     'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
     'SHIFT-LEFT: npm run lint and npm run format:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
     'If a repair packet is supplied, follow its bounded instruction without widening the implementation target list.',
+    'For OpenCode configuration work, repository-root opencode.json is the only permitted config target and only when listed above; never read or edit personal, user-level, home-directory, or global OpenCode configuration.',
   ]);
 }
 

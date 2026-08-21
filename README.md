@@ -106,6 +106,11 @@ After inspecting the proposed files, run the same initialization without
 to verify the same selected harnesses. The CLI does not write credentials or
 global tool configuration.
 
+For OpenCode, initialization manages only `<target>/opencode.json` and the
+target repository's `.opencode/agents/`. It never writes personal, user-level,
+home-directory or global OpenCode configuration; an existing unmanaged project
+config is reported as a conflict instead of being overwritten.
+
 ```powershell
 node dist/cli/main.js init `
   --target G:\_Proyectos\my-project `
