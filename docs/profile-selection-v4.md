@@ -10,7 +10,8 @@ authority.
 
 | Example | Orchestrator and reviewer | Economy executor | Escalation and frontier execution | Authentication boundary |
 | --- | --- | --- | --- | --- |
-| [`nan-opencode.example.yaml`](../profiles/nan-opencode.example.yaml) | Codex with a ChatGPT subscription | NaN Qwen3.6 through OpenCode | NaN DeepSeek V4 Flash | Subscription stays in the host keyring; NaN keys stay behind the provider gateway |
+| [`nan-opencode.example.yaml`](../profiles/nan-opencode.example.yaml) | Codex with a ChatGPT subscription | NaN Qwen3.6 through OpenCode | NaN DeepSeek V4 Flash for both economy reasoning and supervised direct execution (`DEGRADED`) | Subscription stays in the host keyring; NaN keys stay behind the provider gateway |
+| [`nan-opencode-glm-premium.example.yaml`](../profiles/nan-opencode-glm-premium.example.yaml) | Codex with a ChatGPT subscription | NaN Qwen3.6, with DeepSeek V4 Flash for economy reasoning | Distinct NaN GLM 5.2 premium frontier executor (`READY` for public-source topology) | Same separation; the NaN key must have the GLM 5.2 premium tier |
 | [`runtime.chatgpt-subscription.example.yaml`](../profiles/runtime.chatgpt-subscription.example.yaml) | Codex with a ChatGPT subscription and GPT-5.6 Sol | OpenAI API GPT-5.6 Luna through OpenCode | OpenAI API GPT-5.6 Luna or Sol according to the resolved role | A ChatGPT subscription is not an API credential; every writable API binding uses a separate provider lease |
 | [`runtime.example.yaml`](../profiles/runtime.example.yaml) | Replaceable frontier-capable binding | Replaceable economical binding | Separately qualified escalation/frontier bindings | The consumer defines and qualifies every exact authentication mechanism |
 
@@ -19,6 +20,14 @@ project, or proof that an account can use a model. Current OpenAI documentation
 describes Sol as the flagship option for complex reasoning and coding, Terra as
 the balance option, and Luna as the cost-sensitive high-volume option. That is
 operational input for a dated profile, never routing authority.
+
+NaN's dated API reference describes GLM 5.2 premium as supporting tool calling,
+coding and long-horizon agentic tasks. That makes it an appropriate candidate
+for the distinct frontier role, not prequalified evidence. Without that tier,
+keep the standard profile's honest degradation or replace only
+`frontierExecutor` with a separately qualified writable API binding from any
+provider. Do not relabel an economy model as frontier merely to make the doctor
+report green.
 
 ## Choose per repository
 

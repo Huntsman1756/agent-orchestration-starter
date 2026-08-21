@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { parse } from 'yaml';
 
 import { diagnoseRuntimeDelegationV4, renderRuntimeDelegationDiagnosticV4 } from '../src/runtime/delegation-diagnostics.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4 } from '../src/runtime/contracts.js';
+import { loadRuntimeProfileV4 } from '../src/runtime/load.js';
 import { validRepositoryPolicy, validRuntimeProfile } from './runtime-contracts.test.js';
 
 test('reports the exact economy and frontier delegation topology', () => {
@@ -57,4 +60,20 @@ test('blocks a profile with no qualified frontier fallback for protected coding 
 
   assert.equal(report.status, 'BLOCKED');
   assert.equal(report.findings.find((finding) => finding.code === 'FRONTIER_FALLBACK_UNAVAILABLE')?.severity, 'BLOCKED');
+});
+
+test('dated NaN profiles distinguish supervised reuse from a separate premium frontier model', async () => {
+  const [standardSource, premiumSource] = await Promise.all([
+    readFile(new URL('../profiles/nan-opencode.example.yaml', import.meta.url), 'utf8'),
+    readFile(new URL('../profiles/nan-opencode-glm-premium.example.yaml', import.meta.url), 'utf8'),
+  ]);
+  const policy = validRepositoryPolicy() as RuntimeRepositoryPolicyV4;
+  const standard = diagnoseRuntimeDelegationV4(policy, loadRuntimeProfileV4(parse(standardSource)));
+  const premium = diagnoseRuntimeDelegationV4(policy, loadRuntimeProfileV4(parse(premiumSource)));
+
+  assert.equal(standard.status, 'DEGRADED');
+  assert.equal(standard.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'), true);
+  assert.equal(premium.status, 'READY');
+  assert.equal(premium.roles.find((role) => role.role === 'frontierExecutor')?.model, 'glm5.2');
+  assert.equal(premium.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'), false);
 });

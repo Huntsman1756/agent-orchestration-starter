@@ -127,6 +127,10 @@ but names work that will elevate or a fallback that reuses an economy model.
 `BLOCKED` means autonomous execution must not start. This checks configuration,
 not the separately required host, sandbox, credentials or fresh binding
 qualification. See the [operator golden path](docs/operator-golden-path-v4.md).
+The standard NaN example intentionally reports `DEGRADED`; accounts with the
+separately qualified GLM 5.2 premium tier can instead start from
+`profiles/nan-opencode-glm-premium.example.yaml`, which declares a distinct
+writable frontier model and reports `READY` for public-source topology.
 
 For OpenCode, initialization manages only `<target>/opencode.json` and the
 target repository's `.opencode/agents/`. It never writes personal, user-level,
@@ -235,6 +239,15 @@ Codex runs outside the capsule through the fail-closed
 [ChatGPT subscription host bridge](docs/host-codex-subscription-v4.md); it has
 read-only review authority and never receives an executor binding.
 
+`profiles/nan-opencode-glm-premium.example.yaml` preserves the same economical
+Qwen/DeepSeek path but binds direct frontier execution to NaN GLM 5.2. NaN
+documents that model for coding and long-horizon agentic tasks and requires a
+premium-tier key. The separate identity removes the same-model degradation; it
+does not prove account access or capability. Run `runtime doctor`, the exact
+binding probes and representative paired tasks before activation. If GLM 5.2
+is unavailable, the frontier binding may instead use any other qualified
+provider API without changing repository policy or routing code.
+
 NaN currently documents 500M monthly tokens for DeepSeek V4 Flash, 1.0B for
 MiMo V2.5, and separate premium GLM 5.2 limits. Qwen3.6 and Gemma4 do not list
 an equivalent monthly quota on that page. Treat quotas as dated operational
@@ -282,7 +295,8 @@ not require changing repository contracts, but it does require fresh exact
 qualification of the new binding. A model name alone is never evidence.
 
 `profiles/runtime.example.yaml` is intentionally provider-neutral.
-`profiles/nan-opencode.example.yaml` and
+`profiles/nan-opencode.example.yaml`,
+`profiles/nan-opencode-glm-premium.example.yaml` and
 `profiles/runtime.chatgpt-subscription.example.yaml` are dated examples, not
 credentials or live-certification claims. An economical worker may be Qwen,
 Gemma, a future provider or a local model; the frontier planner sizes stories

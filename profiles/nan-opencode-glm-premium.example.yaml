@@ -1,0 +1,150 @@
+# Runtime V4 example for a NaN GLM 5.2 premium API key:
+# - ChatGPT-authenticated Codex plans and reviews with read-only authority.
+# - NaN Qwen3.6 handles bounded mechanical implementation through OpenCode.
+# - NaN DeepSeek V4 Flash handles economical semantic/cross-file work.
+# - NaN GLM 5.2 is a distinct writable frontier fallback for protected work.
+#
+# NaN documents GLM 5.2 as a premium-tier model for coding and long-horizon
+# agentic tasks. Account access, tool behavior and quality are still not
+# implied by this example: qualify this exact provider/model/harness/parser,
+# guidance, tool bundle, policy, sandbox and platform before activation.
+# Credentials stay outside the repository behind their respective host stores
+# and provider gateway. See ../docs/operator-golden-path-v4.md.
+schemaVersion: 4
+id: nan-opencode-glm-premium-chatgpt-subscription-2026-08
+bindings:
+  orchestrator:
+    harness: codex
+    provider: openai
+    model: gpt-5.6-sol
+    tier: frontier
+    authentication: chatgpt-subscription
+    capability: planning
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+    guidance: &sol_guidance
+      id: openai-sol-current
+      revision: official-2026-08-16
+      sourceUrls: [https://developers.openai.com/api/docs/guides/latest-model]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: high
+      textVerbosity: low
+      temperature: null
+      maxSteps: 64
+      instructions:
+        - Keep prompts lean and preserve explicit constraints, required evidence, and success criteria.
+  executor:
+    harness: opencode
+    provider: nan
+    model: qwen3.6
+    tier: economy
+    authentication: provider-api-key
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized]
+      maxSteps: 24
+      maxToolUses: 48
+      maxNoMutationSteps: 5
+      timeoutSeconds: 240
+      supportsFailedCandidateRepair: false
+    guidance:
+      id: qwen3p6-nan
+      revision: nan-api-2026-08-21
+      sourceUrls: [https://nan.builders/docs/api, https://nan.builders/docs/models]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: provider-default
+      textVerbosity: low
+      temperature: null
+      maxSteps: 32
+      instructions:
+        - Use direct tool calls, keep edits minimal, and stop after the contract and validation are satisfied.
+  reasoningExecutor:
+    harness: opencode
+    provider: nan
+    model: deepseek-v4-flash
+    tier: economy
+    authentication: provider-api-key
+    capability: semantic-coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+    execution: &deepseek_execution
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning]
+      maxSteps: 40
+      maxToolUses: 80
+      maxNoMutationSteps: 8
+      timeoutSeconds: 420
+      supportsFailedCandidateRepair: false
+    guidance: &deepseek_guidance
+      id: deepseek-v4-flash-nan
+      revision: nan-api-2026-08-21
+      sourceUrls: [https://nan.builders/docs/api, https://nan.builders/docs/models]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: provider-default
+      textVerbosity: low
+      temperature: null
+      maxSteps: 48
+      instructions:
+        - Inspect the relevant code and validation evidence before editing; keep the change inside the frozen contract.
+  escalationExecutor:
+    harness: opencode
+    provider: nan
+    model: deepseek-v4-flash
+    tier: economy
+    authentication: provider-api-key
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+    execution: *deepseek_execution
+    guidance: *deepseek_guidance
+  frontierExecutor:
+    harness: opencode
+    provider: nan
+    model: glm5.2
+    tier: frontier
+    authentication: provider-api-key
+    capability: frontier-coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning, long-horizon, architecture, security-sensitive, migration]
+      maxSteps: 64
+      maxToolUses: 128
+      maxNoMutationSteps: 12
+      timeoutSeconds: 600
+      supportsFailedCandidateRepair: false
+    guidance:
+      id: glm5p2-nan-premium
+      revision: nan-api-2026-08-21
+      sourceUrls: [https://nan.builders/docs/api, https://nan.builders/docs/models]
+      promptFormat: markdown
+      contextPlacement: before-task
+      reasoningEffort: provider-default
+      textVerbosity: low
+      temperature: null
+      maxSteps: 64
+      instructions:
+        - Reconstruct the task from the frozen contract and evidence, use tools directly, and satisfy deterministic validation without expanding authority.
+  reviewer:
+    harness: codex
+    provider: openai
+    model: gpt-5.6-sol
+    tier: frontier
+    authentication: chatgpt-subscription
+    capability: review
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC, PRIVATE]
+    permissions: read-only
+    guidance: *sol_guidance
+runtime:
+  maxEconomyParallelRequests: 1
+  maxConcurrentRunsPerRepository: 1
