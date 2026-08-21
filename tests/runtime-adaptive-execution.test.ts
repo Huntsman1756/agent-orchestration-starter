@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { resolveAdaptiveExecutionPolicyV4, verifyRuntimeExecutionPolicyV4 } from '../src/runtime/adaptive-execution.js';
+import { createRuntimeBindingHealthObservationV4, evaluateRuntimeBindingHealthV4 } from '../src/runtime/binding-health.js';
+import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import type { RuntimeProfileV4, RuntimeTaskRequestV4 } from '../src/runtime/contracts.js';
 import { validRuntimeProfile, validTaskRequest } from './runtime-contracts.test.js';
 
@@ -78,4 +80,26 @@ test('legacy task classes retain deterministic conservative classification', () 
 test('rejects a budget changed after the broker bound the execution policy', () => {
   const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['mechanical']), profile: profile(), sourceSensitivity: 'PUBLIC' });
   assert.throws(() => verifyRuntimeExecutionPolicyV4({ ...policy, maxSteps: policy.maxSteps + 1 }), /policy hash is invalid/);
+});
+
+test('automatically contracts routing away from a quarantined exact binding', () => {
+  const value = profile();
+  value.bindings.reasoningExecutor = {
+    ...value.bindings.reasoningExecutor!,
+    execution: { ...value.bindings.reasoningExecutor!.execution!, supportedTaskTraits: ['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal'] },
+  };
+  const bindingHash = hashCanonicalV4(value.bindings.executor);
+  const observations = ['2026-08-21T10:00:00.000Z', '2026-08-21T10:01:00.000Z'].map((recordedAt, index) => createRuntimeBindingHealthObservationV4({
+    schemaVersion: 4,
+    observationId: `health_failure_${index}`,
+    bindingHash,
+    taskTrait: 'mechanical',
+    recordedAt,
+    outcome: 'INVALID_OUTPUT',
+  }));
+  const snapshot = evaluateRuntimeBindingHealthV4({ bindingHash, taskTrait: 'mechanical', observations, evaluatedAt: '2026-08-21T10:01:01.000Z' });
+  const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['mechanical']), profile: value, sourceSensitivity: 'PUBLIC', bindingHealth: [snapshot] });
+  assert.equal(policy.executorRole, 'reasoningExecutor');
+  assert.ok(policy.reasons.some((reason) => reason.includes('quarantined')));
+  assert.deepEqual(policy.healthEvidenceHashes, [snapshot.snapshotHash]);
 });

@@ -29,6 +29,11 @@ qualified worker, semantic/cross-file work can use a distinct economical
 reasoning worker, and unsupported or high-risk work elevates to frontier. The
 broker hashes per-run step, tool, mutation-latency, timeout, attempt and repair
 limits into the contract; see [adaptive execution](docs/adaptive-execution-v4.md).
+Broker-owned health snapshots now remember failures per exact binding and task
+trait. Repeated failure automatically quarantines only that pair and contracts
+the next route to a qualified reasoning/frontier worker; recovery requires
+cooldown plus clean canaries. Models cannot alter this evidence or promote
+themselves.
 
 ## Status
 

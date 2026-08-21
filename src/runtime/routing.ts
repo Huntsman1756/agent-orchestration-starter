@@ -6,6 +6,7 @@ import type { FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import type { RegisteredRepositoryV4 } from './repository-registry.js';
 import { analyzeRuntimeRouteCoverageV4, type RuntimeRouteCoverageV4 } from './readiness.js';
 import { resolveAdaptiveExecutionPolicyV4 } from './adaptive-execution.js';
+import type { RuntimeBindingHealthSnapshotV4 } from './binding-health.js';
 
 const requestedRank = { AUTO: 0, ECONOMY: 1, FRONTIER: 2 } as const;
 
@@ -22,6 +23,7 @@ export interface DeriveWorkContractInputV4 {
   profile: RuntimeProfileV4;
   base_sha: string;
   sandbox_profiles: Readonly<Record<string, unknown>>;
+  binding_health?: readonly RuntimeBindingHealthSnapshotV4[];
 }
 
 function policyRouteReasons(input: DeriveWorkContractInputV4): string[] {
@@ -78,6 +80,7 @@ export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWor
     profile: input.profile,
     sourceSensitivity: input.policy.policy.sourcePolicy.sourceSensitivity,
     forceFrontier: route === 'FRONTIER',
+    bindingHealth: input.binding_health,
   });
   route = executionPolicy.lane === 'FRONTIER_EXECUTION' ? 'FRONTIER' : 'ECONOMY';
   if (executionPolicy.reasons.some((reason) => reason.includes('lack the required'))) routeReasons.push(...executionPolicy.reasons.filter((reason) => reason.includes('lack the required')));

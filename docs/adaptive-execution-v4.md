@@ -24,6 +24,46 @@ Use `aggregateRuntimeExecutionEfficiencyV4` over every scheduled run. It counts 
 
 Low API consumption is not itself proof of a defect: policy may be routing work to frontier, source sensitivity may make the economical binding ineligible, or the host may not be invoking the generated route. Diagnose with the contract's lane, executor role, reasons and policy hash before changing limits.
 
+## Self-regulation from failures
+
+`RuntimeBindingHealthV4` closes the admission-time feedback loop for the exact
+`bindingHash x taskTrait` pair. The trusted host records bounded, self-hashed
+outcomes such as invalid output, validation/review failure, budget exhaustion,
+provider unavailability, authority violation and false acceptance. It reduces
+those observations into a hash-bound health snapshot and supplies the snapshot
+to the broker when the next task is admitted.
+
+The default policy quarantines an exact pair after two consecutive failures,
+after more than 40% failures in a 20-observation window with at least five
+observations, or immediately after authority violation/false acceptance. A
+quarantined mechanical worker is skipped in favour of an already-qualified
+reasoning worker or frontier; a quarantined reasoning worker elevates to
+frontier. If frontier is quarantined for that trait, admission fails closed.
+
+Recovery is deliberately asymmetric. Cooldown only makes the pair eligible for
+an explicit synthetic canary. Three clean canaries are required before normal
+routing resumes. Ordinary successful tasks cannot erase quarantine evidence.
+The model cannot write observations, change thresholds, classify its own run as
+a canary or promote itself. Automatic adaptation may only contract routing;
+expanding traits, permissions, limits or authority still requires a changed
+profile, fresh qualification and human-controlled evidence review.
+
+The host health store should contain only identifiers, timestamps, outcomes and
+hashes. Do not retain prompts, reasoning, source, diffs, responses or secrets.
+Keep health per exact binding and task trait: failure on mechanical formatting
+must not silently disqualify an otherwise independent semantic binding, and a
+model/provider/harness/guidance change creates a new binding identity.
+
+This loop is automatic only when the privileged host does both sides of the
+port: record a terminal observation from validation/review evidence and return
+the current snapshots through `loadBindingHealth` at admission. A host that
+does not implement that port remains safely static; it must not claim adaptive
+routing. Persist observations durably and append-only, derive canary identity
+from broker-owned scheduling, and alert on quarantine, canary failure and
+frontier fail-closed decisions. These records show where delegation needs
+better decomposition, guidance or qualification; they are not model training
+data and never justify silent expansion of a capability envelope.
+
 ## Model replacement checklist
 
 1. Add or replace only profile bindings; do not add model names to repository policy or core routing.

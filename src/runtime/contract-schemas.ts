@@ -233,6 +233,7 @@ export const runtimeWorkContractV4Schema = z.object({
     maxAttempts: z.number().int().min(1).max(3),
     repairBase: z.enum(['LAST_ACCEPTED_TREE', 'FAILED_CANDIDATE_TREE']),
     reasons: z.array(z.string().min(1).max(2_000)).min(1).max(16),
+    healthEvidenceHashes: uniqueArray(hashSchema, { max: 128 }).optional(),
     policyHash: hashSchema,
   }).strict().optional(),
   effective_data_scope: dataScopeSchema,
