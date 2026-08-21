@@ -39,15 +39,24 @@ export interface CapabilityProbeInputV4 {
   readonly run_probe: (iteration: number) => Promise<CapabilityProbeEvidenceV4>;
 }
 
-function unverified(message: string): never { throw new Error(`CAPABILITY_UNVERIFIED: ${message}`); }
-function validHash(value: string): boolean { return /^[a-f0-9]{64}$/.test(value); }
+function unverified(message: string): never {
+  throw new Error(`CAPABILITY_UNVERIFIED: ${message}`);
+}
+function validHash(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
 
 function validateIdentity(identity: CapabilityIdentityV4): void {
-  if (!validHash(identity.profile_hash) || !validHash(identity.agent_policy_hash)
-    || !/^[a-z][a-z0-9_-]{0,63}$/.test(identity.harness)
-    || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(identity.harness_version)
-    || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(identity.broker_version)
-    || !Number.isSafeInteger(identity.probe_version) || identity.probe_version < 1) unverified('capability identity is invalid');
+  if (
+    !validHash(identity.profile_hash) ||
+    !validHash(identity.agent_policy_hash) ||
+    !/^[a-z][a-z0-9_-]{0,63}$/.test(identity.harness) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(identity.harness_version) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(identity.broker_version) ||
+    !Number.isSafeInteger(identity.probe_version) ||
+    identity.probe_version < 1
+  )
+    unverified('capability identity is invalid');
 }
 
 export async function probeRuntimeBinding(input: CapabilityProbeInputV4): Promise<CapabilityRecordV4> {
@@ -59,9 +68,17 @@ export async function probeRuntimeBinding(input: CapabilityProbeInputV4): Promis
   const runs: CapabilityProbeEvidenceV4[] = [];
   for (let iteration = 0; iteration < 3; iteration += 1) {
     const evidence = await input.run_probe(iteration);
-    if (!evidence.structured_result || !evidence.exact_bounded_edit || !evidence.multi_step_file_tools
-      || !evidence.repair_from_validation_evidence || !evidence.capsule_only || !evidence.credential_separation
-      || !evidence.tool_network_denied || evidence.shell_used || !validHash(evidence.transcript_hash)) {
+    if (
+      !evidence.structured_result ||
+      !evidence.exact_bounded_edit ||
+      !evidence.multi_step_file_tools ||
+      !evidence.repair_from_validation_evidence ||
+      !evidence.capsule_only ||
+      !evidence.credential_separation ||
+      !evidence.tool_network_denied ||
+      evidence.shell_used ||
+      !validHash(evidence.transcript_hash)
+    ) {
       unverified('probe did not demonstrate every required capability');
     }
     runs.push(Object.freeze({ ...evidence }));
@@ -83,12 +100,25 @@ export async function probeRuntimeBinding(input: CapabilityProbeInputV4): Promis
 
 export function assertFreshCapability(record: CapabilityRecordV4, expected: CapabilityIdentityV4, now = new Date().toISOString()): void {
   validateIdentity(expected);
-  const evidenceHash = hashCanonicalV4({ schema_version: 4, identity: record.identity, probe_evidence_hashes: record.probe_evidence_hashes });
-  if (record.schema_version !== 4 || record.status !== 'VERIFIED' || record.clean_runs !== 3
-    || record.probe_evidence_hashes.length !== 3 || !record.probe_evidence_hashes.every(validHash)
-    || record.evidence_hash !== evidenceHash || hashCanonicalV4(record.identity) !== hashCanonicalV4(expected)
-    || !Number.isFinite(Date.parse(record.probed_at)) || !Number.isFinite(Date.parse(record.expires_at))
-    || !Number.isFinite(Date.parse(now)) || Date.parse(record.expires_at) <= Date.parse(now) || Date.parse(record.probed_at) > Date.parse(now)) {
+  const evidenceHash = hashCanonicalV4({
+    schema_version: 4,
+    identity: record.identity,
+    probe_evidence_hashes: record.probe_evidence_hashes,
+  });
+  if (
+    record.schema_version !== 4 ||
+    record.status !== 'VERIFIED' ||
+    record.clean_runs !== 3 ||
+    record.probe_evidence_hashes.length !== 3 ||
+    !record.probe_evidence_hashes.every(validHash) ||
+    record.evidence_hash !== evidenceHash ||
+    hashCanonicalV4(record.identity) !== hashCanonicalV4(expected) ||
+    !Number.isFinite(Date.parse(record.probed_at)) ||
+    !Number.isFinite(Date.parse(record.expires_at)) ||
+    !Number.isFinite(Date.parse(now)) ||
+    Date.parse(record.expires_at) <= Date.parse(now) ||
+    Date.parse(record.probed_at) > Date.parse(now)
+  ) {
     unverified('qualification record is stale or does not match the selected binding');
   }
 }

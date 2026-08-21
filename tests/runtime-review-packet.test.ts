@@ -36,7 +36,10 @@ test('builds and reloads a review packet bound to deterministic evidence', () =>
   assert.equal(packet.packet_hash.length, 64);
   assert.equal(packet.capability_snapshot_hash, 'a'.repeat(64));
   assert.deepEqual(loadBrokerReviewPacketV4(packet), packet);
-  const verdict = createBrokerVerdictRecord({ run_id: packet.run_id, packet_hash: packet.packet_hash, verdict: 'APPROVED', reason: 'The deterministic evidence is complete.' }, packet);
+  const verdict = createBrokerVerdictRecord(
+    { run_id: packet.run_id, packet_hash: packet.packet_hash, verdict: 'APPROVED', reason: 'The deterministic evidence is complete.' },
+    packet,
+  );
   assert.equal(verdict.review_packet_hash, packet.packet_hash);
   assert.equal(verdict.capability_snapshot_hash, packet.capability_snapshot_hash);
   assert.equal(verdict.verdict_hash.length, 64);
@@ -44,7 +47,15 @@ test('builds and reloads a review packet bound to deterministic evidence', () =>
 
 test('refuses packets with unresolved findings or forged evidence bindings', () => {
   const workContract = contract();
-  const result = { ...validRuntimeResult(), state: 'REVIEW_ACCEPTED', contract_hash: workContract.contract_hash, diff_hash: 'c'.repeat(64), tree_hash: 'd'.repeat(64), changed_files: ['src/greeting.ts'], validation_results: [{ validation_id: 'test', exit_code: 0, result_hash: 'e'.repeat(64) }] } as any;
+  const result = {
+    ...validRuntimeResult(),
+    state: 'REVIEW_ACCEPTED',
+    contract_hash: workContract.contract_hash,
+    diff_hash: 'c'.repeat(64),
+    tree_hash: 'd'.repeat(64),
+    changed_files: ['src/greeting.ts'],
+    validation_results: [{ validation_id: 'test', exit_code: 0, result_hash: 'e'.repeat(64) }],
+  } as any;
   const envelope = buildReviewEnvelope({
     contract: workContract as any,
     complete_diff: 'diff',
@@ -66,6 +77,16 @@ test('refuses packets with unresolved findings or forged evidence bindings', () 
     validation_results: [{ validation_id: 'test', passed: true, result_hash: 'e'.repeat(64), validated_tree_hash: result.tree_hash }],
     unresolved_findings: [],
   });
-  assert.throws(() => buildBrokerReviewPacket({ result: { ...result, tree_hash: 'f'.repeat(64) }, envelope: cleanEnvelope }), /REVIEW_PACKET_INVALID/);
-  assert.throws(() => buildBrokerReviewPacket({ result: { ...result, validation_results: [{ validation_id: 'lint', exit_code: 1, result_hash: 'e'.repeat(64) }] }, envelope: cleanEnvelope }), /REVIEW_PACKET_INVALID/);
+  assert.throws(
+    () => buildBrokerReviewPacket({ result: { ...result, tree_hash: 'f'.repeat(64) }, envelope: cleanEnvelope }),
+    /REVIEW_PACKET_INVALID/,
+  );
+  assert.throws(
+    () =>
+      buildBrokerReviewPacket({
+        result: { ...result, validation_results: [{ validation_id: 'lint', exit_code: 1, result_hash: 'e'.repeat(64) }] },
+        envelope: cleanEnvelope,
+      }),
+    /REVIEW_PACKET_INVALID/,
+  );
 });

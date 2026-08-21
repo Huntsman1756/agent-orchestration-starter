@@ -23,10 +23,11 @@ test('rejects reuse of a request ID for different canonical bytes', () => {
 
 test('rejects duplicate accepted request records that disagree during replay', () => {
   assert.throws(
-    () => replayRequestIndexV4([
-      { request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', request_hash: 'a'.repeat(64), run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1' },
-      { request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', request_hash: 'b'.repeat(64), run_id: 'run_DIFFERENT000000000000' },
-    ]),
+    () =>
+      replayRequestIndexV4([
+        { request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', request_hash: 'a'.repeat(64), run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1' },
+        { request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1', request_hash: 'b'.repeat(64), run_id: 'run_DIFFERENT000000000000' },
+      ]),
     /BROKER_STATE_CORRUPT/,
   );
 });

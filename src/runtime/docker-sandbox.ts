@@ -38,23 +38,47 @@ export interface DockerSandboxConfigV4 {
 }
 
 export const DOCKER_ISOLATION_ARGS_V4 = Object.freeze([
-  'run', '--rm', '--read-only', '--cap-drop=ALL',
-  '--security-opt=no-new-privileges', '--pids-limit=64',
-  '--memory=1024m', '--cpus=2', '--user=1000:1000',
+  'run',
+  '--rm',
+  '--read-only',
+  '--cap-drop=ALL',
+  '--security-opt=no-new-privileges',
+  '--pids-limit=64',
+  '--memory=1024m',
+  '--cpus=2',
+  '--user=1000:1000',
   '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=256m',
   '--network=none',
 ] as const);
 
 const commonEnvironmentKeys = new Set([
-  'HOME', 'USERPROFILE', 'TMPDIR', 'TMP', 'TEMP', 'PATH', 'LANG', 'LC_ALL', 'NO_COLOR',
-  'AO_EXECUTION_ID', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME',
+  'HOME',
+  'USERPROFILE',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'PATH',
+  'LANG',
+  'LC_ALL',
+  'NO_COLOR',
+  'AO_EXECUTION_ID',
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_DIR',
+  'XDG_CACHE_HOME',
+  'XDG_CONFIG_HOME',
 ]);
-const networkedProfiles = new Set<SandboxProfileV4>([
-  'EXECUTOR_NETWORKED', 'FRONTIER_NETWORKED', 'REVIEW_CAPSULE',
-]);
+const networkedProfiles = new Set<SandboxProfileV4>(['EXECUTOR_NETWORKED', 'FRONTIER_NETWORKED', 'REVIEW_CAPSULE']);
 const credentialLocations = [
-  '.ssh', '.aws', '.azure', '.config', '.docker', '.codex', '.gnupg', '.kube',
-  '.git-credentials', '.npmrc',
+  '.ssh',
+  '.aws',
+  '.azure',
+  '.config',
+  '.docker',
+  '.codex',
+  '.gnupg',
+  '.kube',
+  '.git-credentials',
+  '.npmrc',
   join('AppData', 'Roaming', 'opencode'),
   join('AppData', 'Roaming', 'codex'),
 ];
@@ -73,26 +97,41 @@ function overlaps(left: string, right: string): boolean {
 }
 
 export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): void {
-  if (!isAbsolute(config.docker_executable)
-    || resolve(config.docker_executable) !== config.docker_executable
-    || !/^docker(?:\.exe)?$/i.test(basename(config.docker_executable))
-    || config.docker_executable.includes('\0')) unavailable();
+  if (
+    !isAbsolute(config.docker_executable) ||
+    resolve(config.docker_executable) !== config.docker_executable ||
+    !/^docker(?:\.exe)?$/i.test(basename(config.docker_executable)) ||
+    config.docker_executable.includes('\0')
+  )
+    unavailable();
   if (!/^sha256:[a-f0-9]{64}$/.test(config.image_id)) unavailable();
-  if (!Number.isSafeInteger(config.certification_ttl_seconds)
-    || config.certification_ttl_seconds < 1
-    || config.certification_ttl_seconds > 900) unavailable();
+  if (
+    !Number.isSafeInteger(config.certification_ttl_seconds) ||
+    config.certification_ttl_seconds < 1 ||
+    config.certification_ttl_seconds > 900
+  )
+    unavailable();
   if (config.provider_hosts.length < 1 || config.provider_hosts.length > 16) unavailable();
   const providerHosts = new Set<string>();
   for (const host of config.provider_hosts) {
-    if (host.length > 253 || host !== host.toLowerCase() || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) || providerHosts.has(host)) unavailable();
+    if (
+      host.length > 253 ||
+      host !== host.toLowerCase() ||
+      !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host) ||
+      providerHosts.has(host)
+    )
+      unavailable();
     providerHosts.add(host);
   }
-  if (config.allowed_mount_roots.length === 0
-    || config.allowed_mount_roots.length > 16
-    || !isAbsolute(config.active_worktree)
-    || !isAbsolute(config.broker_state_directory)
-    || config.active_worktree.includes('\0')
-    || config.broker_state_directory.includes('\0')) unavailable();
+  if (
+    config.allowed_mount_roots.length === 0 ||
+    config.allowed_mount_roots.length > 16 ||
+    !isAbsolute(config.active_worktree) ||
+    !isAbsolute(config.broker_state_directory) ||
+    config.active_worktree.includes('\0') ||
+    config.broker_state_directory.includes('\0')
+  )
+    unavailable();
   const roots = new Set<string>();
   for (const root of config.allowed_mount_roots) {
     if (!isAbsolute(root) || root.includes('\0') || root.includes(',') || resolve(root) !== root || roots.has(root)) unavailable();
@@ -103,10 +142,17 @@ export function validateDockerSandboxConfigV4(config: DockerSandboxConfigV4): vo
 export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4): void {
   validateDockerSandboxConfigV4(config);
   if (!/^exec_[a-z0-9_-]{8,96}$/.test(request.execution_id)) unavailable();
-  if (request.argv.length === 0 || request.argv.length > 128 || request.argv.some((part) => part.length === 0 || part.length > 8_192 || part.includes('\0'))) unavailable();
-  if (!/^\/(capsule|workspace|scratch)(?:\/[^.][^\0]*)?$/.test(request.working_directory) || request.working_directory.includes('/../')) unavailable();
+  if (
+    request.argv.length === 0 ||
+    request.argv.length > 128 ||
+    request.argv.some((part) => part.length === 0 || part.length > 8_192 || part.includes('\0'))
+  )
+    unavailable();
+  if (!/^\/(capsule|workspace|scratch)(?:\/[^.][^\0]*)?$/.test(request.working_directory) || request.working_directory.includes('/../'))
+    unavailable();
   if (!Number.isSafeInteger(request.timeout_ms) || request.timeout_ms < 1 || request.timeout_ms > 3_600_000) unavailable();
-  if (!Number.isSafeInteger(request.max_output_bytes) || request.max_output_bytes < 1 || request.max_output_bytes > 16 * 1024 * 1024) unavailable();
+  if (!Number.isSafeInteger(request.max_output_bytes) || request.max_output_bytes < 1 || request.max_output_bytes > 16 * 1024 * 1024)
+    unavailable();
 
   const networked = networkedProfiles.has(request.profile);
   if (!networked && request.network.mode !== 'NONE') unavailable();
@@ -120,20 +166,26 @@ export function validateDockerSandboxRequestV4(config: DockerSandboxConfigV4, re
 
   const targets = new Set<string>();
   for (const mount of request.mounts) {
-    if (!isAbsolute(mount.source)
-      || resolve(mount.source) !== mount.source
-      || mount.source.includes('\0')
-      || mount.source.includes(',')
-      || !(['/capsule', '/capsule/repo', '/workspace', '/scratch'] as const).includes(mount.target)
-      || !(['READ_ONLY', 'READ_WRITE'] as const).includes(mount.access)) unavailable();
+    if (
+      !isAbsolute(mount.source) ||
+      resolve(mount.source) !== mount.source ||
+      mount.source.includes('\0') ||
+      mount.source.includes(',') ||
+      !(['/capsule', '/capsule/repo', '/workspace', '/scratch'] as const).includes(mount.target) ||
+      !(['READ_ONLY', 'READ_WRITE'] as const).includes(mount.access)
+    )
+      unavailable();
     if (targets.has(mount.target)) unavailable();
     targets.add(mount.target);
     const normalized = mount.source.replaceAll('\\', '/').toLowerCase();
     if (normalized === '/var/run/docker.sock' || normalized.endsWith('/docker.sock')) unavailable();
     if (!config.allowed_mount_roots.some((root) => isWithin(root, mount.source))) unavailable();
-    if (overlaps(mount.source, homedir())
-      || overlaps(mount.source, config.active_worktree)
-      || overlaps(mount.source, config.broker_state_directory)) unavailable();
+    if (
+      overlaps(mount.source, homedir()) ||
+      overlaps(mount.source, config.active_worktree) ||
+      overlaps(mount.source, config.broker_state_directory)
+    )
+      unavailable();
     if (credentialLocations.some((location) => overlaps(join(homedir(), location), mount.source))) unavailable();
   }
 }
@@ -231,10 +283,13 @@ export async function reproveDockerSandboxMountsV4(
   proof: DockerSandboxMountProofV4,
 ): Promise<void> {
   validateDockerSandboxRequestV4(config, request);
-  if (!issuedMountProofs.has(proof)
-    || proof.request_hash !== mountRequestHashV4(request)
-    || proof.policy_hash !== mountPolicyHashV4(config)
-    || proof.sources.length !== request.mounts.length) unavailable();
+  if (
+    !issuedMountProofs.has(proof) ||
+    proof.request_hash !== mountRequestHashV4(request) ||
+    proof.policy_hash !== mountPolicyHashV4(config) ||
+    proof.sources.length !== request.mounts.length
+  )
+    unavailable();
   const current = await Promise.all(request.mounts.map(async (mount) => await inspectPhysicalSourceV4(mount.source)));
   if (hashCanonicalV4(current) !== hashCanonicalV4(proof.sources)) unavailable();
 }
@@ -365,9 +420,12 @@ async function runDockerCliV4(
 }
 
 async function exactContainerIdPresentV4(config: DockerSandboxConfigV4, containerId: string, signal?: AbortSignal): Promise<boolean> {
-  const result = await runDockerCliV4(config.docker_executable, [
-    'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
-  ], 4_096, { command_class: 'CONTROL', signal }).catch(() => unavailable());
+  const result = await runDockerCliV4(
+    config.docker_executable,
+    ['container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}'],
+    4_096,
+    { command_class: 'CONTROL', signal },
+  ).catch(() => unavailable());
   if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) unavailable();
   const output = result.stdout.trim();
   if (output === '') return false;
@@ -380,10 +438,7 @@ function removalControllerV4(config: DockerSandboxConfigV4, containerId: string)
     inspect_exact_id: async (id) => await exactContainerIdPresentV4(config, id),
     force_remove_exact_id: async (id) => {
       const result = await runDockerCliV4(config.docker_executable, ['rm', '--force', id], 4_096).catch(() => unavailable());
-      if (result.exitCode !== 0
-        || result.stdoutTruncated
-        || result.stderrTruncated
-        || result.stdout.trim() !== id) unavailable();
+      if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated || result.stdout.trim() !== id) unavailable();
     },
     poll_interval_ms: 25,
     absence_timeout_ms: 5_000,
@@ -406,16 +461,20 @@ function environmentArgs(request: SandboxRunRequestV4): string[] {
 async function assertInternalNetworkV4(config: DockerSandboxConfigV4, request: SandboxRunRequestV4, signal?: AbortSignal): Promise<void> {
   if (request.network.mode !== 'INTERNAL') unavailable();
   const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', request.network.name], 256 * 1024, {
-    command_class: 'NETWORK', signal,
+    command_class: 'NETWORK',
+    signal,
   }).catch(() => unavailable());
   if (inspected.exitCode !== 0 || inspected.stdoutTruncated) unavailable();
   try {
     const value = JSON.parse(inspected.stdout) as Array<{ Driver?: unknown; Internal?: unknown; Labels?: Record<string, string> }>;
     const network = value[0];
-    if (value.length !== 1
-      || network?.Driver !== 'bridge'
-      || network.Internal !== true
-      || network.Labels?.['agent-orchestration.execution'] !== request.execution_id) unavailable();
+    if (
+      value.length !== 1 ||
+      network?.Driver !== 'bridge' ||
+      network.Internal !== true ||
+      network.Labels?.['agent-orchestration.execution'] !== request.execution_id
+    )
+      unavailable();
   } catch {
     unavailable();
   }
@@ -476,7 +535,9 @@ interface DockerExecutionLifecycleV4 {
 
 function createDockerExecutionLifecycleV4(): DockerExecutionLifecycleV4 {
   let settle!: () => void;
-  const settled = new Promise<void>((resolvePromise) => { settle = resolvePromise; });
+  const settled = new Promise<void>((resolvePromise) => {
+    settle = resolvePromise;
+  });
   return { cancelled: false, controller: null, cleanup_error: null, abort_controller: new AbortController(), settled, settle };
 }
 
@@ -498,11 +559,12 @@ async function recoverCreatedContainerV4(
   request: SandboxRunRequestV4,
   authority: DockerCreateAuthorityV4,
 ): Promise<DockerContainerRemovalControllerV4 | null> {
-  const listed = await runDockerCliV4(config.docker_executable, [
-    'container', 'ls', '--all', '--no-trunc',
-    `--filter=label=agent-orchestration.nonce=${authority.nonce}`,
-    '--format', '{{.ID}}',
-  ], 4_096, { command_class: 'CLEANUP' }).catch(() => unavailable());
+  const listed = await runDockerCliV4(
+    config.docker_executable,
+    ['container', 'ls', '--all', '--no-trunc', `--filter=label=agent-orchestration.nonce=${authority.nonce}`, '--format', '{{.ID}}'],
+    4_096,
+    { command_class: 'CLEANUP' },
+  ).catch(() => unavailable());
   if (listed.exitCode !== 0 || listed.stdoutTruncated || listed.stderrTruncated) unavailable();
   const ids = listed.stdout.trim().split('\n').filter(Boolean);
   if (ids.length === 0) return null;
@@ -518,12 +580,15 @@ async function recoverCreatedContainerV4(
       Config?: { Image?: unknown; Labels?: Record<string, string> };
     }>;
     const value = values[0];
-    if (values.length !== 1
-      || value?.Id !== containerId
-      || value.Config?.Image !== config.image_id
-      || value.Config?.Labels?.['agent-orchestration.execution'] !== request.execution_id
-      || value.Config.Labels['agent-orchestration.nonce'] !== authority.nonce
-      || value.Config.Labels['agent-orchestration.image'] !== config.image_id) unavailable();
+    if (
+      values.length !== 1 ||
+      value?.Id !== containerId ||
+      value.Config?.Image !== config.image_id ||
+      value.Config?.Labels?.['agent-orchestration.execution'] !== request.execution_id ||
+      value.Config.Labels['agent-orchestration.nonce'] !== authority.nonce ||
+      value.Config.Labels['agent-orchestration.image'] !== config.image_id
+    )
+      unavailable();
     return removalControllerV4(config, containerId);
   } catch {
     unavailable();
@@ -578,40 +643,47 @@ async function runDockerSandboxCandidateOwnedV4(
   if (lifecycle !== undefined) lifecycle.controller = removal;
   onController?.(removal);
   try {
-    if (!await exactContainerIdPresentV4(config, containerId, lifecycle?.abort_controller.signal)) unavailable();
+    if (!(await exactContainerIdPresentV4(config, containerId, lifecycle?.abort_controller.signal))) unavailable();
     await cancellationCheckpointV4(lifecycle);
     if (networkless) {
       await cancellationCheckpointV4(lifecycle);
       const result = await runAttachedContainerProcessV4(
-        config, request, removal, ['start', '--attach', containerId], lifecycle?.abort_controller.signal,
+        config,
+        request,
+        removal,
+        ['start', '--attach', containerId],
+        lifecycle?.abort_controller.signal,
       );
       await cancellationCheckpointV4(lifecycle);
       return result;
     }
     const disconnected = await runDockerCliV4(config.docker_executable, ['network', 'disconnect', 'none', containerId], 16_384, {
-      command_class: 'NETWORK', signal: lifecycle?.abort_controller.signal,
+      command_class: 'NETWORK',
+      signal: lifecycle?.abort_controller.signal,
     });
     await cancellationCheckpointV4(lifecycle);
     if (disconnected.exitCode !== 0) unavailable();
     const connected = await runDockerCliV4(config.docker_executable, ['network', 'connect', request.network.name, containerId], 16_384, {
-      command_class: 'NETWORK', signal: lifecycle?.abort_controller.signal,
+      command_class: 'NETWORK',
+      signal: lifecycle?.abort_controller.signal,
     });
     await cancellationCheckpointV4(lifecycle);
     if (connected.exitCode !== 0) unavailable();
     await cancellationCheckpointV4(lifecycle);
     const started = await runDockerCliV4(config.docker_executable, ['start', containerId], 16_384, {
-      command_class: 'CONTROL', signal: lifecycle?.abort_controller.signal,
+      command_class: 'CONTROL',
+      signal: lifecycle?.abort_controller.signal,
     });
     await cancellationCheckpointV4(lifecycle);
     if (started.exitCode !== 0 || started.stdout.trim() !== containerId) unavailable();
     await cancellationCheckpointV4(lifecycle);
-    const result = await runAttachedContainerProcessV4(config, request, removal, [
-      'exec',
-      `--workdir=${request.working_directory}`,
-      ...environmentArgs(request),
-      containerId,
-      ...request.argv,
-    ], lifecycle?.abort_controller.signal);
+    const result = await runAttachedContainerProcessV4(
+      config,
+      request,
+      removal,
+      ['exec', `--workdir=${request.working_directory}`, ...environmentArgs(request), containerId, ...request.argv],
+      lifecycle?.abort_controller.signal,
+    );
     await cancellationCheckpointV4(lifecycle);
     return result;
   } finally {
@@ -641,13 +713,16 @@ export async function inspectDockerSandboxIdentityV4(
   validateDockerSandboxConfigV4(config);
   const launcher = await registerOrReproveDockerLauncherV4(config.docker_executable, signal, config.broker_state_directory);
   const [serverOutput, imageOutput] = await Promise.all([
-    runDockerCliV4(config.docker_executable, ['info', '--format', '{{json .}}'], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
-    runDockerCliV4(config.docker_executable, ['image', 'inspect', config.image_id], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(() => unavailable()),
+    runDockerCliV4(config.docker_executable, ['info', '--format', '{{json .}}'], 1024 * 1024, { command_class: 'IDENTITY', signal }).catch(
+      () => unavailable(),
+    ),
+    runDockerCliV4(config.docker_executable, ['image', 'inspect', config.image_id], 1024 * 1024, {
+      command_class: 'IDENTITY',
+      signal,
+    }).catch(() => unavailable()),
   ]);
-  if (serverOutput.exitCode !== 0
-    || imageOutput.exitCode !== 0
-    || serverOutput.stdoutTruncated
-    || imageOutput.stdoutTruncated) unavailable();
+  if (serverOutput.exitCode !== 0 || imageOutput.exitCode !== 0 || serverOutput.stdoutTruncated || imageOutput.stdoutTruncated)
+    unavailable();
   try {
     const server = JSON.parse(serverOutput.stdout) as {
       ID?: unknown;
@@ -664,19 +739,22 @@ export async function inspectDockerSandboxIdentityV4(
     }>;
     const image = images[0];
     const securityOptions = Array.isArray(server.SecurityOptions) ? server.SecurityOptions : [];
-    if (typeof server.ID !== 'string'
-      || server.ID.length === 0
-      || typeof server.ServerVersion !== 'string'
-      || server.ServerVersion.length === 0
-      || server.OSType !== 'linux'
-      || typeof server.Architecture !== 'string'
-      || (server.CgroupVersion !== '1' && server.CgroupVersion !== '2')
-      || !securityOptions.some((option) => typeof option === 'string' && option.startsWith('name=seccomp'))
-      || !securityOptions.some((option) => typeof option === 'string' && option.startsWith('name=cgroupns'))
-      || images.length !== 1
-      || image?.Id !== config.image_id
-      || image.Os !== 'linux'
-      || typeof image.Architecture !== 'string') unavailable();
+    if (
+      typeof server.ID !== 'string' ||
+      server.ID.length === 0 ||
+      typeof server.ServerVersion !== 'string' ||
+      server.ServerVersion.length === 0 ||
+      server.OSType !== 'linux' ||
+      typeof server.Architecture !== 'string' ||
+      (server.CgroupVersion !== '1' && server.CgroupVersion !== '2') ||
+      !securityOptions.some((option) => typeof option === 'string' && option.startsWith('name=seccomp')) ||
+      !securityOptions.some((option) => typeof option === 'string' && option.startsWith('name=cgroupns')) ||
+      images.length !== 1 ||
+      image?.Id !== config.image_id ||
+      image.Os !== 'linux' ||
+      typeof image.Architecture !== 'string'
+    )
+      unavailable();
     const serverArchitecture = normalizedArchitecture(server.Architecture);
     const imageArchitecture = normalizedArchitecture(image.Architecture);
     const brokerArchitecture = normalizedArchitecture(process.arch);
@@ -702,11 +780,7 @@ export async function inspectDockerSandboxIdentityV4(
   }
 }
 
-async function requiredDockerOutputV4(
-  config: DockerSandboxConfigV4,
-  argv: readonly string[],
-  limit = 1024 * 1024,
-): Promise<string> {
+async function requiredDockerOutputV4(config: DockerSandboxConfigV4, argv: readonly string[], limit = 1024 * 1024): Promise<string> {
   const result = await runDockerCliV4(config.docker_executable, argv, limit).catch(() => unavailable());
   if (result.exitCode !== 0 || result.stdoutTruncated || result.stderrTruncated) unavailable();
   return result.stdout.trim();
@@ -716,15 +790,8 @@ export function isDockerNetworkSubnetOverlapV4(stderr: string): boolean {
   return /^Error response from daemon: (?:invalid pool request: )?Pool overlaps with other one on this address space\r?\n?$/.test(stderr);
 }
 
-export function isDockerNetworkAbsentV4(
-  networkId: string,
-  exitCode: number | null,
-  stdout: string,
-  stderr: string,
-): boolean {
-  return exitCode === 1
-    && stdout === '[]\n'
-    && stderr === `Error response from daemon: network ${networkId} not found\n`;
+export function isDockerNetworkAbsentV4(networkId: string, exitCode: number | null, stdout: string, stderr: string): boolean {
+  return exitCode === 1 && stdout === '[]\n' && stderr === `Error response from daemon: network ${networkId} not found\n`;
 }
 
 interface CertificationNetworkAuthorityV4 {
@@ -737,11 +804,14 @@ interface CertificationNetworkAuthorityV4 {
   readonly subnet?: string;
 }
 
-const pendingCertificationNetworkCleanupV4 = new Map<string, {
-  readonly config: DockerSandboxConfigV4;
-  readonly network_id: string;
-  readonly authority: CertificationNetworkAuthorityV4;
-}>();
+const pendingCertificationNetworkCleanupV4 = new Map<
+  string,
+  {
+    readonly config: DockerSandboxConfigV4;
+    readonly network_id: string;
+    readonly authority: CertificationNetworkAuthorityV4;
+  }
+>();
 
 function certificationNetworkCleanupKeyV4(config: DockerSandboxConfigV4, networkId: string): string {
   return `${config.docker_executable}\0${networkId}`;
@@ -752,10 +822,11 @@ function retainCertificationNetworkCleanupV4(
   networkId: string,
   authority: CertificationNetworkAuthorityV4,
 ): void {
-  pendingCertificationNetworkCleanupV4.set(
-    certificationNetworkCleanupKeyV4(config, networkId),
-    { config, network_id: networkId, authority },
-  );
+  pendingCertificationNetworkCleanupV4.set(certificationNetworkCleanupKeyV4(config, networkId), {
+    config,
+    network_id: networkId,
+    authority,
+  });
 }
 
 async function retryPendingCertificationNetworkCleanupV4(config: DockerSandboxConfigV4): Promise<void> {
@@ -770,20 +841,31 @@ async function recoverCertificationNetworkV4(
   config: DockerSandboxConfigV4,
   authority: CertificationNetworkAuthorityV4,
 ): Promise<string | null> {
-  const listed = await runDockerCliV4(config.docker_executable, [
-    'network', 'ls', '--no-trunc',
-    '--filter', `label=agent-orchestration.execution=${authority.execution_id}`,
-    '--filter', `label=agent-orchestration.nonce=${authority.nonce}`,
-    '--filter', `label=agent-orchestration.network-kind=${authority.kind}`,
-    '--format', '{{.ID}}',
-  ], 16_384, { command_class: 'NETWORK' });
+  const listed = await runDockerCliV4(
+    config.docker_executable,
+    [
+      'network',
+      'ls',
+      '--no-trunc',
+      '--filter',
+      `label=agent-orchestration.execution=${authority.execution_id}`,
+      '--filter',
+      `label=agent-orchestration.nonce=${authority.nonce}`,
+      '--filter',
+      `label=agent-orchestration.network-kind=${authority.kind}`,
+      '--format',
+      '{{.ID}}',
+    ],
+    16_384,
+    { command_class: 'NETWORK' },
+  );
   if (listed.exitCode !== 0 || listed.stdoutTruncated || listed.stderrTruncated) unavailable();
   const ids = listed.stdout.trim().split('\n').filter(Boolean);
   if (ids.length === 0) return null;
   if (ids.length !== 1 || !/^[a-f0-9]{64}$/.test(ids[0]!)) unavailable();
 
   const networkId = ids[0]!;
-  if (await inspectCertificationNetworkV4(config, authority, networkId) !== true) unavailable();
+  if ((await inspectCertificationNetworkV4(config, authority, networkId)) !== true) unavailable();
   return networkId;
 }
 
@@ -792,12 +874,9 @@ async function inspectCertificationNetworkV4(
   authority: CertificationNetworkAuthorityV4,
   networkId: string,
 ): Promise<true | 'ABSENT'> {
-  const inspected = await runDockerCliV4(
-    config.docker_executable,
-    ['network', 'inspect', networkId],
-    256 * 1024,
-    { command_class: 'NETWORK' },
-  );
+  const inspected = await runDockerCliV4(config.docker_executable, ['network', 'inspect', networkId], 256 * 1024, {
+    command_class: 'NETWORK',
+  });
   if (inspected.stdoutTruncated || inspected.stderrTruncated) unavailable();
   if (isDockerNetworkAbsentV4(networkId, inspected.exitCode, inspected.stdout, inspected.stderr)) return 'ABSENT';
   if (inspected.exitCode !== 0) unavailable();
@@ -815,14 +894,17 @@ async function inspectCertificationNetworkV4(
   } catch {
     unavailable();
   }
-  if (record.Id !== networkId
-    || record.Name !== authority.name
-    || record.Driver !== 'bridge'
-    || record.Internal !== authority.internal
-    || record.Labels?.['agent-orchestration.execution'] !== authority.execution_id
-    || record.Labels?.['agent-orchestration.nonce'] !== authority.nonce
-    || record.Labels?.['agent-orchestration.image'] !== authority.image_id
-    || record.Labels?.['agent-orchestration.network-kind'] !== authority.kind) unavailable();
+  if (
+    record.Id !== networkId ||
+    record.Name !== authority.name ||
+    record.Driver !== 'bridge' ||
+    record.Internal !== authority.internal ||
+    record.Labels?.['agent-orchestration.execution'] !== authority.execution_id ||
+    record.Labels?.['agent-orchestration.nonce'] !== authority.nonce ||
+    record.Labels?.['agent-orchestration.image'] !== authority.image_id ||
+    record.Labels?.['agent-orchestration.network-kind'] !== authority.kind
+  )
+    unavailable();
   return true;
 }
 
@@ -837,10 +919,14 @@ async function createCertificationNetworkV4(
     '--driver=bridge',
     ...(authority.internal ? ['--internal'] : []),
     ...(authority.subnet === undefined ? [] : [`--subnet=${authority.subnet}`]),
-    '--label', `agent-orchestration.execution=${authority.execution_id}`,
-    '--label', `agent-orchestration.nonce=${authority.nonce}`,
-    '--label', `agent-orchestration.image=${authority.image_id}`,
-    '--label', `agent-orchestration.network-kind=${authority.kind}`,
+    '--label',
+    `agent-orchestration.execution=${authority.execution_id}`,
+    '--label',
+    `agent-orchestration.nonce=${authority.nonce}`,
+    '--label',
+    `agent-orchestration.image=${authority.image_id}`,
+    '--label',
+    `agent-orchestration.network-kind=${authority.kind}`,
     authority.name,
   ];
   do {
@@ -850,10 +936,7 @@ async function createCertificationNetworkV4(
         command_class: 'NETWORK',
       });
       const networkId = created.stdout.trim();
-      if (created.exitCode === 0
-        && !created.stdoutTruncated
-        && !created.stderrTruncated
-        && /^[a-f0-9]{64}$/.test(networkId)) {
+      if (created.exitCode === 0 && !created.stdoutTruncated && !created.stderrTruncated && /^[a-f0-9]{64}$/.test(networkId)) {
         retainCertificationNetworkCleanupV4(config, networkId, authority);
         register(networkId);
         const proved = await recoverCertificationNetworkV4(config, authority);
@@ -886,12 +969,9 @@ async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, netwo
     pendingCertificationNetworkCleanupV4.delete(key);
     return;
   }
-  const removed = await runDockerCliV4(
-    config.docker_executable,
-    ['network', 'rm', networkId],
-    16_384,
-    { command_class: 'CLEANUP' },
-  ).catch(() => null);
+  const removed = await runDockerCliV4(config.docker_executable, ['network', 'rm', networkId], 16_384, { command_class: 'CLEANUP' }).catch(
+    () => null,
+  );
   const deadline = Date.now() + 5_000;
   do {
     const state = await inspectCertificationNetworkV4(config, pending.authority, networkId);
@@ -899,12 +979,15 @@ async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, netwo
       pendingCertificationNetworkCleanupV4.delete(key);
       return;
     }
-    if (removed === null
-      || removed.exitCode !== 0
-      || removed.stdoutTruncated
-      || removed.stderrTruncated
-      || removed.stdout.trim() !== networkId
-      || removed.stderr !== '') unavailable();
+    if (
+      removed === null ||
+      removed.exitCode !== 0 ||
+      removed.stdoutTruncated ||
+      removed.stderrTruncated ||
+      removed.stdout.trim() !== networkId ||
+      removed.stderr !== ''
+    )
+      unavailable();
     if (Date.now() >= deadline) unavailable();
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   } while (true);
@@ -913,11 +996,9 @@ async function removeCertificationNetworkV4(config: DockerSandboxConfigV4, netwo
 async function waitForExactContainerRunningV4(config: DockerSandboxConfigV4, containerId: string): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
-    const state = await runDockerCliV4(
-      config.docker_executable,
-      ['inspect', '--format', '{{.State.Running}}', containerId],
-      4_096,
-    ).catch(() => unavailable());
+    const state = await runDockerCliV4(config.docker_executable, ['inspect', '--format', '{{.State.Running}}', containerId], 4_096).catch(
+      () => unavailable(),
+    );
     if (state.exitCode === 0 && state.stdout.trim() === 'true') return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
   }
@@ -941,11 +1022,21 @@ async function startCertificationTlsFixtureV4(
     "server.listen(443,'0.0.0.0');",
   ].join('');
   const createArgs = [
-    '--read-only', '--cap-drop=ALL',
-    '--security-opt=no-new-privileges', '--pids-limit=32', '--memory=256m', '--cpus=1',
-    '--user=1000:1000', '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m', '--network=none',
-    '--mount', `type=bind,src=${certificateDirectory},dst=/scratch,readonly`,
-    config.image_id, 'node', '-e', source,
+    '--read-only',
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--pids-limit=32',
+    '--memory=256m',
+    '--cpus=1',
+    '--user=1000:1000',
+    '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m',
+    '--network=none',
+    '--mount',
+    `type=bind,src=${certificateDirectory},dst=/scratch,readonly`,
+    config.image_id,
+    'node',
+    '-e',
+    source,
   ];
   const owned = await createBrokerOwnedDockerContainerV4({
     docker_executable: config.docker_executable,
@@ -959,7 +1050,11 @@ async function startCertificationTlsFixtureV4(
   const removal = owned.removal;
   try {
     await requiredDockerOutputV4(config, ['network', 'disconnect', 'none', containerId], 16_384);
-    await requiredDockerOutputV4(config, ['network', 'connect', `--alias=${providerHost}`, `--ip=${address}`, networkId, containerId], 16_384);
+    await requiredDockerOutputV4(
+      config,
+      ['network', 'connect', `--alias=${providerHost}`, `--ip=${address}`, networkId, containerId],
+      16_384,
+    );
     const started = await requiredDockerOutputV4(config, ['start', containerId], 16_384);
     if (started !== containerId) unavailable();
     await waitForExactContainerRunningV4(config, containerId);
@@ -1038,8 +1133,11 @@ export async function runDockerSandboxHostileCertificationV4(
       execution_id: `${executionPrefix}_process`,
       profile: 'VALIDATION_UNTRUSTED',
       argv: [
-        'node', '/broker/certification/hostile-child.mjs', 'audit',
-        `--outside-host-path=${sentinel}`, `--host-home=${homedir()}`,
+        'node',
+        '/broker/certification/hostile-child.mjs',
+        'audit',
+        `--outside-host-path=${sentinel}`,
+        `--host-home=${homedir()}`,
         `--host-loopback-port=${address.port}`,
       ],
       working_directory: '/capsule',
@@ -1052,22 +1150,25 @@ export async function runDockerSandboxHostileCertificationV4(
     if (processResult.exit_code !== 0 || processResult.timed_out) unavailable();
     const processEvidence = JSON.parse(processResult.stdout) as Record<string, unknown>;
     const pidLimit = processEvidence.pid_limit as { rejected?: unknown };
-    if (processEvidence.outside_sentinel_readable !== false
-      || processEvidence.host_home_enumerable !== false
-      || hashCanonicalV4(processEvidence.credential_environment) !== hashCanonicalV4({})
-      || hashCanonicalV4(processEvidence.credential_argv) !== hashCanonicalV4([])
-      || processEvidence.credential_files !== false
-      || hashCanonicalV4(processEvidence.descendant_credential_environment) !== hashCanonicalV4({})
-      || hashCanonicalV4(processEvidence.descendant_credential_argv) !== hashCanonicalV4([])
-      || processEvidence.outside_write_succeeded !== false
-      || typeof pidLimit?.rejected !== 'number'
-      || pidLimit.rejected <= 0
-      || processEvidence.docker_socket_exists !== false
-      || processEvidence.docker_socket_connectable !== false
-      || processEvidence.host_loopback_connectable !== false
-      || processEvidence.host_loopback_port !== address.port
-      || loopbackConnections !== 0
-      || await readFile(sentinel, 'utf8') !== 'synthetic-outside-sentinel') unavailable();
+    if (
+      processEvidence.outside_sentinel_readable !== false ||
+      processEvidence.host_home_enumerable !== false ||
+      hashCanonicalV4(processEvidence.credential_environment) !== hashCanonicalV4({}) ||
+      hashCanonicalV4(processEvidence.credential_argv) !== hashCanonicalV4([]) ||
+      processEvidence.credential_files !== false ||
+      hashCanonicalV4(processEvidence.descendant_credential_environment) !== hashCanonicalV4({}) ||
+      hashCanonicalV4(processEvidence.descendant_credential_argv) !== hashCanonicalV4([]) ||
+      processEvidence.outside_write_succeeded !== false ||
+      typeof pidLimit?.rejected !== 'number' ||
+      pidLimit.rejected <= 0 ||
+      processEvidence.docker_socket_exists !== false ||
+      processEvidence.docker_socket_connectable !== false ||
+      processEvidence.host_loopback_connectable !== false ||
+      processEvidence.host_loopback_port !== address.port ||
+      loopbackConnections !== 0 ||
+      (await readFile(sentinel, 'utf8')) !== 'synthetic-outside-sentinel'
+    )
+      unavailable();
 
     const timeoutResult = await runDockerSandboxCandidateOwnedV4(config, {
       execution_id: `${executionPrefix}_timeout`,
@@ -1082,15 +1183,34 @@ export async function runDockerSandboxHostileCertificationV4(
     });
     if (!timeoutResult.timed_out) unavailable();
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 2_500));
-    if (await readFile(survivor).then(() => true, () => false)) unavailable();
+    if (
+      await readFile(survivor).then(
+        () => true,
+        () => false,
+      )
+    )
+      unavailable();
 
     const certificateResult = await runDockerSandboxCandidateOwnedV4(config, {
       execution_id: `${executionPrefix}_openssl`,
       profile: 'VALIDATION_UNTRUSTED',
       argv: [
-        'openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
-        '-keyout', '/scratch/key.pem', '-out', '/scratch/cert.pem', `-subj=/CN=${providerHost}`,
-        '-addext', `subjectAltName=DNS:${providerHost}`,
+        'openssl',
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-nodes',
+        '-sha256',
+        '-days',
+        '1',
+        '-keyout',
+        '/scratch/key.pem',
+        '-out',
+        '/scratch/cert.pem',
+        `-subj=/CN=${providerHost}`,
+        '-addext',
+        `subjectAltName=DNS:${providerHost}`,
       ],
       working_directory: '/capsule',
       environment: { HOME: '/tmp/home', TMPDIR: '/tmp' },
@@ -1103,24 +1223,38 @@ export async function runDockerSandboxHostileCertificationV4(
     const caPem = await readFile(join(certificateDirectory, 'cert.pem'), 'utf8');
 
     const internalNonce = randomBytes(16).toString('hex');
-    internalNetworkId = await createCertificationNetworkV4(config, {
-      execution_id: `${executionPrefix}_network`,
-      image_id: config.image_id,
-      internal: true,
-      kind: 'internal',
-      name: internalName,
-      nonce: internalNonce,
-    }, 0, (networkId) => { internalNetworkId = networkId; });
+    internalNetworkId = await createCertificationNetworkV4(
+      config,
+      {
+        execution_id: `${executionPrefix}_network`,
+        image_id: config.image_id,
+        internal: true,
+        kind: 'internal',
+        name: internalName,
+        nonce: internalNonce,
+      },
+      0,
+      (networkId) => {
+        internalNetworkId = networkId;
+      },
+    );
     const outboundNonce = randomBytes(16).toString('hex');
-    outboundNetworkId = await createCertificationNetworkV4(config, {
-      execution_id: `${executionPrefix}_network`,
-      image_id: config.image_id,
-      internal: false,
-      kind: 'outbound',
-      name: outboundName,
-      nonce: outboundNonce,
-      subnet: '93.184.216.0/24',
-    }, 30_000, (networkId) => { outboundNetworkId = networkId; });
+    outboundNetworkId = await createCertificationNetworkV4(
+      config,
+      {
+        execution_id: `${executionPrefix}_network`,
+        image_id: config.image_id,
+        internal: false,
+        kind: 'outbound',
+        name: outboundName,
+        nonce: outboundNonce,
+        subnet: '93.184.216.0/24',
+      },
+      30_000,
+      (networkId) => {
+        outboundNetworkId = networkId;
+      },
+    );
     upstream = await startCertificationTlsFixtureV4(
       config,
       outboundNetworkId,
@@ -1146,26 +1280,36 @@ export async function runDockerSandboxHostileCertificationV4(
       startup_timeout_ms: 10_000,
     });
     let executorId = '';
-    const executorResultPromise = runDockerSandboxCandidateOwnedV4(config, {
-      execution_id: `${executionPrefix}_network`,
-      profile: 'EXECUTOR_NETWORKED',
-      argv: [
-        'node', '/broker/certification/network-probe.mjs', gateway.gateway_base_url,
-        'https://blocked.example', 'https://93.184.216.10', '1500',
-      ],
-      working_directory: '/capsule',
-      environment: {
-        HOME: '/tmp/home', TMPDIR: '/tmp',
-        PROVIDER_GATEWAY_TOKEN: gateway.non_secret_api_key_value,
-        PROVIDER_BASE_URL: gateway.gateway_base_url,
+    const executorResultPromise = runDockerSandboxCandidateOwnedV4(
+      config,
+      {
+        execution_id: `${executionPrefix}_network`,
+        profile: 'EXECUTOR_NETWORKED',
+        argv: [
+          'node',
+          '/broker/certification/network-probe.mjs',
+          gateway.gateway_base_url,
+          'https://blocked.example',
+          'https://93.184.216.10',
+          '1500',
+        ],
+        working_directory: '/capsule',
+        environment: {
+          HOME: '/tmp/home',
+          TMPDIR: '/tmp',
+          PROVIDER_GATEWAY_TOKEN: gateway.non_secret_api_key_value,
+          PROVIDER_BASE_URL: gateway.gateway_base_url,
+        },
+        mounts: [],
+        network: { mode: 'INTERNAL', name: internalName },
+        timeout_ms: 15_000,
+        max_output_bytes: 64 * 1024,
       },
-      mounts: [],
-      network: { mode: 'INTERNAL', name: internalName },
-      timeout_ms: 15_000,
-      max_output_bytes: 64 * 1024,
-    }, undefined, (controller) => {
-      executorId = controller.container_id;
-    });
+      undefined,
+      (controller) => {
+        executorId = controller.container_id;
+      },
+    );
     const executorDeadline = Date.now() + 5_000;
     while (executorId === '' && Date.now() < executorDeadline) {
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
@@ -1175,9 +1319,12 @@ export async function runDockerSandboxHostileCertificationV4(
       requiredDockerOutputV4(config, ['inspect', gateway.container_id]),
       requiredDockerOutputV4(config, ['inspect', executorId]),
     ]);
-    if (gatewayInspection.includes(syntheticCredential)
-      || executorInspection.includes(syntheticCredential)
-      || (JSON.parse(gatewayInspection) as Array<{ Mounts?: unknown[] }>)[0]?.Mounts?.length !== 0) unavailable();
+    if (
+      gatewayInspection.includes(syntheticCredential) ||
+      executorInspection.includes(syntheticCredential) ||
+      (JSON.parse(gatewayInspection) as Array<{ Mounts?: unknown[] }>)[0]?.Mounts?.length !== 0
+    )
+      unavailable();
     const executorResult = await executorResultPromise;
     if (executorResult.exit_code !== 0 || executorResult.timed_out) unavailable();
     const gatewayEvidence = JSON.parse(executorResult.stdout) as {
@@ -1185,35 +1332,76 @@ export async function runDockerSandboxHostileCertificationV4(
       non_allowlisted?: { status?: unknown };
       direct_ip?: { ok?: unknown };
     };
-    if (gatewayEvidence.allowlisted?.ok !== true
-      || gatewayEvidence.allowlisted.status !== 200
-      || typeof gatewayEvidence.allowlisted.body !== 'string'
-      || (JSON.parse(gatewayEvidence.allowlisted.body) as { auth_hash?: unknown }).auth_hash
-        !== createHash('sha256').update(`Bearer ${syntheticCredential}`).digest('hex')
-      || gatewayEvidence.non_allowlisted?.status !== 403
-      || gatewayEvidence.direct_ip?.ok !== false) unavailable();
-    const outboundIngress = await requiredDockerOutputV4(config, [
-      'exec', upstream.container_id, 'node', '-e',
-      "fetch('http://93.184.216.20:8080/v1/chat/completions',{method:'POST',body:'{}',signal:AbortSignal.timeout(1500)}).then(()=>process.stdout.write('connected')).catch(()=>process.stdout.write('blocked'))",
-    ], 4_096);
+    if (
+      gatewayEvidence.allowlisted?.ok !== true ||
+      gatewayEvidence.allowlisted.status !== 200 ||
+      typeof gatewayEvidence.allowlisted.body !== 'string' ||
+      (JSON.parse(gatewayEvidence.allowlisted.body) as { auth_hash?: unknown }).auth_hash !==
+        createHash('sha256').update(`Bearer ${syntheticCredential}`).digest('hex') ||
+      gatewayEvidence.non_allowlisted?.status !== 403 ||
+      gatewayEvidence.direct_ip?.ok !== false
+    )
+      unavailable();
+    const outboundIngress = await requiredDockerOutputV4(
+      config,
+      [
+        'exec',
+        upstream.container_id,
+        'node',
+        '-e',
+        "fetch('http://93.184.216.20:8080/v1/chat/completions',{method:'POST',body:'{}',signal:AbortSignal.timeout(1500)}).then(()=>process.stdout.write('connected')).catch(()=>process.stdout.write('blocked'))",
+      ],
+      4_096,
+    );
     if (outboundIngress !== 'blocked') unavailable();
     const gatewayLogs = await requiredDockerOutputV4(config, ['logs', gateway.container_id], 64 * 1024);
-    if (/synthetic-arliai|authorization|request_body|response_body/i.test(gatewayLogs)
-      || !gatewayLogs.includes('"decision":"ALLOW"')
-      || !gatewayLogs.includes('"decision":"DENY"')) unavailable();
+    if (
+      /synthetic-arliai|authorization|request_body|response_body/i.test(gatewayLogs) ||
+      !gatewayLogs.includes('"decision":"ALLOW"') ||
+      !gatewayLogs.includes('"decision":"DENY"')
+    )
+      unavailable();
 
     const completedAt = new Date().toISOString();
     const artifacts = [
-      transcriptArtifactV4('artifact_identity_0001', `${executionPrefix}_identity`, 'DOCKER_IDENTITY_RESULT', startedAt, completedAt, JSON.stringify(identity)),
-      transcriptArtifactV4('artifact_process_0001', `${executionPrefix}_process`, 'HOSTILE_PROCESS_RESULT', startedAt, completedAt, JSON.stringify({ processResult, processEvidence })),
-      transcriptArtifactV4('artifact_timeout_0001', `${executionPrefix}_timeout`, 'TIMEOUT_TREE_RESULT', startedAt, completedAt, JSON.stringify({ timeoutResult, survivor_absent: true })),
-      transcriptArtifactV4('artifact_gateway_0001', `${executionPrefix}_network`, 'GATEWAY_NETWORK_RESULT', startedAt, completedAt, JSON.stringify({
-        gatewayEvidence,
-        outbound_ingress_blocked: true,
-        gateway_inspection_hash: createHash('sha256').update(gatewayInspection).digest('hex'),
-        executor_inspection_hash: createHash('sha256').update(executorInspection).digest('hex'),
-        gateway_logs_hash: createHash('sha256').update(gatewayLogs).digest('hex'),
-      })),
+      transcriptArtifactV4(
+        'artifact_identity_0001',
+        `${executionPrefix}_identity`,
+        'DOCKER_IDENTITY_RESULT',
+        startedAt,
+        completedAt,
+        JSON.stringify(identity),
+      ),
+      transcriptArtifactV4(
+        'artifact_process_0001',
+        `${executionPrefix}_process`,
+        'HOSTILE_PROCESS_RESULT',
+        startedAt,
+        completedAt,
+        JSON.stringify({ processResult, processEvidence }),
+      ),
+      transcriptArtifactV4(
+        'artifact_timeout_0001',
+        `${executionPrefix}_timeout`,
+        'TIMEOUT_TREE_RESULT',
+        startedAt,
+        completedAt,
+        JSON.stringify({ timeoutResult, survivor_absent: true }),
+      ),
+      transcriptArtifactV4(
+        'artifact_gateway_0001',
+        `${executionPrefix}_network`,
+        'GATEWAY_NETWORK_RESULT',
+        startedAt,
+        completedAt,
+        JSON.stringify({
+          gatewayEvidence,
+          outbound_ingress_blocked: true,
+          gateway_inspection_hash: createHash('sha256').update(gatewayInspection).digest('hex'),
+          executor_inspection_hash: createHash('sha256').update(executorInspection).digest('hex'),
+          gateway_logs_hash: createHash('sha256').update(gatewayLogs).digest('hex'),
+        }),
+      ),
     ];
     const artifactByKind = new Map(artifacts.map((artifact) => [artifact.kind, artifact.artifact_id]));
     return Object.freeze({
@@ -1222,15 +1410,23 @@ export async function runDockerSandboxHostileCertificationV4(
       started_at: startedAt,
       completed_at: completedAt,
       artifacts: Object.freeze(artifacts),
-      observations: Object.freeze(REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => Object.freeze({
-        effect,
-        passed: true as const,
-        artifact_ids: Object.freeze([artifactByKind.get(effect === 'timeout_tree_killed'
-          ? 'TIMEOUT_TREE_RESULT'
-          : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
-            ? 'GATEWAY_NETWORK_RESULT'
-            : 'HOSTILE_PROCESS_RESULT')!]),
-      }))),
+      observations: Object.freeze(
+        REQUIRED_SANDBOX_EFFECTS_V4.map((effect) =>
+          Object.freeze({
+            effect,
+            passed: true as const,
+            artifact_ids: Object.freeze([
+              artifactByKind.get(
+                effect === 'timeout_tree_killed'
+                  ? 'TIMEOUT_TREE_RESULT'
+                  : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
+                    ? 'GATEWAY_NETWORK_RESULT'
+                    : 'HOSTILE_PROCESS_RESULT',
+              )!,
+            ]),
+          }),
+        ),
+      ),
     });
   } catch {
     unavailable();
@@ -1269,8 +1465,8 @@ async function runSingleFlightHostileCertificationV4(
 ): Promise<SandboxCertificationTranscriptV4> {
   const key = hashCanonicalV4(identity);
   const cached = hostileCertificationEvidenceV4.get(key);
-  if (cached !== undefined
-    && new Date(cached.completed_at).getTime() + config.certification_ttl_seconds * 1_000 >= Date.now()) return cached;
+  if (cached !== undefined && new Date(cached.completed_at).getTime() + config.certification_ttl_seconds * 1_000 >= Date.now())
+    return cached;
   hostileCertificationEvidenceV4.delete(key);
   const existing = hostileCertificationFlightsV4.get(key);
   const awaitForCaller = async (flight: Promise<SandboxCertificationTranscriptV4>): Promise<SandboxCertificationTranscriptV4> => {
@@ -1283,8 +1479,14 @@ async function runSingleFlightHostileCertificationV4(
       };
       signal.addEventListener('abort', aborted, { once: true });
       void flight.then(
-        (value) => { signal.removeEventListener('abort', aborted); resolvePromise(value); },
-        (error: unknown) => { signal.removeEventListener('abort', aborted); reject(error); },
+        (value) => {
+          signal.removeEventListener('abort', aborted);
+          resolvePromise(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener('abort', aborted);
+          reject(error);
+        },
       );
     });
   };
@@ -1294,15 +1496,15 @@ async function runSingleFlightHostileCertificationV4(
     return transcript;
   });
   hostileCertificationFlightsV4.set(key, flight);
-  void flight.finally(() => {
-    if (hostileCertificationFlightsV4.get(key) === flight) hostileCertificationFlightsV4.delete(key);
-  }).catch(() => undefined);
+  void flight
+    .finally(() => {
+      if (hostileCertificationFlightsV4.get(key) === flight) hostileCertificationFlightsV4.delete(key);
+    })
+    .catch(() => undefined);
   return await awaitForCaller(flight);
 }
 
-export function createDockerProcessSandboxV4(
-  config: DockerSandboxConfigV4,
-): ProcessSandboxBackendV4 {
+export function createDockerProcessSandboxV4(config: DockerSandboxConfigV4): ProcessSandboxBackendV4 {
   validateDockerSandboxConfigV4(config);
   if (arguments.length !== 1) unavailable();
   interface IssuedCertificationV4 {
@@ -1314,13 +1516,12 @@ export function createDockerProcessSandboxV4(
   }
   const issued = new WeakSet<object>();
   const cache = new Map<SandboxProfileV4, IssuedCertificationV4>();
-  const issue = (identity: SandboxCertificationIdentityV4, transcript: SandboxCertificationTranscriptV4, now: string): IssuedCertificationV4 => {
-    const evidence = validateSandboxCertificationTranscriptV4(
-      transcript,
-      identity,
-      config.certification_ttl_seconds,
-      now,
-    );
+  const issue = (
+    identity: SandboxCertificationIdentityV4,
+    transcript: SandboxCertificationTranscriptV4,
+    now: string,
+  ): IssuedCertificationV4 => {
+    const evidence = validateSandboxCertificationTranscriptV4(transcript, identity, config.certification_ttl_seconds, now);
     const record = Object.freeze({
       identity: Object.freeze({ ...identity }),
       evidence_hash: evidence.evidence_hash,
@@ -1336,29 +1537,31 @@ export function createDockerProcessSandboxV4(
     issued.add(record);
     return record;
   };
-  const matches = (
-    certification: IssuedCertificationV4,
-    identity: SandboxCertificationIdentityV4,
-    now: string,
-  ): boolean => {
+  const matches = (certification: IssuedCertificationV4, identity: SandboxCertificationIdentityV4, now: string): boolean => {
     if (!issued.has(certification) || !/^sha256:[a-f0-9]{64}$/.test(certification.certification_hash)) return false;
     const checked = new Date(now);
     const certified = new Date(certification.certified_at);
     const expires = new Date(certification.expires_at);
-    if (!Number.isFinite(checked.getTime())
-      || checked.toISOString() !== now
-      || !Number.isFinite(certified.getTime())
-      || !Number.isFinite(expires.getTime())
-      || checked.getTime() < certified.getTime()
-      || checked.getTime() > expires.getTime()
-      || expires.getTime() - certified.getTime() !== config.certification_ttl_seconds * 1_000
-      || hashCanonicalV4(certification.identity) !== hashCanonicalV4(identity)) return false;
-    return certification.certification_hash === `sha256:${hashCanonicalV4({
-      certified_at: certification.certified_at,
-      evidence_hash: certification.evidence_hash,
-      expires_at: certification.expires_at,
-      identity: certification.identity,
-    })}`;
+    if (
+      !Number.isFinite(checked.getTime()) ||
+      checked.toISOString() !== now ||
+      !Number.isFinite(certified.getTime()) ||
+      !Number.isFinite(expires.getTime()) ||
+      checked.getTime() < certified.getTime() ||
+      checked.getTime() > expires.getTime() ||
+      expires.getTime() - certified.getTime() !== config.certification_ttl_seconds * 1_000 ||
+      hashCanonicalV4(certification.identity) !== hashCanonicalV4(identity)
+    )
+      return false;
+    return (
+      certification.certification_hash ===
+      `sha256:${hashCanonicalV4({
+        certified_at: certification.certified_at,
+        evidence_hash: certification.evidence_hash,
+        expires_at: certification.expires_at,
+        identity: certification.identity,
+      })}`
+    );
   };
   const executions = new Map<string, DockerExecutionLifecycleV4>();
   const probeOwned = async (profile: SandboxProfileV4, signal?: AbortSignal): Promise<SandboxProbeResultV4> => {

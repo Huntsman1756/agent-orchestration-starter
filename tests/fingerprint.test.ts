@@ -37,10 +37,14 @@ test('changes the case fingerprint when any comparable condition changes', () =>
 });
 
 test('rejects abbreviated or symbolic base revisions', () => {
-  assert.throws(() => computeCaseFingerprint({
-    workContract: {},
-    baseSha: 'HEAD',
-    fixtures: {},
-    policy: {},
-  }), /full 40- or 64-character hexadecimal base SHA/);
+  assert.throws(
+    () =>
+      computeCaseFingerprint({
+        workContract: {},
+        baseSha: 'HEAD',
+        fixtures: {},
+        policy: {},
+      }),
+    /full 40- or 64-character hexadecimal base SHA/,
+  );
 });

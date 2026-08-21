@@ -1,11 +1,4 @@
-export type FailureClass =
-  | 'availability'
-  | 'authentication'
-  | 'policy'
-  | 'invalid_output'
-  | 'grounding'
-  | 'validation'
-  | 'unknown';
+export type FailureClass = 'availability' | 'authentication' | 'policy' | 'invalid_output' | 'grounding' | 'validation' | 'unknown';
 
 export function classifyFailure(_input: { code?: string; message?: string }): FailureClass {
   const value = `${_input.code ?? ''} ${_input.message ?? ''}`.toLowerCase();

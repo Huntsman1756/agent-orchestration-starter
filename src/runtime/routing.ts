@@ -31,7 +31,8 @@ function policyRouteReasons(input: DeriveWorkContractInputV4): string[] {
   const frontier = input.policy.policy.routing.frontierOnly;
   const reasons: string[] = [];
   if (request.requested_route === 'FRONTIER') reasons.push('request requires frontier route');
-  if (frontier.riskClasses.includes(request.requested_risk_class)) reasons.push(`risk class requires frontier: ${request.requested_risk_class}`);
+  if (frontier.riskClasses.includes(request.requested_risk_class))
+    reasons.push(`risk class requires frontier: ${request.requested_risk_class}`);
   if (frontier.taskClasses.includes(request.task_class)) reasons.push(`task class requires frontier: ${request.task_class}`);
   if (frontier.sourceSensitivity.includes(input.policy.policy.sourcePolicy.sourceSensitivity)) {
     reasons.push(`source sensitivity requires frontier: ${input.policy.policy.sourcePolicy.sourceSensitivity}`);
@@ -57,12 +58,16 @@ function sandboxProfileHashes(input: DeriveWorkContractInputV4): Record<string, 
 function assertRouteCoverage(route: EffectiveRouteV4, coverage: RuntimeRouteCoverageV4): void {
   const selected = route === 'ECONOMY' ? coverage.economy : coverage.frontier;
   if (selected.available) return;
-  if (selected.reason === 'SOURCE_SENSITIVITY_UNSUPPORTED') throw new Error(`SOURCE_SENSITIVITY_UNSUPPORTED: ${route.toLowerCase()} route cannot process repository source sensitivity`);
+  if (selected.reason === 'SOURCE_SENSITIVITY_UNSUPPORTED')
+    throw new Error(`SOURCE_SENSITIVITY_UNSUPPORTED: ${route.toLowerCase()} route cannot process repository source sensitivity`);
   throw new Error(`INVALID_CONTRACT: ${route.toLowerCase()} execution route has incompatible role permissions`);
 }
 
 export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWorkContractV4 {
-  if (input.request.repository_id !== input.registration.repository_id || input.request.repository_id !== input.policy.policy.repositoryId) {
+  if (
+    input.request.repository_id !== input.registration.repository_id ||
+    input.request.repository_id !== input.policy.policy.repositoryId
+  ) {
     throw new Error(`REPOSITORY_NOT_ALLOWED: ${input.request.repository_id}`);
   }
   const routeReasons = policyRouteReasons(input);
@@ -83,7 +88,8 @@ export function deriveWorkContract(input: DeriveWorkContractInputV4): RuntimeWor
     bindingHealth: input.binding_health,
   });
   route = executionPolicy.lane === 'FRONTIER_EXECUTION' ? 'FRONTIER' : 'ECONOMY';
-  if (executionPolicy.reasons.some((reason) => reason.includes('lack the required'))) routeReasons.push(...executionPolicy.reasons.filter((reason) => reason.includes('lack the required')));
+  if (executionPolicy.reasons.some((reason) => reason.includes('lack the required')))
+    routeReasons.push(...executionPolicy.reasons.filter((reason) => reason.includes('lack the required')));
   if (routeReasons.length === 0) routeReasons.push(`eligible for ${executionPolicy.lane.toLowerCase()}`);
   resolveBinding({
     profile: input.profile,

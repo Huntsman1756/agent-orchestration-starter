@@ -12,7 +12,8 @@ import { createWorktreeManagerV4 } from '../src/runtime/worktree.js';
 import { runCli } from '../src/cli/main.js';
 
 const execFileAsync = promisify(execFile);
-const git = async (repo: string, ...argv: string[]) => (await execFileAsync('git', ['-C', repo, ...argv], { encoding: 'utf8' })).stdout.trim();
+const git = async (repo: string, ...argv: string[]) =>
+  (await execFileAsync('git', ['-C', repo, ...argv], { encoding: 'utf8' })).stdout.trim();
 
 async function fixtureRepository(): Promise<{ root: string; baseSha: string }> {
   const root = await mkdtemp(join(tmpdir(), 'ao-worktree-'));
@@ -49,12 +50,15 @@ test('creates an isolated owned worktree without touching a dirty active tree', 
     const validateRecord = new Ajv2020({ strict: true, formats: { 'date-time': true } }).compile(schema);
     const record = JSON.parse(await readFile(join(parent, '.agent-orchestration-worktrees-v4', 'records', 'run_fixture.json'), 'utf8'));
     assert.equal(validateRecord(record), true, JSON.stringify(validateRecord.errors));
-    assert.deepEqual({
-      head: await git(fixture.root, 'rev-parse', 'HEAD'),
-      status: await git(fixture.root, 'status', '--porcelain=v2', '-z'),
-      tracked: await readFile(join(fixture.root, 'tracked.txt'), 'utf8'),
-      untracked: await readFile(join(fixture.root, 'untracked.txt'), 'utf8'),
-    }, before);
+    assert.deepEqual(
+      {
+        head: await git(fixture.root, 'rev-parse', 'HEAD'),
+        status: await git(fixture.root, 'status', '--porcelain=v2', '-z'),
+        tracked: await readFile(join(fixture.root, 'tracked.txt'), 'utf8'),
+        untracked: await readFile(join(fixture.root, 'untracked.txt'), 'utf8'),
+      },
+      before,
+    );
     assert.equal((await manager.verify(created)).valid, true);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -76,7 +80,10 @@ test('removes an exactly owned finalized worktree and local branch while retaini
     });
 
     assert.equal(terminal.entries.find((entry) => entry.run_id === created.run_id)?.classification, 'OWNED_CLEANED');
-    await assert.rejects(() => access(created.path), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+    await assert.rejects(
+      () => access(created.path),
+      (error: NodeJS.ErrnoException) => error.code === 'ENOENT',
+    );
     await assert.rejects(() => execFileAsync('git', ['-C', fixture.root, 'show-ref', '--verify', `refs/heads/${created.branch}`]));
     assert.equal((await manager.report()).entries.find((entry) => entry.run_id === created.run_id)?.classification, 'OWNED_CLEANED');
   } finally {
@@ -158,7 +165,10 @@ test('rejects a mutable ref or a worktree parent inside the registered repositor
     const parent = await mkdtemp(join(tmpdir(), 'ao-managed-worktrees-'));
     try {
       const manager = createWorktreeManagerV4({ repository_root: fixture.root, worktree_parent: parent });
-      await assert.rejects(() => manager.create({ run_id: 'run_symbolic', base_sha: 'HEAD' } as RuntimeWorkContractV4), /OUT_OF_SCOPE_CHANGE/);
+      await assert.rejects(
+        () => manager.create({ run_id: 'run_symbolic', base_sha: 'HEAD' } as RuntimeWorkContractV4),
+        /OUT_OF_SCOPE_CHANGE/,
+      );
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
@@ -202,7 +212,10 @@ test('recovers an exact cleanup interrupted after Git removed the worktree', asy
     });
     const created = await manager.create({ run_id: 'run_interrupted', base_sha: fixture.baseSha } as RuntimeWorkContractV4);
     await manager.markTerminal(created.run_id, {
-      state: 'FAILED', disposition: 'DISCARD_AFTER_RETENTION', recorded_at: now, evidence_hash: 'c'.repeat(64),
+      state: 'FAILED',
+      disposition: 'DISCARD_AFTER_RETENTION',
+      recorded_at: now,
+      evidence_hash: 'c'.repeat(64),
     });
     await execFileAsync('git', ['-C', fixture.root, 'worktree', 'remove', '--force', created.path]);
     now = '2026-08-21T12:00:02.000Z';
@@ -222,10 +235,20 @@ test('exposes report-only cleanup through the CLI and requires hash-bound APPLY'
   const parent = await mkdtemp(join(tmpdir(), 'ao-managed-worktrees-'));
   try {
     const lines: string[] = [];
-    assert.equal(await runCli(['runtime', 'worktree-gc', '--repository-root', fixture.root, '--worktree-parent', parent, '--mode', 'REPORT'], { stdout: (line) => lines.push(line) }), 0);
+    assert.equal(
+      await runCli(['runtime', 'worktree-gc', '--repository-root', fixture.root, '--worktree-parent', parent, '--mode', 'REPORT'], {
+        stdout: (line) => lines.push(line),
+      }),
+      0,
+    );
     const report = JSON.parse(lines[0]!) as { report_hash: string };
     assert.match(report.report_hash, /^[a-f0-9]{64}$/u);
-    assert.equal(await runCli(['runtime', 'worktree-gc', '--repository-root', fixture.root, '--worktree-parent', parent, '--mode', 'APPLY'], { stderr: (line) => lines.push(line) }), 2);
+    assert.equal(
+      await runCli(['runtime', 'worktree-gc', '--repository-root', fixture.root, '--worktree-parent', parent, '--mode', 'APPLY'], {
+        stderr: (line) => lines.push(line),
+      }),
+      2,
+    );
     assert.match(lines.at(-1) ?? '', /APPLY requires one expected report hash/u);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

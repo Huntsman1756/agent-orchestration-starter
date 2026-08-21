@@ -15,12 +15,16 @@ import {
   type RuntimeHostComponentSourceManifestV4,
 } from '../src/runtime/host-components.js';
 
-function sha256(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 function componentModule(id: RuntimeHostComponentIdV4): string {
-  const entries = runtimeHostComponentPortMembersV4(id).map((member) => member.kind === 'string'
-    ? `${JSON.stringify(member.name)}:${JSON.stringify(`fixture-${id}`)}`
-    : `${JSON.stringify(member.name)}:async()=>undefined`);
+  const entries = runtimeHostComponentPortMembersV4(id).map((member) =>
+    member.kind === 'string'
+      ? `${JSON.stringify(member.name)}:${JSON.stringify(`fixture-${id}`)}`
+      : `${JSON.stringify(member.name)}:async()=>undefined`,
+  );
   const dependencies = JSON.stringify(RUNTIME_HOST_COMPONENT_DEPENDENCIES_V4[id]);
   return `export function createRuntimeHostComponentV4(context){if(JSON.stringify(Object.keys(context.dependencies))!==${JSON.stringify(dependencies)})throw new Error("unexpected dependencies");return {${entries.join(',')}}}\n`;
 }
@@ -32,14 +36,18 @@ export interface RuntimeHostFixtureV4 {
   readonly componentManifest: RuntimeHostComponentSourceManifestV4;
 }
 
-export async function createRuntimeHostFixtureV4(input: {
-  readonly componentModules?: Partial<Record<RuntimeHostComponentIdV4, string>>;
-  readonly driverSource?: string;
-} = {}): Promise<RuntimeHostFixtureV4> {
+export async function createRuntimeHostFixtureV4(
+  input: {
+    readonly componentModules?: Partial<Record<RuntimeHostComponentIdV4, string>>;
+    readonly driverSource?: string;
+  } = {},
+): Promise<RuntimeHostFixtureV4> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'runtime-host-driver-source-')));
   const componentsRoot = join(root, 'components');
   await mkdir(componentsRoot, { recursive: true });
-  const driver = input.driverSource ?? 'export function createRuntimeHostDriverV4(context){if(Object.keys(context.components).length!==8)throw new Error("missing components");return {daemon:async()=>{},doctor:async()=>["ready"],mcpStdio:async()=>{},status:async(id)=>({run_id:id})}}\n';
+  const driver =
+    input.driverSource ??
+    'export function createRuntimeHostDriverV4(context){if(Object.keys(context.components).length!==8)throw new Error("missing components");return {daemon:async()=>{},doctor:async()=>["ready"],mcpStdio:async()=>{},status:async(id)=>({run_id:id})}}\n';
   const driverSource = join(root, 'driver.mjs');
   await writeFile(driverSource, driver);
   const certifications = new Map<RuntimeHostComponentIdV4, string>();
@@ -48,10 +56,12 @@ export async function createRuntimeHostFixtureV4(input: {
     const module = input.componentModules?.[id] ?? componentModule(id);
     const modulePath = `components/${id}.mjs`;
     await writeFile(join(root, ...modulePath.split('/')), module);
-    const dependencies = RUNTIME_HOST_COMPONENT_DEPENDENCIES_V4[id].map((dependencyId) => Object.freeze({
-      id: dependencyId,
-      certificationHash: certifications.get(dependencyId)!,
-    }));
+    const dependencies = RUNTIME_HOST_COMPONENT_DEPENDENCIES_V4[id].map((dependencyId) =>
+      Object.freeze({
+        id: dependencyId,
+        certificationHash: certifications.get(dependencyId)!,
+      }),
+    );
     const body = {
       schema_version: 4,
       component_id: id,
@@ -70,16 +80,18 @@ export async function createRuntimeHostFixtureV4(input: {
       dependencies,
     });
     certifications.set(id, certificationHash);
-    components.push(Object.freeze({
-      id,
-      implementationRevision: body.implementation_revision,
-      modulePath,
-      moduleSha256: body.module_sha256,
-      interfaceHash: body.interface_hash,
-      qualificationEvidenceHash: body.qualification_evidence_hash,
-      dependencies: Object.freeze(dependencies),
-      certificationHash,
-    }));
+    components.push(
+      Object.freeze({
+        id,
+        implementationRevision: body.implementation_revision,
+        modulePath,
+        moduleSha256: body.module_sha256,
+        interfaceHash: body.interface_hash,
+        qualificationEvidenceHash: body.qualification_evidence_hash,
+        dependencies: Object.freeze(dependencies),
+        certificationHash,
+      }),
+    );
   }
   const driverSha256 = sha256(driver);
   const integrationEvidenceHash = sha256('integration:eight-components');

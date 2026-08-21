@@ -29,13 +29,22 @@ function executionEnvelope(binding: RuntimeBindingV4) {
   return binding.execution;
 }
 
-function qualified(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[]): binding is RuntimeBindingV4 {
-  if (binding === undefined || binding.permissions !== 'contract-write' || !binding.allowedSourceSensitivity.includes(sensitivity)) return false;
+function qualified(
+  binding: RuntimeBindingV4 | undefined,
+  sensitivity: SourceSensitivityV4,
+  traits: readonly RuntimeTaskTraitV4[],
+): binding is RuntimeBindingV4 {
+  if (binding === undefined || binding.permissions !== 'contract-write' || !binding.allowedSourceSensitivity.includes(sensitivity))
+    return false;
   const supported = new Set(executionEnvelope(binding).supportedTaskTraits);
   return traits.every((trait) => supported.has(trait));
 }
 
-function healthy(binding: RuntimeBindingV4, traits: readonly RuntimeTaskTraitV4[], snapshots: readonly RuntimeBindingHealthSnapshotV4[]): boolean {
+function healthy(
+  binding: RuntimeBindingV4,
+  traits: readonly RuntimeTaskTraitV4[],
+  snapshots: readonly RuntimeBindingHealthSnapshotV4[],
+): boolean {
   return runtimeBindingHealthAllowsV4({ snapshots, bindingHash: hashCanonicalV4(binding), taskTraits: traits });
 }
 
@@ -53,7 +62,9 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
   readonly bindingHealth?: readonly RuntimeBindingHealthSnapshotV4[];
 }): RuntimeExecutionPolicyV4 {
   const requirements = input.request.execution_requirements;
-  const traits = Object.freeze([...(requirements?.taskTraits ?? inferredTraits(input.request.task_class))].sort()) as readonly RuntimeTaskTraitV4[];
+  const traits = Object.freeze(
+    [...(requirements?.taskTraits ?? inferredTraits(input.request.task_class))].sort(),
+  ) as readonly RuntimeTaskTraitV4[];
   const requested = input.forceFrontier ? 'FRONTIER_EXECUTION' : requestedLane(input.request, traits);
   const reasons: string[] = [`task traits: ${traits.join(', ')}`];
   const bindingHealth = input.bindingHealth ?? [];
@@ -83,7 +94,8 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
     if (!qualified(binding, input.sourceSensitivity, traits)) {
       throw new Error('CAPABILITY_UNVERIFIED: no writable binding supports the requested task traits and source sensitivity');
     }
-    if (!healthy(binding, traits, bindingHealth)) throw new Error('CAPABILITY_UNVERIFIED: frontier binding is quarantined for a requested task trait');
+    if (!healthy(binding, traits, bindingHealth))
+      throw new Error('CAPABILITY_UNVERIFIED: frontier binding is quarantined for a requested task trait');
     if (requested !== lane) reasons.push('economy bindings lack the required qualified traits');
   }
 
@@ -96,9 +108,8 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
   const maxNoMutationSteps = Math.min(envelope.maxNoMutationSteps, Math.max(3, files + 2), Math.max(1, maxSteps - 1));
   const maxToolUses = Math.min(envelope.maxToolUses, Math.max(maxSteps, maxSteps * 2));
   const maxAttempts = lane === 'FRONTIER_EXECUTION' ? 1 : Math.min(2, input.request.max_attempts);
-  const repairBase = maxAttempts > 1 && envelope.supportsFailedCandidateRepair
-    ? 'FAILED_CANDIDATE_TREE' as const
-    : 'LAST_ACCEPTED_TREE' as const;
+  const repairBase =
+    maxAttempts > 1 && envelope.supportsFailedCandidateRepair ? ('FAILED_CANDIDATE_TREE' as const) : ('LAST_ACCEPTED_TREE' as const);
   reasons.push(`selected ${executorRole} with ${maxSteps} steps and ${maxAttempts} attempt(s)`);
   const body = {
     lane,

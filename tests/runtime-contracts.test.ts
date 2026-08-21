@@ -40,9 +40,16 @@ export function validTaskRequest() {
 
 export function validModelGuidance() {
   return {
-    id: 'fixture-guidance', revision: 'fixture-1', sourceUrls: ['https://example.invalid/model-guidance'],
-    promptFormat: 'markdown', contextPlacement: 'before-task', reasoningEffort: 'low', textVerbosity: 'low',
-    temperature: null, maxSteps: 16, instructions: ['Keep the change minimal.'],
+    id: 'fixture-guidance',
+    revision: 'fixture-1',
+    sourceUrls: ['https://example.invalid/model-guidance'],
+    promptFormat: 'markdown',
+    contextPlacement: 'before-task',
+    reasoningEffort: 'low',
+    textVerbosity: 'low',
+    temperature: null,
+    maxSteps: 16,
+    instructions: ['Keep the change minimal.'],
   } as const;
 }
 
@@ -58,7 +65,17 @@ export function validRuntimeProfile() {
     permissions: 'read-only',
     guidance: validModelGuidance(),
     execution: {
-      supportedTaskTraits: ['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal', 'long-horizon', 'architecture', 'security-sensitive', 'migration'],
+      supportedTaskTraits: [
+        'mechanical',
+        'localized',
+        'semantic-debugging',
+        'cross-file-reasoning',
+        'multimodal',
+        'long-horizon',
+        'architecture',
+        'security-sensitive',
+        'migration',
+      ],
       maxSteps: 32,
       maxToolUses: 64,
       maxNoMutationSteps: 6,
@@ -108,7 +125,14 @@ export function validRepositoryPolicy() {
       requiredProfiles: ['executor-networked', 'frontier-networked', 'validation-untrusted', 'review-capsule'],
     },
     instructions: { approvedSources: ['AGENTS.md'] },
-    publication: { enabled: true, remote: 'origin', baseBranch: 'main', mergeMethod: 'squash', requireRequiredChecks: true, timeoutSeconds: 900 },
+    publication: {
+      enabled: true,
+      remote: 'origin',
+      baseBranch: 'main',
+      mergeMethod: 'squash',
+      requireRequiredChecks: true,
+      timeoutSeconds: 900,
+    },
   };
 }
 
@@ -153,7 +177,14 @@ export function validRuntimeResult() {
     changed_files: ['src/greeting.ts'],
     review_attestation_hash: hash,
     commit_sha: sha,
-    publication: { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
+    publication: {
+      state: 'NOT_STARTED',
+      remote: null,
+      base_branch: null,
+      pull_request: null,
+      pull_request_url: null,
+      merge_commit_sha: null,
+    },
     failure: null,
     artifact_manifest_hash: hash,
   };
@@ -198,10 +229,7 @@ test('rejects the retired provider-specific runtime concurrency field', () => {
 });
 
 test('rejects caller-owned runtime fields on a task request', () => {
-  assert.throws(
-    () => loadRuntimeTaskRequestV4({ ...validTaskRequest(), run_id: 'caller-owned' }),
-    /unrecognized|run_id/i,
-  );
+  assert.throws(() => loadRuntimeTaskRequestV4({ ...validTaskRequest(), run_id: 'caller-owned' }), /unrecognized|run_id/i);
 });
 
 test('rejects duplicate allowed change operations', () => {

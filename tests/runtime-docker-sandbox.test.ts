@@ -23,10 +23,7 @@ import type { SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
 import { createBrokerOwnedDockerContainerV4 } from '../src/runtime/docker-container-transaction.js';
 import { dockerCliEnvironmentV4, registerOrReproveDockerLauncherV4 } from '../src/runtime/docker-launcher.js';
 import { settleBoundedProcessAndCleanupV4, startBoundedProcessV4 } from '../src/runtime/bounded-process.js';
-import {
-  isProviderEgressAddressAllowedV4,
-  validateProviderGatewayOriginV4,
-} from '../src/runtime/provider-egress-gateway.js';
+import { isProviderEgressAddressAllowedV4, validateProviderGatewayOriginV4 } from '../src/runtime/provider-egress-gateway.js';
 import {
   REQUIRED_SANDBOX_EFFECTS_V4,
   validateSandboxCertificationTranscriptV4,
@@ -36,9 +33,10 @@ import {
 import { RUNTIME_BROKER_VERSION_V4 } from '../src/runtime/version.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
-const trustedFixtureParent = process.platform === 'win32'
-  ? join(process.env.PUBLIC ?? join(parse(homedir()).root, 'Users', 'Public'), 'agent-orchestration-test-fixtures')
-  : join(homedir(), '.agent-orchestration-test-fixtures');
+const trustedFixtureParent =
+  process.platform === 'win32'
+    ? join(process.env.PUBLIC ?? join(parse(homedir()).root, 'Users', 'Public'), 'agent-orchestration-test-fixtures')
+    : join(homedir(), '.agent-orchestration-test-fixtures');
 
 async function makeTrustedFixtureRoot(prefix: string): Promise<string> {
   await mkdir(trustedFixtureParent, { recursive: true });
@@ -119,7 +117,10 @@ test('Docker validation argv contains the complete immutable isolation policy be
   assert.deepEqual(argv.slice(0, DOCKER_ISOLATION_ARGS_V4.length), DOCKER_ISOLATION_ARGS_V4);
   assert.ok(imageIndex > DOCKER_ISOLATION_ARGS_V4.length);
   assert.deepEqual(argv.slice(imageIndex), [imageId, 'node', '--version']);
-  assert.deepEqual(argv.filter((entry) => entry.startsWith('--network')), ['--network=none']);
+  assert.deepEqual(
+    argv.filter((entry) => entry.startsWith('--network')),
+    ['--network=none'],
+  );
   const name = argv.find((entry) => entry.startsWith('--name=ao-exec-contract-0001-'));
   const secondName = secondArgv.find((entry) => entry.startsWith('--name=ao-exec-contract-0001-'));
   assert.match(name ?? '', /^--name=ao-exec-contract-0001-[a-f0-9]{32}$/);
@@ -137,9 +138,15 @@ test('Docker policy hashes bind the profile, provider origin, and host mount pol
   const repeated = dockerSandboxPolicyHashV4({ ...config, provider_hosts: ['api.arliai.com'] }, 'VALIDATION_UNTRUSTED');
   const networked = dockerSandboxPolicyHashV4(config, 'EXECUTOR_NETWORKED');
   const otherHost = dockerSandboxPolicyHashV4({ ...config, provider_hosts: ['other.example'] }, 'VALIDATION_UNTRUSTED');
-  const otherMountRoot = dockerSandboxPolicyHashV4({ ...config, allowed_mount_roots: [join(tmpdir(), 'other-root')] }, 'VALIDATION_UNTRUSTED');
+  const otherMountRoot = dockerSandboxPolicyHashV4(
+    { ...config, allowed_mount_roots: [join(tmpdir(), 'other-root')] },
+    'VALIDATION_UNTRUSTED',
+  );
   const otherWorktree = dockerSandboxPolicyHashV4({ ...config, active_worktree: join(tmpdir(), 'other-worktree') }, 'VALIDATION_UNTRUSTED');
-  const otherBrokerState = dockerSandboxPolicyHashV4({ ...config, broker_state_directory: join(tmpdir(), 'other-broker-state') }, 'VALIDATION_UNTRUSTED');
+  const otherBrokerState = dockerSandboxPolicyHashV4(
+    { ...config, broker_state_directory: join(tmpdir(), 'other-broker-state') },
+    'VALIDATION_UNTRUSTED',
+  );
 
   assert.match(first, /^sha256:[a-f0-9]{64}$/);
   assert.equal(repeated, first);
@@ -151,23 +158,16 @@ test('Docker policy hashes bind the profile, provider origin, and host mount pol
 });
 
 test('Docker config rejects mutable images and non-canonical provider origins', () => {
-  assert.doesNotThrow(() => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['api.provider-one.example', 'gateway.provider-two.example'] }));
-  assert.throws(
-    () => validateDockerSandboxConfigV4({ ...config, docker_executable: 'docker' }),
-    /PROCESS_SANDBOX_UNAVAILABLE/,
+  assert.doesNotThrow(() =>
+    validateDockerSandboxConfigV4({ ...config, provider_hosts: ['api.provider-one.example', 'gateway.provider-two.example'] }),
   );
+  assert.throws(() => validateDockerSandboxConfigV4({ ...config, docker_executable: 'docker' }), /PROCESS_SANDBOX_UNAVAILABLE/);
   assert.throws(
     () => validateDockerSandboxConfigV4({ ...config, image_id: 'agent-orchestration-sandbox:v4' as `sha256:${string}` }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
-  assert.throws(
-    () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['API.ARLIAI.COM'] }),
-    /PROCESS_SANDBOX_UNAVAILABLE/,
-  );
-  assert.throws(
-    () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['127.0.0.1'] }),
-    /PROCESS_SANDBOX_UNAVAILABLE/,
-  );
+  assert.throws(() => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['API.ARLIAI.COM'] }), /PROCESS_SANDBOX_UNAVAILABLE/);
+  assert.throws(() => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['127.0.0.1'] }), /PROCESS_SANDBOX_UNAVAILABLE/);
   assert.throws(
     () => validateDockerSandboxConfigV4({ ...config, provider_hosts: ['api.provider.example', 'api.provider.example'] }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
@@ -183,8 +183,10 @@ test('Docker config ignores ambient host and context retargets', () => {
     process.env.DOCKER_CONTEXT = 'same-name-attacker-context';
     assert.doesNotThrow(() => validateDockerSandboxConfigV4(config));
   } finally {
-    if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
-    if (previousContext === undefined) delete process.env.DOCKER_CONTEXT; else process.env.DOCKER_CONTEXT = previousContext;
+    if (previousHost === undefined) delete process.env.DOCKER_HOST;
+    else process.env.DOCKER_HOST = previousHost;
+    if (previousContext === undefined) delete process.env.DOCKER_CONTEXT;
+    else process.env.DOCKER_CONTEXT = previousContext;
   }
 });
 
@@ -202,9 +204,7 @@ test('Docker launcher freezes the default endpoint and rejects isolated config m
   try {
     const identity = await registerOrReproveDockerLauncherV4(executable, undefined, brokerState);
     const environment = await dockerCliEnvironmentV4(executable);
-    const expectedEndpoint = process.platform === 'win32'
-      ? 'npipe:////./pipe/docker_engine'
-      : 'unix:///var/run/docker.sock';
+    const expectedEndpoint = process.platform === 'win32' ? 'npipe:////./pipe/docker_engine' : 'unix:///var/run/docker.sock';
     assert.equal(identity.endpoint_context, null);
     assert.equal(identity.endpoint_host, expectedEndpoint);
     assert.equal(environment.DOCKER_HOST, expectedEndpoint);
@@ -212,10 +212,7 @@ test('Docker launcher freezes the default endpoint and rejects isolated config m
     assert.equal(environment.DOCKER_CONFIG, join(brokerState, 'docker-cli-v4-empty'));
 
     await mkdir(join(brokerState, 'docker-cli-v4-empty'));
-    await assert.rejects(
-      () => registerOrReproveDockerLauncherV4(executable),
-      /PROCESS_SANDBOX_UNAVAILABLE/,
-    );
+    await assert.rejects(() => registerOrReproveDockerLauncherV4(executable), /PROCESS_SANDBOX_UNAVAILABLE/);
   } finally {
     if (previousHost !== undefined) process.env.DOCKER_HOST = previousHost;
     if (previousContext !== undefined) process.env.DOCKER_CONTEXT = previousContext;
@@ -225,23 +222,40 @@ test('Docker launcher freezes the default endpoint and rejects isolated config m
 
 test('production gateway accepts only an exact allowlisted lower-case provider TLS origin', () => {
   assert.equal(validateProviderGatewayOriginV4('https://api.arliai.com', ['api.arliai.com']).origin, 'https://api.arliai.com');
-  assert.equal(validateProviderGatewayOriginV4('https://api.provider.example', ['api.provider.example']).origin, 'https://api.provider.example');
-  assert.throws(() => validateProviderGatewayOriginV4('https://api.provider.example', ['other.provider.example']), /PROCESS_SANDBOX_UNAVAILABLE/);
-  for (const value of [
-    'https://api.arliai.com:8443',
-    'https://API.ARLIAI.COM',
-    'https://127.0.0.1',
-    'https://api.arliai.com/v1',
-  ]) {
+  assert.equal(
+    validateProviderGatewayOriginV4('https://api.provider.example', ['api.provider.example']).origin,
+    'https://api.provider.example',
+  );
+  assert.throws(
+    () => validateProviderGatewayOriginV4('https://api.provider.example', ['other.provider.example']),
+    /PROCESS_SANDBOX_UNAVAILABLE/,
+  );
+  for (const value of ['https://api.arliai.com:8443', 'https://API.ARLIAI.COM', 'https://127.0.0.1', 'https://api.arliai.com/v1']) {
     assert.throws(() => validateProviderGatewayOriginV4(value, ['api.arliai.com']), /PROCESS_SANDBOX_UNAVAILABLE/);
   }
 });
 
 test('gateway DNS pinning rejects literal private, local, metadata, mapped, multicast, and reserved addresses', () => {
   for (const address of [
-    '127.0.0.1', '10.0.0.1', '100.64.0.1', '169.254.169.254', '172.16.0.1', '192.168.0.1',
-    '192.0.2.1', '198.18.0.1', '198.51.100.1', '203.0.113.1', '224.0.0.1',
-    '::', '::1', 'fc00::1', 'fd00::1', 'fe80::1', 'ff02::1', '::ffff:127.0.0.1', '2001:db8::1',
+    '127.0.0.1',
+    '10.0.0.1',
+    '100.64.0.1',
+    '169.254.169.254',
+    '172.16.0.1',
+    '192.168.0.1',
+    '192.0.2.1',
+    '198.18.0.1',
+    '198.51.100.1',
+    '203.0.113.1',
+    '224.0.0.1',
+    '::',
+    '::1',
+    'fc00::1',
+    'fd00::1',
+    'fe80::1',
+    'ff02::1',
+    '::ffff:127.0.0.1',
+    '2001:db8::1',
   ]) {
     assert.equal(isProviderEgressAddressAllowedV4(address), false, address);
   }
@@ -259,15 +273,27 @@ test('validation rejects network, provider credentials, host-home, and Docker-so
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, validationRequest({ mounts: [{ source: homedir(), target: '/capsule', access: 'READ_ONLY' }] })),
+    () =>
+      validateDockerSandboxRequestV4(
+        config,
+        validationRequest({ mounts: [{ source: homedir(), target: '/capsule', access: 'READ_ONLY' }] }),
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, validationRequest({ mounts: [{ source: `${homedir()}/.ssh`, target: '/capsule', access: 'READ_ONLY' }] })),
+    () =>
+      validateDockerSandboxRequestV4(
+        config,
+        validationRequest({ mounts: [{ source: `${homedir()}/.ssh`, target: '/capsule', access: 'READ_ONLY' }] }),
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, validationRequest({ mounts: [{ source: '/var/run/docker.sock', target: '/capsule', access: 'READ_ONLY' }] })),
+    () =>
+      validateDockerSandboxRequestV4(
+        config,
+        validationRequest({ mounts: [{ source: '/var/run/docker.sock', target: '/capsule', access: 'READ_ONLY' }] }),
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
@@ -285,7 +311,8 @@ test('networked executor permits only an internal network and the fixed non-secr
 
   assert.doesNotThrow(() => validateDockerSandboxRequestV4(config, request));
   assert.throws(
-    () => validateDockerSandboxRequestV4(config, { ...request, environment: { ...request.environment, OPENAI_API_KEY: 'synthetic-real-key' } }),
+    () =>
+      validateDockerSandboxRequestV4(config, { ...request, environment: { ...request.environment, OPENAI_API_KEY: 'synthetic-real-key' } }),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
@@ -294,78 +321,92 @@ test('networked executor permits only an internal network and the fixed non-secr
   );
 });
 
-test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', {
-  skip: process.platform === 'darwin',
-}, async () => {
-  const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-proof-'));
-  const allowed = join(root, 'allowed');
-  const source = join(allowed, 'capsule');
-  const activeWorktree = join(root, 'active-worktree');
-  const brokerState = join(allowed, 'broker-state');
-  const alias = join(allowed, 'capsule-alias');
-  const physicalConfig = {
-    ...config,
-    allowed_mount_roots: [allowed],
-    active_worktree: activeWorktree,
-    broker_state_directory: brokerState,
-  } as DockerSandboxConfigV4;
-  try {
-    await Promise.all([mkdir(source, { recursive: true }), mkdir(activeWorktree, { recursive: true }), mkdir(brokerState, { recursive: true })]);
-    await symlink(source, alias, process.platform === 'win32' ? 'junction' : 'dir');
-    await assert.doesNotReject(() => proveDockerSandboxMountsV4(physicalConfig, validationRequest({
-      mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }],
-    })));
-    for (const mount of [
-      { source: alias, target: '/capsule', access: 'READ_ONLY' },
-      { source: join(allowed, 'missing-parent', 'capsule'), target: '/capsule', access: 'READ_ONLY' },
-      { source: brokerState, target: '/capsule', access: 'READ_ONLY' },
-      { source: activeWorktree, target: '/capsule', access: 'READ_ONLY' },
-      { source, target: '/etc', access: 'READ_ONLY' },
-      { source, target: '/capsule', access: 'OWNER_WRITE' },
-    ]) {
-      await assert.rejects(
-        () => proveDockerSandboxMountsV4(physicalConfig, validationRequest({ mounts: [mount] as never })),
-        /PROCESS_SANDBOX_UNAVAILABLE/,
+test(
+  'physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums',
+  {
+    skip: process.platform === 'darwin',
+  },
+  async () => {
+    const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-proof-'));
+    const allowed = join(root, 'allowed');
+    const source = join(allowed, 'capsule');
+    const activeWorktree = join(root, 'active-worktree');
+    const brokerState = join(allowed, 'broker-state');
+    const alias = join(allowed, 'capsule-alias');
+    const physicalConfig = {
+      ...config,
+      allowed_mount_roots: [allowed],
+      active_worktree: activeWorktree,
+      broker_state_directory: brokerState,
+    } as DockerSandboxConfigV4;
+    try {
+      await Promise.all([
+        mkdir(source, { recursive: true }),
+        mkdir(activeWorktree, { recursive: true }),
+        mkdir(brokerState, { recursive: true }),
+      ]);
+      await symlink(source, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      await assert.doesNotReject(() =>
+        proveDockerSandboxMountsV4(
+          physicalConfig,
+          validationRequest({
+            mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }],
+          }),
+        ),
       );
+      for (const mount of [
+        { source: alias, target: '/capsule', access: 'READ_ONLY' },
+        { source: join(allowed, 'missing-parent', 'capsule'), target: '/capsule', access: 'READ_ONLY' },
+        { source: brokerState, target: '/capsule', access: 'READ_ONLY' },
+        { source: activeWorktree, target: '/capsule', access: 'READ_ONLY' },
+        { source, target: '/etc', access: 'READ_ONLY' },
+        { source, target: '/capsule', access: 'OWNER_WRITE' },
+      ]) {
+        await assert.rejects(
+          () => proveDockerSandboxMountsV4(physicalConfig, validationRequest({ mounts: [mount] as never })),
+          /PROCESS_SANDBOX_UNAVAILABLE/,
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
-  } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
-  }
-});
+  },
+);
 
-test('mount capability reproof rejects a source replaced by an alias before Docker effects', {
-  skip: process.platform === 'darwin',
-}, async () => {
-  const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-reproof-'));
-  const allowed = join(root, 'allowed');
-  const source = join(allowed, 'capsule');
-  const replacement = join(allowed, 'replacement');
-  const physicalConfig = {
-    ...config,
-    allowed_mount_roots: [allowed],
-    active_worktree: join(root, 'active-worktree'),
-    broker_state_directory: join(root, 'broker-state'),
-  } as DockerSandboxConfigV4;
-  try {
-    await Promise.all([
-      mkdir(source, { recursive: true }),
-      mkdir(replacement, { recursive: true }),
-      mkdir(physicalConfig.active_worktree, { recursive: true }),
-      mkdir(physicalConfig.broker_state_directory, { recursive: true }),
-    ]);
-    const request = validationRequest({ mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }] });
-    const proof = await proveDockerSandboxMountsV4(physicalConfig, request);
-    await rm(source, { recursive: true });
-    await symlink(replacement, source, process.platform === 'win32' ? 'junction' : 'dir');
+test(
+  'mount capability reproof rejects a source replaced by an alias before Docker effects',
+  {
+    skip: process.platform === 'darwin',
+  },
+  async () => {
+    const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-reproof-'));
+    const allowed = join(root, 'allowed');
+    const source = join(allowed, 'capsule');
+    const replacement = join(allowed, 'replacement');
+    const physicalConfig = {
+      ...config,
+      allowed_mount_roots: [allowed],
+      active_worktree: join(root, 'active-worktree'),
+      broker_state_directory: join(root, 'broker-state'),
+    } as DockerSandboxConfigV4;
+    try {
+      await Promise.all([
+        mkdir(source, { recursive: true }),
+        mkdir(replacement, { recursive: true }),
+        mkdir(physicalConfig.active_worktree, { recursive: true }),
+        mkdir(physicalConfig.broker_state_directory, { recursive: true }),
+      ]);
+      const request = validationRequest({ mounts: [{ source, target: '/capsule', access: 'READ_ONLY' }] });
+      const proof = await proveDockerSandboxMountsV4(physicalConfig, request);
+      await rm(source, { recursive: true });
+      await symlink(replacement, source, process.platform === 'win32' ? 'junction' : 'dir');
 
-    await assert.rejects(
-      () => reproveDockerSandboxMountsV4(physicalConfig, request, proof),
-      /PROCESS_SANDBOX_UNAVAILABLE/,
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+      await assert.rejects(() => reproveDockerSandboxMountsV4(physicalConfig, request, proof), /PROCESS_SANDBOX_UNAVAILABLE/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test('container removal is ID-bound, propagates failure, remains retryable, and serializes concurrent revoke', async () => {
   const containerId = 'a'.repeat(64);
@@ -423,15 +464,18 @@ const certificationIdentity: SandboxCertificationIdentityV4 = {
   broker_version: RUNTIME_BROKER_VERSION_V4,
 };
 function transcript(overrides: Partial<SandboxCertificationTranscriptV4> = {}): SandboxCertificationTranscriptV4 {
-  const artifact = (id: string, kind: 'DOCKER_IDENTITY_RESULT' | 'HOSTILE_PROCESS_RESULT' | 'TIMEOUT_TREE_RESULT' | 'GATEWAY_NETWORK_RESULT') => ({
+  const artifact = (
+    id: string,
+    kind: 'DOCKER_IDENTITY_RESULT' | 'HOSTILE_PROCESS_RESULT' | 'TIMEOUT_TREE_RESULT' | 'GATEWAY_NETWORK_RESULT',
+  ) => ({
     artifact_id: id,
     execution_id: 'exec_hostile_cert_0001',
     kind,
     started_at: '2026-08-09T10:00:00.000Z',
     completed_at: '2026-08-09T10:00:01.000Z',
-    content_base64: Buffer.from(kind === 'DOCKER_IDENTITY_RESULT'
-      ? JSON.stringify(certificationIdentity)
-      : `bounded-real-run-artifact:${kind}`).toString('base64'),
+    content_base64: Buffer.from(
+      kind === 'DOCKER_IDENTITY_RESULT' ? JSON.stringify(certificationIdentity) : `bounded-real-run-artifact:${kind}`,
+    ).toString('base64'),
     content_hash: `sha256:${'0'.repeat(64)}` as const,
   });
   const artifacts = [
@@ -449,11 +493,13 @@ function transcript(overrides: Partial<SandboxCertificationTranscriptV4> = {}): 
     observations: REQUIRED_SANDBOX_EFFECTS_V4.map((effect) => ({
       effect,
       passed: true as const,
-      artifact_ids: [effect === 'timeout_tree_killed'
-        ? 'artifact_timeout_0001'
-        : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
-          ? 'artifact_gateway_0001'
-          : 'artifact_process_0001'],
+      artifact_ids: [
+        effect === 'timeout_tree_killed'
+          ? 'artifact_timeout_0001'
+          : effect.startsWith('gateway_') || effect === 'direct_ip_blocked' || effect === 'metadata_only_logs'
+            ? 'artifact_gateway_0001'
+            : 'artifact_process_0001',
+      ],
     })),
     ...overrides,
   };
@@ -491,14 +537,15 @@ test('production backend rejects every injected identity, runner, or clock autho
   assert.equal('runDockerSandboxCertificationCandidateV4' in dockerModule, false);
   assert.equal('createSandboxCertificationV4' in certificationModule, false);
   assert.throws(
-    () => (createDockerProcessSandboxV4 as unknown as (...args: unknown[]) => unknown)(config, {
-      now: () => '2026-08-09T10:00:01.000Z',
-      test_only: {
-        explicit_test_only: true,
-        inspect_identity: async () => certificationIdentity,
-        run_hostile_certification: async () => validTranscript(),
-      },
-    } as never),
+    () =>
+      (createDockerProcessSandboxV4 as unknown as (...args: unknown[]) => unknown)(config, {
+        now: () => '2026-08-09T10:00:01.000Z',
+        test_only: {
+          explicit_test_only: true,
+          inspect_identity: async () => certificationIdentity,
+          run_hostile_certification: async () => validTranscript(),
+        },
+      } as never),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
@@ -520,21 +567,23 @@ test('certification transcript binds artifact bytes, exact identity, config TTL,
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateSandboxCertificationTranscriptV4(
-      { ...valid, identity: { ...certificationIdentity, docker_server_id: 'server-b' } },
-      certificationIdentity,
-      900,
-      '2026-08-09T10:00:01.000Z',
-    ),
+    () =>
+      validateSandboxCertificationTranscriptV4(
+        { ...valid, identity: { ...certificationIdentity, docker_server_id: 'server-b' } },
+        certificationIdentity,
+        900,
+        '2026-08-09T10:00:01.000Z',
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
   assert.throws(
-    () => validateSandboxCertificationTranscriptV4(
-      { ...valid, artifacts: [{ ...valid.artifacts[0]!, content_base64: Buffer.from('tampered').toString('base64') }] },
-      certificationIdentity,
-      900,
-      '2026-08-09T10:00:01.000Z',
-    ),
+    () =>
+      validateSandboxCertificationTranscriptV4(
+        { ...valid, artifacts: [{ ...valid.artifacts[0]!, content_base64: Buffer.from('tampered').toString('base64') }] },
+        certificationIdentity,
+        900,
+        '2026-08-09T10:00:01.000Z',
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
@@ -546,12 +595,13 @@ test('certification transcript contains exactly one artifact of each required ki
     artifact_id: 'artifact_process_duplicate_0001',
   };
   assert.throws(
-    () => validateSandboxCertificationTranscriptV4(
-      { ...valid, artifacts: [...valid.artifacts, duplicate] },
-      certificationIdentity,
-      900,
-      '2026-08-09T10:00:01.000Z',
-    ),
+    () =>
+      validateSandboxCertificationTranscriptV4(
+        { ...valid, artifacts: [...valid.artifacts, duplicate] },
+        certificationIdentity,
+        900,
+        '2026-08-09T10:00:01.000Z',
+      ),
     /PROCESS_SANDBOX_UNAVAILABLE/,
   );
 });
@@ -562,11 +612,12 @@ test('terminate aborts blocked Docker identity commands and releases the executi
   try {
     await Promise.all([mkdir(join(root, 'active')), mkdir(join(root, 'broker'))]);
     const dockerExecutable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
-    const blockedCommand = (pidPath: string) => [
-      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});",
-      `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
-    ].join('');
+    const blockedCommand = (pidPath: string) =>
+      [
+        "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+        "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{stdio:'inherit'});",
+        `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+      ].join('');
     if (process.platform === 'win32') {
       await Promise.all([
         copyFile(process.execPath, dockerExecutable),
@@ -600,12 +651,13 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     descendantPids.push(descendantPid!);
     const started = Date.now();
     await backend.terminate(request.execution_id);
-    assert.equal(Date.now() - started < 5_000, true, 'terminate must abort the blocked CLI within the bounded cleanup contract rather than await its natural exit');
-    await firstRun;
-    await assertProcessNotRunning(
-      descendantPid!,
-      'the blocked identity command descendant must not retain inherited stdio',
+    assert.equal(
+      Date.now() - started < 5_000,
+      true,
+      'terminate must abort the blocked CLI within the bounded cleanup contract rather than await its natural exit',
     );
+    await firstRun;
+    await assertProcessNotRunning(descendantPid!, 'the blocked identity command descendant must not retain inherited stdio');
 
     await rm(join(root, 'info-child.pid'), { force: true });
     const reused = assert.rejects(() => backend.run(request), /PROCESS_SANDBOX_UNAVAILABLE/);
@@ -619,87 +671,100 @@ test('terminate aborts blocked Docker identity commands and releases the executi
     descendantPids.push(reusedDescendantPid!);
     await backend.terminate(request.execution_id);
     await reused;
-    await assertProcessNotRunning(
-      reusedDescendantPid!,
-      'the reused blocked identity command descendant must not retain inherited stdio',
-    );
+    await assertProcessNotRunning(reusedDescendantPid!, 'the reused blocked identity command descendant must not retain inherited stdio');
   } finally {
     for (const pid of descendantPids) {
-      try { process.kill(pid, 'SIGKILL'); } catch { /* already absent */ }
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already absent */
+      }
     }
     await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
 
-test('Windows bounded termination waits for every detached descendant to be absent', { timeout: 30_000, skip: process.platform !== 'win32' }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-windows-tree-'));
-  try {
-    for (let iteration = 0; iteration < 5; iteration += 1) {
-      const pidPath = join(root, `descendant-${iteration}.pid`);
+test(
+  'Windows bounded termination waits for every detached descendant to be absent',
+  { timeout: 30_000, skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ao-windows-tree-'));
+    try {
+      for (let iteration = 0; iteration < 5; iteration += 1) {
+        const pidPath = join(root, `descendant-${iteration}.pid`);
+        const source = [
+          "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+          `const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:${String(process.platform === 'win32')},stdio:'ignore'});`,
+          `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+        ].join('');
+        const handle = startBoundedProcessV4({
+          executable: process.execPath,
+          argv: ['-e', source],
+          environment: { ...process.env },
+          deadline_ms: 20_000,
+          max_output_bytes: 4_096,
+        });
+        let descendantPid: number | undefined;
+        const deadline = Date.now() + 5_000;
+        while (descendantPid === undefined && Date.now() < deadline) {
+          descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
+          if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        assert.notEqual(descendantPid, undefined);
+        await handle.terminate();
+        assert.throws(() => process.kill(descendantPid!, 0), { code: 'ESRCH' }, `iteration ${iteration} descendant survived`);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
+    }
+  },
+);
+
+test(
+  'Windows bounded termination propagates taskkill failure even when the main process closes',
+  { timeout: 15_000, skip: process.platform !== 'win32' },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ao-taskkill-failure-'));
+    const previousSystemRoot = process.env.SystemRoot;
+    let descendantPid: number | undefined;
+    try {
+      await mkdir(join(root, 'System32'));
+      await copyFile(process.execPath, join(root, 'System32', 'taskkill.exe'));
+      const pidPath = join(root, 'descendant.pid');
       const source = [
         "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-    `const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:${String(process.platform === 'win32')},stdio:'ignore'});`,
-        `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setInterval(()=>{},2147483647);`,
+        "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
+        `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setTimeout(()=>process.exit(0),300);`,
       ].join('');
       const handle = startBoundedProcessV4({
         executable: process.execPath,
         argv: ['-e', source],
         environment: { ...process.env },
-        deadline_ms: 20_000,
+        deadline_ms: 10_000,
         max_output_bytes: 4_096,
       });
-      let descendantPid: number | undefined;
-      const deadline = Date.now() + 5_000;
-      while (descendantPid === undefined && Date.now() < deadline) {
+      const pidDeadline = Date.now() + 5_000;
+      while (descendantPid === undefined && Date.now() < pidDeadline) {
         descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
         if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
       }
       assert.notEqual(descendantPid, undefined);
-      await handle.terminate();
-      assert.throws(() => process.kill(descendantPid!, 0), { code: 'ESRCH' }, `iteration ${iteration} descendant survived`);
+      process.env.SystemRoot = root;
+      await assert.rejects(() => handle.terminate(), /PROCESS_SANDBOX_UNAVAILABLE/);
+    } finally {
+      if (previousSystemRoot === undefined) delete process.env.SystemRoot;
+      else process.env.SystemRoot = previousSystemRoot;
+      if (descendantPid !== undefined) {
+        try {
+          process.kill(descendantPid, 'SIGKILL');
+        } catch {
+          /* already absent */
+        }
+      }
+      await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
     }
-  } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
-  }
-});
-
-test('Windows bounded termination propagates taskkill failure even when the main process closes', { timeout: 15_000, skip: process.platform !== 'win32' }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'ao-taskkill-failure-'));
-  const previousSystemRoot = process.env.SystemRoot;
-  let descendantPid: number | undefined;
-  try {
-    await mkdir(join(root, 'System32'));
-    await copyFile(process.execPath, join(root, 'System32', 'taskkill.exe'));
-    const pidPath = join(root, 'descendant.pid');
-    const source = [
-      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-      "const child=spawn(process.execPath,['-e','setInterval(()=>{},2147483647)'],{detached:true,stdio:'ignore'});",
-      `writeFileSync(${JSON.stringify(pidPath)},String(child.pid));setTimeout(()=>process.exit(0),300);`,
-    ].join('');
-    const handle = startBoundedProcessV4({
-      executable: process.execPath,
-      argv: ['-e', source],
-      environment: { ...process.env },
-      deadline_ms: 10_000,
-      max_output_bytes: 4_096,
-    });
-    const pidDeadline = Date.now() + 5_000;
-    while (descendantPid === undefined && Date.now() < pidDeadline) {
-      descendantPid = await readFile(pidPath, 'utf8').then(Number, () => undefined);
-      if (descendantPid === undefined) await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    assert.notEqual(descendantPid, undefined);
-    process.env.SystemRoot = root;
-    await assert.rejects(() => handle.terminate(), /PROCESS_SANDBOX_UNAVAILABLE/);
-  } finally {
-    if (previousSystemRoot === undefined) delete process.env.SystemRoot;
-    else process.env.SystemRoot = previousSystemRoot;
-    if (descendantPid !== undefined) {
-      try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already absent */ }
-    }
-    await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
-  }
-});
+  },
+);
 
 test('bounded attach cleanup kills the local tree even when immutable-ID removal fails', { timeout: 15_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'ao-attach-cleanup-'));
@@ -725,20 +790,27 @@ test('bounded attach cleanup kills the local tree even when immutable-ID removal
     }
     assert.notEqual(descendantPid, undefined);
     await assert.rejects(
-      () => settleBoundedProcessAndCleanupV4(handle, async () => { throw new Error('removal denied'); }),
+      () =>
+        settleBoundedProcessAndCleanupV4(handle, async () => {
+          throw new Error('removal denied');
+        }),
       /removal denied/,
     );
     await assertProcessNotRunning(descendantPid!, 'the bounded attach descendant survived cleanup');
   } finally {
     if (descendantPid !== undefined) {
-      try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already absent */ }
+      try {
+        process.kill(descendantPid, 'SIGKILL');
+      } catch {
+        /* already absent */
+      }
     }
     await rm(root, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
 
 test('network retry classification accepts only Docker subnet-overlap failures', async () => {
-  const runtime = await import('../src/runtime/docker-sandbox.js') as unknown as {
+  const runtime = (await import('../src/runtime/docker-sandbox.js')) as unknown as {
     isDockerNetworkSubnetOverlapV4?: (stderr: string) => boolean;
   };
   const classify = runtime.isDockerNetworkSubnetOverlapV4;
@@ -750,7 +822,8 @@ test('network retry classification accepts only Docker subnet-overlap failures',
     'Cannot connect to the Docker daemon',
     'Error response from daemon: network already exists',
     'Error response from daemon: Pool overlaps with other one on this address space; ignored suffix',
-  ]) assert.equal(classify!(error), false, error);
+  ])
+    assert.equal(classify!(error), false, error);
 });
 
 test('network absence classification accepts only the exact immutable ID not-found response', () => {
@@ -763,69 +836,99 @@ test('network absence classification accepts only the exact immutable ID not-fou
   assert.equal(isDockerNetworkAbsentV4(id, 1, '[]\n', `Error response from daemon: network ${'d'.repeat(64)} not found\n`), false);
 });
 
-test('broker container transaction recovers partial and delayed create effects and removes the exact IDs', { timeout: 60_000 }, async () => {
-  const root = await makeTrustedFixtureRoot('ao-container-transaction-');
-  const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
-  const statePath = join(root, 'state.json');
-  const queryPath = join(root, 'queries.log');
-  const removedPath = join(root, 'removed.log');
-  const transientInspectPath = join(root, 'transient-inspect');
-  try {
-    await copyFile(process.execPath, executable);
-    if (process.platform !== 'win32') await chmod(executable, 0o755);
-    await writeFile(join(root, 'create'), [
-      "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
-      "const args=process.argv.slice(2),id='d'.repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7);",
-      "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
-      "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
-      `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),2500)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
-      `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setTimeout(()=>process.exit(1),5000);}`,
-      `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
-    ].join(''));
-    await writeFile(join(root, 'container'), [
-      "const{appendFileSync,existsSync,readFileSync,writeFileSync}=require('node:fs'),args=process.argv.slice(2);",
-      `appendFileSync(${JSON.stringify(queryPath)},args.join(' ')+'\\n');if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);`,
-      `const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
-      `if(args[0]==='inspect'&&record.Config.Labels['agent-orchestration.container-kind']==='gateway'&&!existsSync(${JSON.stringify(transientInspectPath)})){writeFileSync(${JSON.stringify(transientInspectPath)},'failed');process.stderr.write('transient inspect failure');process.exit(2);}`,
-      "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
-    ].join(''));
-    await writeFile(join(root, 'rm'), [
-      "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
-      `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
-    ].join(''));
-    for (const kind of ['gateway', 'tls-fixture'] as const) {
-      await assert.rejects(() => createBrokerOwnedDockerContainerV4({
-        docker_executable: executable,
-        broker_state_directory: root,
-        image_id: imageId,
-        execution_id: `exec_transaction_${kind.replace('-', '_')}_0001`,
-        kind,
-        create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
-      }), /PROCESS_SANDBOX_UNAVAILABLE/);
+test(
+  'broker container transaction recovers partial and delayed create effects and removes the exact IDs',
+  { timeout: 60_000 },
+  async () => {
+    const root = await makeTrustedFixtureRoot('ao-container-transaction-');
+    const executable = join(root, process.platform === 'win32' ? 'docker.exe' : 'docker');
+    const statePath = join(root, 'state.json');
+    const queryPath = join(root, 'queries.log');
+    const removedPath = join(root, 'removed.log');
+    const transientInspectPath = join(root, 'transient-inspect');
+    try {
+      await copyFile(process.execPath, executable);
+      if (process.platform !== 'win32') await chmod(executable, 0o755);
+      await writeFile(
+        join(root, 'create'),
+        [
+          "const{spawn}=require('node:child_process'),{writeFileSync}=require('node:fs');",
+          "const args=process.argv.slice(2),id='d'.repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7);",
+          "const labels={};for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
+          "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v)),record={Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}};",
+          `if(labels['agent-orchestration.container-kind']==='tls-fixture'){const source="setTimeout(()=>require('node:fs').writeFileSync("+${JSON.stringify(JSON.stringify(statePath))}+","+JSON.stringify(JSON.stringify(record))+"),2500)";spawn(process.execPath,['-e',source],{detached:true,stdio:'ignore'}).unref();process.exit(1);}`,
+          `if(labels['agent-orchestration.container-kind']==='executor'){writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));setTimeout(()=>process.exit(1),5000);}`,
+          `writeFileSync(${JSON.stringify(statePath)},JSON.stringify(record));process.stdout.write(id.slice(0,17));`,
+        ].join(''),
+      );
+      await writeFile(
+        join(root, 'container'),
+        [
+          "const{appendFileSync,existsSync,readFileSync,writeFileSync}=require('node:fs'),args=process.argv.slice(2);",
+          `appendFileSync(${JSON.stringify(queryPath)},args.join(' ')+'\\n');if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);`,
+          `const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
+          `if(args[0]==='inspect'&&record.Config.Labels['agent-orchestration.container-kind']==='gateway'&&!existsSync(${JSON.stringify(transientInspectPath)})){writeFileSync(${JSON.stringify(transientInspectPath)},'failed');process.stderr.write('transient inspect failure');process.exit(2);}`,
+          "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
+        ].join(''),
+      );
+      await writeFile(
+        join(root, 'rm'),
+        [
+          "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
+          `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
+        ].join(''),
+      );
+      for (const kind of ['gateway', 'tls-fixture'] as const) {
+        await assert.rejects(
+          () =>
+            createBrokerOwnedDockerContainerV4({
+              docker_executable: executable,
+              broker_state_directory: root,
+              image_id: imageId,
+              execution_id: `exec_transaction_${kind.replace('-', '_')}_0001`,
+              kind,
+              create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
+            }),
+          /PROCESS_SANDBOX_UNAVAILABLE/,
+        );
+      }
+      const abort = new AbortController();
+      const cancelled = assert.rejects(
+        () =>
+          createBrokerOwnedDockerContainerV4({
+            docker_executable: executable,
+            broker_state_directory: root,
+            image_id: imageId,
+            execution_id: 'exec_transaction_cancelled_0001',
+            kind: 'executor',
+            create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
+            signal: abort.signal,
+          }),
+        /PROCESS_SANDBOX_UNAVAILABLE/,
+      );
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          await readFile(statePath, 'utf8').then(
+            () => true,
+            () => false,
+          )
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      abort.abort();
+      await cancelled;
+      assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'd'.repeat(64), 'd'.repeat(64)]);
+      assert.equal(
+        (await readFile(queryPath, 'utf8')).split('\n').filter((line) => line.startsWith('ls ')).length >= 3,
+        true,
+        'the delayed effect must require at least one bounded recovery retry',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
-    const abort = new AbortController();
-    const cancelled = assert.rejects(() => createBrokerOwnedDockerContainerV4({
-      docker_executable: executable,
-      broker_state_directory: root,
-      image_id: imageId,
-      execution_id: 'exec_transaction_cancelled_0001',
-      kind: 'executor',
-      create_arguments: [imageId, 'node', '-e', 'setInterval(()=>{},2147483647)'],
-      signal: abort.signal,
-    }), /PROCESS_SANDBOX_UNAVAILABLE/);
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (await readFile(statePath, 'utf8').then(() => true, () => false)) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    abort.abort();
-    await cancelled;
-    assert.deepEqual((await readFile(removedPath, 'utf8')).trim().split('\n'), ['d'.repeat(64), 'd'.repeat(64), 'd'.repeat(64)]);
-    assert.equal((await readFile(queryPath, 'utf8')).split('\n').filter((line) => line.startsWith('ls ')).length >= 3, true,
-      'the delayed effect must require at least one bounded recovery retry');
-  } finally {
-    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
-  }
-});
+  },
+);
 
 test('fresh process reconciles a durable owned container transaction before new create authority', { timeout: 60_000 }, async () => {
   const root = await makeTrustedFixtureRoot('ao-container-restart-');
@@ -835,23 +938,32 @@ test('fresh process reconciles a durable owned container transaction before new 
   const removedPath = join(root, 'removed.log');
   await copyFile(process.execPath, executable);
   if (process.platform !== 'win32') await chmod(executable, 0o755);
-  await writeFile(join(root, 'create'), [
-    "const{existsSync,readFileSync,writeFileSync}=require('node:fs');const args=process.argv.slice(2);",
-    `const n=existsSync(${JSON.stringify(countPath)})?Number(readFileSync(${JSON.stringify(countPath)},'utf8'))+1:1;writeFileSync(${JSON.stringify(countPath)},String(n));`,
-    "const id=(n===1?'d':'e').repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7),labels={};",
-    "for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
-    "const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v));",
-    `writeFileSync(${JSON.stringify(statePath)},JSON.stringify({Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}}));process.stdout.write(id);`,
-  ].join(''));
-  await writeFile(join(root, 'container'), [
-    "const{existsSync,readFileSync}=require('node:fs'),args=process.argv.slice(2);",
-    `if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
-    "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
-  ].join(''));
-  await writeFile(join(root, 'rm'), [
-    "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
-    `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
-  ].join(''));
+  await writeFile(
+    join(root, 'create'),
+    [
+      "const{existsSync,readFileSync,writeFileSync}=require('node:fs');const args=process.argv.slice(2);",
+      `const n=existsSync(${JSON.stringify(countPath)})?Number(readFileSync(${JSON.stringify(countPath)},'utf8'))+1:1;writeFileSync(${JSON.stringify(countPath)},String(n));`,
+      "const id=(n===1?'d':'e').repeat(64),name=args.find((v)=>v.startsWith('--name='))?.slice(7),labels={};",
+      "for(let i=0;i<args.length;i++)if(args[i]==='--label')labels[args[++i].split('=')[0]]=args[i].slice(args[i].indexOf('=')+1);",
+      'const image=args.find((v)=>/^sha256:[a-f0-9]{64}$/.test(v));',
+      `writeFileSync(${JSON.stringify(statePath)},JSON.stringify({Id:id,Name:'/'+name,Config:{Image:image,Labels:labels}}));process.stdout.write(id);`,
+    ].join(''),
+  );
+  await writeFile(
+    join(root, 'container'),
+    [
+      "const{existsSync,readFileSync}=require('node:fs'),args=process.argv.slice(2);",
+      `if(!existsSync(${JSON.stringify(statePath)}))process.exit(0);const record=JSON.parse(readFileSync(${JSON.stringify(statePath)},'utf8'));`,
+      "if(args[0]==='ls')process.stdout.write(record.Id+'\\n');else if(args[0]==='inspect')process.stdout.write(JSON.stringify([record]));else process.exit(1);",
+    ].join(''),
+  );
+  await writeFile(
+    join(root, 'rm'),
+    [
+      "const{appendFileSync,rmSync}=require('node:fs'),id=process.argv.at(-1);",
+      `appendFileSync(${JSON.stringify(removedPath)},id+'\\n');rmSync(${JSON.stringify(statePath)},{force:true});process.stdout.write(id+'\\n');`,
+    ].join(''),
+  );
   const request = {
     docker_executable: executable,
     broker_state_directory: root,
@@ -862,11 +974,7 @@ test('fresh process reconciles a durable owned container transaction before new 
   };
   const nonce = 'f'.repeat(32);
   const name = `ao-executor-${'a'.repeat(32)}`;
-  const transactionDirectory = join(
-    root,
-    'container-transactions-v4',
-    createHash('sha256').update(executable).digest('hex'),
-  );
+  const transactionDirectory = join(root, 'container-transactions-v4', createHash('sha256').update(executable).digest('hex'));
   const launcherKey = createHash('sha256').update(executable).digest('hex');
   const source = [
     '(async()=>{',
@@ -886,20 +994,28 @@ test('fresh process reconciles a durable owned container transaction before new 
         env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'DOCKER_HOST' && key !== 'DOCKER_CONTEXT')),
         stdio: ['ignore', 'ignore', 'pipe'],
       });
-      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+        stderr += chunk;
+      });
       child.once('error', reject);
-      child.once('exit', (code) => code === 0 ? resolvePromise() : reject(new Error(`child exited ${code}: ${stderr}`)));
+      child.once('exit', (code) => (code === 0 ? resolvePromise() : reject(new Error(`child exited ${code}: ${stderr}`))));
     });
     await new Promise<void>((resolvePromise, reject) => {
       let output = '';
       let errorOutput = '';
       const probe = spawn(executable, ['container', 'ls'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-      probe.stdout?.setEncoding('utf8').on('data', (chunk: string) => { output += chunk; });
-      probe.stderr?.setEncoding('utf8').on('data', (chunk: string) => { errorOutput += chunk; });
+      probe.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
+        output += chunk;
+      });
+      probe.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+        errorOutput += chunk;
+      });
       probe.once('error', reject);
-      probe.once('exit', (code) => code === 0 && output.trim() === 'd'.repeat(64)
-        ? resolvePromise()
-        : reject(new Error(`fake Docker preflight ${code}: ${output} ${errorOutput}`)));
+      probe.once('exit', (code) =>
+        code === 0 && output.trim() === 'd'.repeat(64)
+          ? resolvePromise()
+          : reject(new Error(`fake Docker preflight ${code}: ${output} ${errorOutput}`)),
+      );
     });
     const owned = await createBrokerOwnedDockerContainerV4({ ...request, execution_id: 'exec_restart_owned_0002' });
     await owned.removal.remove();

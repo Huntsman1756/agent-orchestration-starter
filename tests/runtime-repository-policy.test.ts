@@ -13,6 +13,9 @@ test('freezes a policy with a stable canonical hash', () => {
   assert.match(frozen.hash, /^[a-f0-9]{64}$/);
   assert.equal(
     frozen.hash,
-    freezeRepositoryPolicy({ ...validRepositoryPolicy(), validation: { ...validRepositoryPolicy().validation } } as RuntimeRepositoryPolicyV4).hash,
+    freezeRepositoryPolicy({
+      ...validRepositoryPolicy(),
+      validation: { ...validRepositoryPolicy().validation },
+    } as RuntimeRepositoryPolicyV4).hash,
   );
 });

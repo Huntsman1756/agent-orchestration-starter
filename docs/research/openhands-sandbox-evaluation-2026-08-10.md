@@ -12,16 +12,16 @@ This is a bounded interoperability evaluation, not a security audit of OpenHands
 
 ## Pinned subject and host
 
-| Item | Exact value |
-| --- | --- |
-| Agent Canvas source | `OpenHands/OpenHands` commit `cf2c5685735b8f8c55114d1db6166122978d6b4a` |
-| Agent Canvas version | `1.12.0` |
-| configured Agent Server | `1.40.1` |
-| software-agent-sdk source | tag `v1.40.1`, commit `c1877b44129696cb99535c0e074d22a324cc7312` |
-| Agent Server image | `ghcr.io/openhands/agent-server@sha256:f8cbd196606c4c842a8ac993469f9c4e3b6c8d83f5d448c59b318a2c11257479` |
-| client host | Windows/amd64 |
-| container engine | Docker Desktop `4.85.0`, Engine `29.6.2`, Linux/amd64 |
-| Runtime V4 control image | `sha256:2bb33252f36700730c6622899dd7757fd205214e6eee14dd1ae57d9eb1f65728` |
+| Item                      | Exact value                                                                                              |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Agent Canvas source       | `OpenHands/OpenHands` commit `cf2c5685735b8f8c55114d1db6166122978d6b4a`                                  |
+| Agent Canvas version      | `1.12.0`                                                                                                 |
+| configured Agent Server   | `1.40.1`                                                                                                 |
+| software-agent-sdk source | tag `v1.40.1`, commit `c1877b44129696cb99535c0e074d22a324cc7312`                                         |
+| Agent Server image        | `ghcr.io/openhands/agent-server@sha256:f8cbd196606c4c842a8ac993469f9c4e3b6c8d83f5d448c59b318a2c11257479` |
+| client host               | Windows/amd64                                                                                            |
+| container engine          | Docker Desktop `4.85.0`, Engine `29.6.2`, Linux/amd64                                                    |
+| Runtime V4 control image  | `sha256:2bb33252f36700730c6622899dd7757fd205214e6eee14dd1ae57d9eb1f65728`                                |
 
 The evaluated source is the version selected by Agent Canvas
 `config/defaults.json`, not the unrelated TypeScript client package version.
@@ -62,25 +62,25 @@ certification cache and TTL were `NOT_COMPARABLE`; they were not recorded as pas
 
 ## Observed evidence
 
-| Effect | Observation | Runtime V4 result |
-| --- | --- | --- |
-| image identity | exact digest and source build SHA were observable | PASS |
-| default user | UID/GID `10001:10001` (`openhands`) | PASS |
-| host home and sentinel | not readable without an explicit mount | PASS for tested launch |
-| Docker socket | absent and not connectable | PASS |
-| inherited provider credentials | none present in process, descendants, argv or scanned files | PASS for tested launch |
-| root filesystem | `ReadonlyRootfs=false`; the user wrote its home layer | FAIL |
-| privilege escalation | image user belongs to `sudo`; `sudo -n id` returned UID 0 | FAIL |
-| no-new-privileges | `/proc/self/status` reported `NoNewPrivs: 0` | FAIL |
-| capabilities | effective capabilities were zero before escalation; launcher did not request `cap-drop=ALL` | FAIL closed-policy requirement |
-| process limit | `PidsLimit=null`; 100 of 100 hostile descendants started | FAIL |
-| memory/CPU limit | both unset in the resulting HostConfig | FAIL |
-| network | default bridge; direct TCP connection to `example.com:443` succeeded | FAIL for networkless profiles |
-| published API | port mapped to `0.0.0.0` and `::`, not loopback-only | FAIL |
-| unauthenticated launch | without forwarded session variables, the server warned it was reachable on all interfaces without authentication | FAIL closed-policy requirement |
-| seccomp | Docker default seccomp was active (`Seccomp: 2`) | PASS, but insufficient alone |
-| broker gateway and secret lease | no equivalent boundary in the tested launch | NOT_COMPARABLE |
-| identity-bound hostile TTL | no equivalent certification mechanism in the tested launch | NOT_COMPARABLE |
+| Effect                          | Observation                                                                                                      | Runtime V4 result              |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| image identity                  | exact digest and source build SHA were observable                                                                | PASS                           |
+| default user                    | UID/GID `10001:10001` (`openhands`)                                                                              | PASS                           |
+| host home and sentinel          | not readable without an explicit mount                                                                           | PASS for tested launch         |
+| Docker socket                   | absent and not connectable                                                                                       | PASS                           |
+| inherited provider credentials  | none present in process, descendants, argv or scanned files                                                      | PASS for tested launch         |
+| root filesystem                 | `ReadonlyRootfs=false`; the user wrote its home layer                                                            | FAIL                           |
+| privilege escalation            | image user belongs to `sudo`; `sudo -n id` returned UID 0                                                        | FAIL                           |
+| no-new-privileges               | `/proc/self/status` reported `NoNewPrivs: 0`                                                                     | FAIL                           |
+| capabilities                    | effective capabilities were zero before escalation; launcher did not request `cap-drop=ALL`                      | FAIL closed-policy requirement |
+| process limit                   | `PidsLimit=null`; 100 of 100 hostile descendants started                                                         | FAIL                           |
+| memory/CPU limit                | both unset in the resulting HostConfig                                                                           | FAIL                           |
+| network                         | default bridge; direct TCP connection to `example.com:443` succeeded                                             | FAIL for networkless profiles  |
+| published API                   | port mapped to `0.0.0.0` and `::`, not loopback-only                                                             | FAIL                           |
+| unauthenticated launch          | without forwarded session variables, the server warned it was reachable on all interfaces without authentication | FAIL closed-policy requirement |
+| seccomp                         | Docker default seccomp was active (`Seccomp: 2`)                                                                 | PASS, but insufficient alone   |
+| broker gateway and secret lease | no equivalent boundary in the tested launch                                                                      | NOT_COMPARABLE                 |
+| identity-bound hostile TTL      | no equivalent certification mechanism in the tested launch                                                       | NOT_COMPARABLE                 |
 
 The temporary container was named `ao-eval-openhands-1-40-1` and was stopped after
 collection. Its `--rm` policy removed it. The downloaded public image remains in the
@@ -114,4 +114,3 @@ must receive fresh identity-bound certification under
 - DockerWorkspace source: <https://github.com/OpenHands/software-agent-sdk/blob/c1877b44129696cb99535c0e074d22a324cc7312/openhands-workspace/openhands/workspace/docker/workspace.py>
 - Agent Canvas Docker quickstart: <https://github.com/OpenHands/OpenHands/blob/cf2c5685735b8f8c55114d1db6166122978d6b4a/README.md>
 - Agent Server image build source: <https://github.com/OpenHands/software-agent-sdk/tree/c1877b44129696cb99535c0e074d22a324cc7312/openhands-agent-server>
-

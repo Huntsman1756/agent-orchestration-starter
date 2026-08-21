@@ -28,12 +28,21 @@ export interface WorktreeManagerV4 {
   verify(record: WorktreeRecordV4): Promise<WorktreeVerificationV4>;
   markTerminal(runId: string, terminal: WorktreeTerminalV4): Promise<WorktreeReconciliationReportV4>;
   report(): Promise<WorktreeReconciliationReportV4>;
-  reconcile(input: { readonly mode: 'REPORT' } | { readonly mode: 'APPLY'; readonly expected_report_hash: string }): Promise<WorktreeReconciliationReportV4>;
+  reconcile(
+    input: { readonly mode: 'REPORT' } | { readonly mode: 'APPLY'; readonly expected_report_hash: string },
+  ): Promise<WorktreeReconciliationReportV4>;
 }
 
 export type WorktreeTerminalStateV4 = 'FINALIZED' | 'FAILED' | 'ABORTED';
 export type WorktreeDispositionV4 = 'MERGED' | 'DISCARD_AFTER_RETENTION' | 'KEEP_BRANCH';
-export type WorktreeClassificationV4 = 'OWNED_ACTIVE' | 'OWNED_TERMINAL_RETAINED' | 'OWNED_TERMINAL_SAFE' | 'OWNED_TERMINAL_DIRTY' | 'OWNED_CLEANED' | 'UNOWNED' | 'INDETERMINATE';
+export type WorktreeClassificationV4 =
+  | 'OWNED_ACTIVE'
+  | 'OWNED_TERMINAL_RETAINED'
+  | 'OWNED_TERMINAL_SAFE'
+  | 'OWNED_TERMINAL_DIRTY'
+  | 'OWNED_CLEANED'
+  | 'UNOWNED'
+  | 'INDETERMINATE';
 
 export interface WorktreeTerminalV4 {
   readonly state: WorktreeTerminalStateV4;
@@ -185,8 +194,10 @@ export function createWorktreeManagerV4(input: WorktreeManagerOptionsV4): Worktr
   mkdirSync(recordsRoot, { recursive: true });
   const retention = Object.freeze({ ...defaultRetention, ...input.retention_seconds });
   const quotas = Object.freeze({ ...defaultQuotas, ...input.quotas });
-  if (Object.values(retention).some((value) => !Number.isSafeInteger(value) || value < 0)
-    || Object.values(quotas).some((value) => !Number.isSafeInteger(value) || value < 1)) {
+  if (
+    Object.values(retention).some((value) => !Number.isSafeInteger(value) || value < 0) ||
+    Object.values(quotas).some((value) => !Number.isSafeInteger(value) || value < 1)
+  ) {
     throw new Error('BROKER_STATE_CORRUPT: invalid worktree lifecycle limits');
   }
   const now = input.now ?? (() => new Date().toISOString());
@@ -194,7 +205,10 @@ export function createWorktreeManagerV4(input: WorktreeManagerOptionsV4): Worktr
 
   const serialize = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = mutationTail.then(operation, operation);
-    mutationTail = result.then(() => undefined, () => undefined);
+    mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   };
 
@@ -202,26 +216,47 @@ export function createWorktreeManagerV4(input: WorktreeManagerOptionsV4): Worktr
 
   const loadManifests = async (): Promise<Array<{ manifest: WorktreeManifestV4 | null; file: string; error: string | null }>> => {
     const files = (await readdir(recordsRoot)).filter((file) => file.endsWith('.json')).sort();
-    return Promise.all(files.map(async (file) => {
-      try {
-        const parsed = JSON.parse(await readFile(join(recordsRoot, file), 'utf8')) as WorktreeManifestV4;
-        const terminalValid = parsed.terminal === null || (typeof parsed.terminal === 'object'
-          && terminalStates.has(parsed.terminal.state) && dispositions.has(parsed.terminal.disposition)
-          && validDate(parsed.terminal.recorded_at) && hashPattern.test(parsed.terminal.evidence_hash));
-        const cleanupValid = parsed.cleanup === null || (typeof parsed.cleanup === 'object'
-          && validDate(parsed.cleanup.cleaned_at) && parsed.cleanup.worktree_removed === true
-          && typeof parsed.cleanup.branch_deleted === 'boolean');
-        const valid = parsed.schema_version === 4 && runPattern.test(parsed.run_id) && file === `${parsed.run_id}.json` && shaPattern.test(parsed.base_sha)
-          && hashPattern.test(parsed.manifest_hash) && parsed.manifest_hash === hashCanonicalV4(manifestBody(parsed))
-          && parsed.repository_root === repositoryRoot && parsed.worktree_parent === worktreeParent
-          && parsed.path === resolve(worktreeParent, parsed.run_id) && contains(worktreeParent, parsed.path)
-          && parsed.branch === `codex/auto/${parsed.run_id}` && validDate(parsed.created_at)
-          && hashPattern.test(parsed.ownership_nonce) && terminalValid && cleanupValid;
-        return valid ? { manifest: parsed, file, error: null } : { manifest: null, file, error: 'manifest identity or self-hash is invalid' };
-      } catch {
-        return { manifest: null, file, error: 'manifest is unreadable' };
-      }
-    }));
+    return Promise.all(
+      files.map(async (file) => {
+        try {
+          const parsed = JSON.parse(await readFile(join(recordsRoot, file), 'utf8')) as WorktreeManifestV4;
+          const terminalValid =
+            parsed.terminal === null ||
+            (typeof parsed.terminal === 'object' &&
+              terminalStates.has(parsed.terminal.state) &&
+              dispositions.has(parsed.terminal.disposition) &&
+              validDate(parsed.terminal.recorded_at) &&
+              hashPattern.test(parsed.terminal.evidence_hash));
+          const cleanupValid =
+            parsed.cleanup === null ||
+            (typeof parsed.cleanup === 'object' &&
+              validDate(parsed.cleanup.cleaned_at) &&
+              parsed.cleanup.worktree_removed === true &&
+              typeof parsed.cleanup.branch_deleted === 'boolean');
+          const valid =
+            parsed.schema_version === 4 &&
+            runPattern.test(parsed.run_id) &&
+            file === `${parsed.run_id}.json` &&
+            shaPattern.test(parsed.base_sha) &&
+            hashPattern.test(parsed.manifest_hash) &&
+            parsed.manifest_hash === hashCanonicalV4(manifestBody(parsed)) &&
+            parsed.repository_root === repositoryRoot &&
+            parsed.worktree_parent === worktreeParent &&
+            parsed.path === resolve(worktreeParent, parsed.run_id) &&
+            contains(worktreeParent, parsed.path) &&
+            parsed.branch === `codex/auto/${parsed.run_id}` &&
+            validDate(parsed.created_at) &&
+            hashPattern.test(parsed.ownership_nonce) &&
+            terminalValid &&
+            cleanupValid;
+          return valid
+            ? { manifest: parsed, file, error: null }
+            : { manifest: null, file, error: 'manifest identity or self-hash is invalid' };
+        } catch {
+          return { manifest: null, file, error: 'manifest is unreadable' };
+        }
+      }),
+    );
   };
 
   const verify = async (record: WorktreeRecordV4): Promise<WorktreeVerificationV4> => {
@@ -241,13 +276,31 @@ export function createWorktreeManagerV4(input: WorktreeManagerOptionsV4): Worktr
     const ownedPaths = new Set<string>();
     for (const item of loaded) {
       if (item.manifest === null) {
-        entries.push(Object.freeze({ run_id: null, path: join(recordsRoot, item.file), branch: null, classification: 'INDETERMINATE', managed_bytes: null, detail: item.error ?? 'invalid manifest' }));
+        entries.push(
+          Object.freeze({
+            run_id: null,
+            path: join(recordsRoot, item.file),
+            branch: null,
+            classification: 'INDETERMINATE',
+            managed_bytes: null,
+            detail: item.error ?? 'invalid manifest',
+          }),
+        );
         continue;
       }
       const manifest = item.manifest;
       ownedPaths.add(manifest.path);
       if (manifest.cleanup !== null) {
-        entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: 'OWNED_CLEANED', managed_bytes: 0, detail: 'durable cleanup tombstone' }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: 'OWNED_CLEANED',
+            managed_bytes: 0,
+            detail: 'durable cleanup tombstone',
+          }),
+        );
         continue;
       }
       const physical = await realpath(manifest.path).catch(() => '');
@@ -255,136 +308,255 @@ export function createWorktreeManagerV4(input: WorktreeManagerOptionsV4): Worktr
       if (physical === '' && listedBranch === undefined && manifest.terminal !== null) {
         const expiresAt = Date.parse(manifest.terminal.recorded_at) + retention[manifest.terminal.state] * 1000;
         const eligible = Number.isFinite(currentTime) && currentTime >= expiresAt;
-        entries.push(Object.freeze({
-          run_id: manifest.run_id, path: manifest.path, branch: manifest.branch,
-          classification: eligible ? 'OWNED_TERMINAL_SAFE' : 'OWNED_TERMINAL_RETAINED', managed_bytes: 0,
-          detail: eligible ? 'retention expired; exact owned path is already absent' : `retained until ${new Date(expiresAt).toISOString()}`,
-        }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: eligible ? 'OWNED_TERMINAL_SAFE' : 'OWNED_TERMINAL_RETAINED',
+            managed_bytes: 0,
+            detail: eligible
+              ? 'retention expired; exact owned path is already absent'
+              : `retained until ${new Date(expiresAt).toISOString()}`,
+          }),
+        );
         continue;
       }
       if (physical === '' || !contains(worktreeParent, physical) || listedBranch !== manifest.branch) {
-        entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: 'INDETERMINATE', managed_bytes: null, detail: 'owned path or Git registration does not match the manifest' }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: 'INDETERMINATE',
+            managed_bytes: null,
+            detail: 'owned path or Git registration does not match the manifest',
+          }),
+        );
         continue;
       }
       const managedBytes = await directoryBytes(physical);
       if (managedBytes === null) {
-        entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: 'INDETERMINATE', managed_bytes: null, detail: 'managed tree could not be measured within the bounded traversal policy' }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: 'INDETERMINATE',
+            managed_bytes: null,
+            detail: 'managed tree could not be measured within the bounded traversal policy',
+          }),
+        );
         continue;
       }
       if (manifest.terminal === null) {
-        entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: 'OWNED_ACTIVE', managed_bytes: managedBytes, detail: 'active managed worktree' }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: 'OWNED_ACTIVE',
+            managed_bytes: managedBytes,
+            detail: 'active managed worktree',
+          }),
+        );
         continue;
       }
       const expiresAt = Date.parse(manifest.terminal.recorded_at) + retention[manifest.terminal.state] * 1000;
       if (!Number.isFinite(currentTime) || currentTime < expiresAt) {
-        entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: 'OWNED_TERMINAL_RETAINED', managed_bytes: managedBytes, detail: `retained until ${new Date(expiresAt).toISOString()}` }));
+        entries.push(
+          Object.freeze({
+            run_id: manifest.run_id,
+            path: manifest.path,
+            branch: manifest.branch,
+            classification: 'OWNED_TERMINAL_RETAINED',
+            managed_bytes: managedBytes,
+            detail: `retained until ${new Date(expiresAt).toISOString()}`,
+          }),
+        );
         continue;
       }
       const dirty = (await runGit(physical, ['status', '--porcelain=v2', '-z'])).stdout.length > 0;
-      entries.push(Object.freeze({ run_id: manifest.run_id, path: manifest.path, branch: manifest.branch, classification: dirty ? 'OWNED_TERMINAL_DIRTY' : 'OWNED_TERMINAL_SAFE', managed_bytes: managedBytes, detail: dirty ? 'retention expired; exact owned path requires forced removal' : 'retention expired; exact owned path is clean' }));
+      entries.push(
+        Object.freeze({
+          run_id: manifest.run_id,
+          path: manifest.path,
+          branch: manifest.branch,
+          classification: dirty ? 'OWNED_TERMINAL_DIRTY' : 'OWNED_TERMINAL_SAFE',
+          managed_bytes: managedBytes,
+          detail: dirty ? 'retention expired; exact owned path requires forced removal' : 'retention expired; exact owned path is clean',
+        }),
+      );
     }
     const directoryEntries = await readdir(worktreeParent, { withFileTypes: true });
     for (const entry of directoryEntries) {
       if (entry.name === metadataDirectoryName) continue;
       const path = join(worktreeParent, entry.name);
-      if (!ownedPaths.has(path)) entries.push(Object.freeze({ run_id: null, path, branch: null, classification: 'UNOWNED', managed_bytes: null, detail: 'no valid ownership manifest; no action permitted' }));
+      if (!ownedPaths.has(path))
+        entries.push(
+          Object.freeze({
+            run_id: null,
+            path,
+            branch: null,
+            classification: 'UNOWNED',
+            managed_bytes: null,
+            detail: 'no valid ownership manifest; no action permitted',
+          }),
+        );
     }
     entries.sort((left, right) => left.path.localeCompare(right.path));
-    const body = Object.freeze({ schema_version: 4 as const, repository_root: repositoryRoot, worktree_parent: worktreeParent, entries: Object.freeze(entries) });
+    const body = Object.freeze({
+      schema_version: 4 as const,
+      repository_root: repositoryRoot,
+      worktree_parent: worktreeParent,
+      entries: Object.freeze(entries),
+    });
     return Object.freeze({ ...body, report_hash: hashCanonicalV4(body) });
   };
 
-  const branchExists = async (branch: string): Promise<boolean> => runGit(repositoryRoot, ['show-ref', '--verify', `refs/heads/${branch}`]).then(() => true, () => false);
+  const branchExists = async (branch: string): Promise<boolean> =>
+    runGit(repositoryRoot, ['show-ref', '--verify', `refs/heads/${branch}`]).then(
+      () => true,
+      () => false,
+    );
 
   const applyReport = async (expectedReportHash: string): Promise<WorktreeReconciliationReportV4> => {
     const report = await buildReport();
     if (report.report_hash !== expectedReportHash) throw new Error('WORKTREE_CLEANUP_FAILED: report hash changed');
-    const manifests = new Map((await loadManifests()).flatMap((item) => item.manifest === null ? [] : [[item.manifest.run_id, item.manifest] as const]));
+    const manifests = new Map(
+      (await loadManifests()).flatMap((item) => (item.manifest === null ? [] : [[item.manifest.run_id, item.manifest] as const])),
+    );
     for (const entry of report.entries) {
       if (!['OWNED_TERMINAL_SAFE', 'OWNED_TERMINAL_DIRTY'].includes(entry.classification) || entry.run_id === null) continue;
       const manifest = manifests.get(entry.run_id);
       if (manifest === undefined || manifest.terminal === null || manifest.cleanup !== null) continue;
       const refreshed = worktreeMap(gitTextV4(await runGit(repositoryRoot, ['worktree', 'list', '--porcelain'])));
       const registeredBranch = refreshed.get(resolve(manifest.path));
-      if (registeredBranch !== undefined && registeredBranch !== manifest.branch) throw new Error('WORKTREE_CLEANUP_FAILED: worktree identity changed');
+      if (registeredBranch !== undefined && registeredBranch !== manifest.branch)
+        throw new Error('WORKTREE_CLEANUP_FAILED: worktree identity changed');
       if (registeredBranch === manifest.branch) {
-        await runGit(repositoryRoot, entry.classification === 'OWNED_TERMINAL_DIRTY'
-          ? ['worktree', 'remove', '--force', manifest.path]
-          : ['worktree', 'remove', manifest.path]);
-      } else if (await lstat(manifest.path).then(() => true, () => false)) {
+        await runGit(
+          repositoryRoot,
+          entry.classification === 'OWNED_TERMINAL_DIRTY'
+            ? ['worktree', 'remove', '--force', manifest.path]
+            : ['worktree', 'remove', manifest.path],
+        );
+      } else if (
+        await lstat(manifest.path).then(
+          () => true,
+          () => false,
+        )
+      ) {
         throw new Error('WORKTREE_CLEANUP_FAILED: unregistered path occupies an owned location');
       }
       let branchDeleted = false;
-      if (manifest.terminal.disposition !== 'KEEP_BRANCH' && await branchExists(manifest.branch)) {
+      if (manifest.terminal.disposition !== 'KEEP_BRANCH' && (await branchExists(manifest.branch))) {
         await runGit(repositoryRoot, ['branch', '-D', manifest.branch]);
         branchDeleted = true;
       }
-      const updated = sealManifest({ ...manifestBody(manifest), cleanup: Object.freeze({ cleaned_at: now(), worktree_removed: true, branch_deleted: branchDeleted }) });
+      const updated = sealManifest({
+        ...manifestBody(manifest),
+        cleanup: Object.freeze({ cleaned_at: now(), worktree_removed: true, branch_deleted: branchDeleted }),
+      });
       await atomicManifest(manifestPath(manifest.run_id), updated);
     }
     return buildReport();
   };
 
   return Object.freeze({
-    create: (contract: RuntimeWorkContractV4): Promise<WorktreeRecordV4> => serialize(async () => {
-      if (!shaPattern.test(contract.base_sha) || !runPattern.test(contract.run_id)) {
-        throw new Error('OUT_OF_SCOPE_CHANGE: worktree identity is not immutable');
-      }
-      const preflight = await buildReport();
-      await applyReport(preflight.report_hash);
-      const current = await buildReport();
-      if (current.entries.some((entry) => entry.classification === 'INDETERMINATE')) {
-        throw new Error('WORKTREE_CREATION_FAILED: ownership state is indeterminate');
-      }
-      const active = current.entries.filter((entry) => entry.classification === 'OWNED_ACTIVE').length;
-      const managed = current.entries.filter((entry) => entry.classification.startsWith('OWNED_') && entry.classification !== 'OWNED_CLEANED').length;
-      const bytes = current.entries.reduce((total, entry) => total + (entry.managed_bytes ?? 0), 0);
-      if (active >= quotas.max_active_worktrees) throw new Error('WORKTREE_CREATION_FAILED: active worktree quota exceeded');
-      if (managed >= quotas.max_managed_worktrees) throw new Error('WORKTREE_CREATION_FAILED: managed worktree quota exceeded');
-      if (bytes >= quotas.max_managed_bytes) throw new Error('WORKTREE_CREATION_FAILED: managed byte quota exceeded');
-      const exactBase = gitTextV4(await runGit(repositoryRoot, ['rev-parse', '--verify', `${contract.base_sha}^{commit}`])).trim();
-      if (exactBase !== contract.base_sha) throw new Error('OUT_OF_SCOPE_CHANGE: base commit mismatch');
-      const branch = `codex/auto/${contract.run_id}`;
-      const worktreePath = resolve(worktreeParent, contract.run_id);
-      if (!contains(worktreeParent, worktreePath) || await lstat(worktreePath).then(() => true, () => false)
-        || await lstat(manifestPath(contract.run_id)).then(() => true, () => false)) {
-        throw new Error('BROKER_STATE_CORRUPT: worktree path is unavailable');
-      }
-      await runGit(repositoryRoot, ['worktree', 'add', '-b', branch, worktreePath, contract.base_sha]);
-      try {
-        const body = Object.freeze({
-          schema_version: 4 as const, run_id: contract.run_id, repository_root: repositoryRoot, worktree_parent: worktreeParent,
-          path: worktreePath, branch, base_sha: contract.base_sha, created_at: now(),
-          ownership_nonce: hashCanonicalV4({ run_id: contract.run_id, path: worktreePath, base_sha: contract.base_sha, created_at: now() }),
-          terminal: null, cleanup: null,
-        });
-        const manifest = sealManifest(body);
-        await atomicManifest(manifestPath(contract.run_id), manifest);
-        const record = Object.freeze({ run_id: contract.run_id, path: worktreePath, branch, base_sha: contract.base_sha, manifest_hash: manifest.manifest_hash });
-        if (!(await verify(record)).valid) throw new Error('BROKER_STATE_CORRUPT: created worktree failed verification');
-        return record;
-      } catch (error) {
-        await runGit(repositoryRoot, ['worktree', 'remove', '--force', worktreePath]).catch(() => undefined);
-        if (await branchExists(branch)) await runGit(repositoryRoot, ['branch', '-D', branch]).catch(() => undefined);
-        await unlink(manifestPath(contract.run_id)).catch(() => undefined);
-        throw error;
-      }
-    }),
+    create: (contract: RuntimeWorkContractV4): Promise<WorktreeRecordV4> =>
+      serialize(async () => {
+        if (!shaPattern.test(contract.base_sha) || !runPattern.test(contract.run_id)) {
+          throw new Error('OUT_OF_SCOPE_CHANGE: worktree identity is not immutable');
+        }
+        const preflight = await buildReport();
+        await applyReport(preflight.report_hash);
+        const current = await buildReport();
+        if (current.entries.some((entry) => entry.classification === 'INDETERMINATE')) {
+          throw new Error('WORKTREE_CREATION_FAILED: ownership state is indeterminate');
+        }
+        const active = current.entries.filter((entry) => entry.classification === 'OWNED_ACTIVE').length;
+        const managed = current.entries.filter(
+          (entry) => entry.classification.startsWith('OWNED_') && entry.classification !== 'OWNED_CLEANED',
+        ).length;
+        const bytes = current.entries.reduce((total, entry) => total + (entry.managed_bytes ?? 0), 0);
+        if (active >= quotas.max_active_worktrees) throw new Error('WORKTREE_CREATION_FAILED: active worktree quota exceeded');
+        if (managed >= quotas.max_managed_worktrees) throw new Error('WORKTREE_CREATION_FAILED: managed worktree quota exceeded');
+        if (bytes >= quotas.max_managed_bytes) throw new Error('WORKTREE_CREATION_FAILED: managed byte quota exceeded');
+        const exactBase = gitTextV4(await runGit(repositoryRoot, ['rev-parse', '--verify', `${contract.base_sha}^{commit}`])).trim();
+        if (exactBase !== contract.base_sha) throw new Error('OUT_OF_SCOPE_CHANGE: base commit mismatch');
+        const branch = `codex/auto/${contract.run_id}`;
+        const worktreePath = resolve(worktreeParent, contract.run_id);
+        if (
+          !contains(worktreeParent, worktreePath) ||
+          (await lstat(worktreePath).then(
+            () => true,
+            () => false,
+          )) ||
+          (await lstat(manifestPath(contract.run_id)).then(
+            () => true,
+            () => false,
+          ))
+        ) {
+          throw new Error('BROKER_STATE_CORRUPT: worktree path is unavailable');
+        }
+        await runGit(repositoryRoot, ['worktree', 'add', '-b', branch, worktreePath, contract.base_sha]);
+        try {
+          const body = Object.freeze({
+            schema_version: 4 as const,
+            run_id: contract.run_id,
+            repository_root: repositoryRoot,
+            worktree_parent: worktreeParent,
+            path: worktreePath,
+            branch,
+            base_sha: contract.base_sha,
+            created_at: now(),
+            ownership_nonce: hashCanonicalV4({
+              run_id: contract.run_id,
+              path: worktreePath,
+              base_sha: contract.base_sha,
+              created_at: now(),
+            }),
+            terminal: null,
+            cleanup: null,
+          });
+          const manifest = sealManifest(body);
+          await atomicManifest(manifestPath(contract.run_id), manifest);
+          const record = Object.freeze({
+            run_id: contract.run_id,
+            path: worktreePath,
+            branch,
+            base_sha: contract.base_sha,
+            manifest_hash: manifest.manifest_hash,
+          });
+          if (!(await verify(record)).valid) throw new Error('BROKER_STATE_CORRUPT: created worktree failed verification');
+          return record;
+        } catch (error) {
+          await runGit(repositoryRoot, ['worktree', 'remove', '--force', worktreePath]).catch(() => undefined);
+          if (await branchExists(branch)) await runGit(repositoryRoot, ['branch', '-D', branch]).catch(() => undefined);
+          await unlink(manifestPath(contract.run_id)).catch(() => undefined);
+          throw error;
+        }
+      }),
     verify,
-    markTerminal: (runId: string, terminal: WorktreeTerminalV4) => serialize(async () => {
-      if (!runPattern.test(runId) || !validDate(terminal.recorded_at) || !hashPattern.test(terminal.evidence_hash)) {
-        throw new Error('WORKTREE_CLEANUP_FAILED: terminal evidence is invalid');
-      }
-      const loaded = (await loadManifests()).find((item) => item.manifest?.run_id === runId)?.manifest;
-      if (loaded === undefined || loaded === null || loaded.cleanup !== null) throw new Error('WORKTREE_CLEANUP_FAILED: owned active worktree not found');
-      if (loaded.terminal !== null && canonicalJsonV4(loaded.terminal) !== canonicalJsonV4(terminal)) {
-        throw new Error('WORKTREE_CLEANUP_FAILED: terminal evidence changed');
-      }
-      if (loaded.terminal === null) await atomicManifest(manifestPath(runId), sealManifest({ ...manifestBody(loaded), terminal: Object.freeze({ ...terminal }) }));
-      const report = await buildReport();
-      return applyReport(report.report_hash);
-    }),
+    markTerminal: (runId: string, terminal: WorktreeTerminalV4) =>
+      serialize(async () => {
+        if (!runPattern.test(runId) || !validDate(terminal.recorded_at) || !hashPattern.test(terminal.evidence_hash)) {
+          throw new Error('WORKTREE_CLEANUP_FAILED: terminal evidence is invalid');
+        }
+        const loaded = (await loadManifests()).find((item) => item.manifest?.run_id === runId)?.manifest;
+        if (loaded === undefined || loaded === null || loaded.cleanup !== null)
+          throw new Error('WORKTREE_CLEANUP_FAILED: owned active worktree not found');
+        if (loaded.terminal !== null && canonicalJsonV4(loaded.terminal) !== canonicalJsonV4(terminal)) {
+          throw new Error('WORKTREE_CLEANUP_FAILED: terminal evidence changed');
+        }
+        if (loaded.terminal === null)
+          await atomicManifest(manifestPath(runId), sealManifest({ ...manifestBody(loaded), terminal: Object.freeze({ ...terminal }) }));
+        const report = await buildReport();
+        return applyReport(report.report_hash);
+      }),
     report: () => serialize(buildReport),
-    reconcile: (request: { readonly mode: 'REPORT' } | { readonly mode: 'APPLY'; readonly expected_report_hash: string }) => serialize(async () => request.mode === 'REPORT' ? buildReport() : applyReport(request.expected_report_hash)),
+    reconcile: (request: { readonly mode: 'REPORT' } | { readonly mode: 'APPLY'; readonly expected_report_hash: string }) =>
+      serialize(async () => (request.mode === 'REPORT' ? buildReport() : applyReport(request.expected_report_hash))),
   });
 }

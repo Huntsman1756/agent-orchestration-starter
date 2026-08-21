@@ -2,7 +2,17 @@ import { pilotEventV3Schema, type PilotEventV3 } from './contracts.js';
 
 const MAX_STRING_LENGTH = 128;
 const RAW_CONTENT_FIELDS = new Set(['prompt', 'response', 'transcript', 'diff', 'source', 'environment']);
-const SECRET_BEARING_FIELDS = new Set(['apikey', 'secret', 'password', 'passwd', 'authorization', 'credential', 'privatekey', 'accesstoken', 'token']);
+const SECRET_BEARING_FIELDS = new Set([
+  'apikey',
+  'secret',
+  'password',
+  'passwd',
+  'authorization',
+  'credential',
+  'privatekey',
+  'accesstoken',
+  'token',
+]);
 const CREDENTIAL_VALUE_PATTERNS = [
   /^sk-[A-Za-z0-9_-]{16,}$/,
   /^AKIA[0-9A-Z]{16}$/,
@@ -18,7 +28,7 @@ function normalizedKey(key: string): string {
 function assertSafeValue(value: unknown, path: string, seen: Set<object>): void {
   if (typeof value === 'string') {
     if (value.length > MAX_STRING_LENGTH) throw new Error(`Event value at ${path} is too long`);
-    if (CREDENTIAL_VALUE_PATTERNS.some(pattern => pattern.test(value))) {
+    if (CREDENTIAL_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
       throw new Error(`Event value at ${path} has credential-shaped content`);
     }
     return;

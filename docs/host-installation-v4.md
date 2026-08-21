@@ -4,12 +4,12 @@ Runtime V4 is installed once per trusted machine and activated by reference in a
 
 ## Ownership boundary
 
-| Location | Owner | Contents |
-| --- | --- | --- |
-| central host root | machine operator | immutable runtime installations, repository registry and broker state |
+| Location                  | Owner            | Contents                                                                            |
+| ------------------------- | ---------------- | ----------------------------------------------------------------------------------- |
+| central host root         | machine operator | immutable runtime installations, repository registry and broker state               |
 | trusted host release path | machine operator | thin root, strict component manifest and eight independently certified host modules |
-| repository | repository owner | policy, replaceable model profile and `.agent-orchestration/activation-v4.json` |
-| `.codex/config.toml` | repository owner | read-only frontier context and one required MCP binding to the central runtime |
+| repository                | repository owner | policy, replaceable model profile and `.agent-orchestration/activation-v4.json`     |
+| `.codex/config.toml`      | repository owner | read-only frontier context and one required MCP binding to the central runtime      |
 
 The stable policy names roles, capabilities, source sensitivity and permissions. Model/provider identifiers and their dated guidance stay in the replaceable profile. Host code is installed once per machine and must not contain repository routing rules. The privileged boundary is modular even when one release artifact distributes it; see [`modular-host-components-v4.md`](modular-host-components-v4.md).
 

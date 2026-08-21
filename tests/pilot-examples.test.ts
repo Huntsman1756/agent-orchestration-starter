@@ -25,13 +25,15 @@ test('routing gate example is manifest-bound and valid in Zod and JSON Schema', 
   assert.equal(ajv.compile(await jsonSchema('pilot-routing-gate-v3.schema.json'))(rawGate), true);
   assert.deepEqual([gate.pilot_id, gate.manifest_hash], [manifest.pilot_id, manifest.manifest_hash]);
   assert.equal(gate.thresholds.interval_algorithm_version, manifest.stage_thresholds.interval_algorithm_version);
-  assert.deepEqual(gate.strata_policy.map(value => value.matching_stratum),
-    [...new Set(manifest.blocks.map(block => block.matching_stratum))].sort());
+  assert.deepEqual(
+    gate.strata_policy.map((value) => value.matching_stratum),
+    [...new Set(manifest.blocks.map((block) => block.matching_stratum))].sort(),
+  );
 });
 
 test('event JSONL example contains independently schema-valid provider-neutral events', async () => {
   const manifest = loadPilotManifestV3(parse(await fixture('pilot-manifest-v3.yaml')));
-  const lines = (await fixture('pilot-events-v3.jsonl')).split(/\r?\n/u).filter(line => line.trim().length > 0);
+  const lines = (await fixture('pilot-events-v3.jsonl')).split(/\r?\n/u).filter((line) => line.trim().length > 0);
   assert.ok(lines.length > 0);
   const schema = await jsonSchema('pilot-event-v3.schema.json');
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);

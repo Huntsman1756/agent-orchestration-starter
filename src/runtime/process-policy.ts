@@ -14,22 +14,41 @@ export interface ResolvedValidationV4 {
 }
 
 const issued = new WeakSet<object>();
-function failed(message: string): never { throw new Error(`VALIDATION_FAILED: ${message}`); }
+function failed(message: string): never {
+  throw new Error(`VALIDATION_FAILED: ${message}`);
+}
 
 function validateCommand(argv: readonly string[]): void {
-  if (argv.length < 1 || argv.length > 128 || argv.some((value) => value.length < 1 || value.length > 8192 || /[;&|`$<>\0\r\n]/.test(value))) {
+  if (
+    argv.length < 1 ||
+    argv.length > 128 ||
+    argv.some((value) => value.length < 1 || value.length > 8192 || /[;&|`$<>\0\r\n]/.test(value))
+  ) {
     failed('validation argv is unsafe');
   }
-  const executable = basename(argv[0]!).toLowerCase().replace(/\.(?:cmd|exe)$/i, '');
-  if (['sh', 'bash', 'zsh', 'cmd', 'powershell', 'pwsh', 'npx', 'bunx'].includes(executable)) failed('shell or downloader validation is forbidden');
-  if (['npm', 'pnpm', 'yarn', 'bun'].includes(executable)
-    && ['install', 'i', 'add', 'ci', 'publish', 'pack', 'link', 'exec'].includes((argv[1] ?? '').toLowerCase())) {
+  const executable = basename(argv[0]!)
+    .toLowerCase()
+    .replace(/\.(?:cmd|exe)$/i, '');
+  if (['sh', 'bash', 'zsh', 'cmd', 'powershell', 'pwsh', 'npx', 'bunx'].includes(executable))
+    failed('shell or downloader validation is forbidden');
+  if (
+    ['npm', 'pnpm', 'yarn', 'bun'].includes(executable) &&
+    ['install', 'i', 'add', 'ci', 'publish', 'pack', 'link', 'exec'].includes((argv[1] ?? '').toLowerCase())
+  ) {
     failed('install or lifecycle validation is forbidden');
   }
 }
 
 function validWorkingDirectory(value: string): boolean {
-  return value === '.' || (value.length <= 512 && value === posix.normalize(value) && !value.startsWith('/') && value !== '..' && !value.startsWith('../') && !value.includes('\\'));
+  return (
+    value === '.' ||
+    (value.length <= 512 &&
+      value === posix.normalize(value) &&
+      !value.startsWith('/') &&
+      value !== '..' &&
+      !value.startsWith('../') &&
+      !value.includes('\\'))
+  );
 }
 
 export function resolveValidation(policy: FrozenRepositoryPolicyV4, validationId: string): ResolvedValidationV4 {
@@ -37,7 +56,8 @@ export function resolveValidation(policy: FrozenRepositoryPolicyV4, validationId
   if (selected === undefined) failed(`unknown validation ID: ${validationId}`);
   validateCommand(selected.argv);
   if (!validWorkingDirectory(selected.workingDirectory)) failed('validation working directory is unsafe');
-  if (!Number.isSafeInteger(selected.timeoutSeconds) || selected.timeoutSeconds < 1 || selected.timeoutSeconds > 3600) failed('validation timeout is outside policy');
+  if (!Number.isSafeInteger(selected.timeoutSeconds) || selected.timeoutSeconds < 1 || selected.timeoutSeconds > 3600)
+    failed('validation timeout is outside policy');
   if (selected.sandboxProfile !== 'VALIDATION_UNTRUSTED') failed('validation sandbox profile is not allowed');
   const body = Object.freeze({
     validation_id: validationId,

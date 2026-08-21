@@ -18,12 +18,12 @@ The broker-owned OpenCode config declares NaN through `@ai-sdk/openai-compatible
 
 Use these as starting points, then qualify and benchmark the exact model/harness combination:
 
-| Family | Prompt pack | Inference starting point | Migration risk to test |
-|---|---|---|---|
-| OpenAI reasoning/coding | Lean Markdown, explicit constraints, evidence, stopping condition | Low for economical coding; high only for measured frontier gains | Excess instructions, unnecessary effort, unsupported Codex config |
-| Anthropic Claude | Clear role and constraints; XML is useful for mixed context; explicitly damp overengineering when observed | Provider default/adaptive thinking first | Overexploration, unnecessary abstractions, excessive subagents |
-| Google Gemini | Direct consistent Markdown or XML; put large context before the final task | Provider default thinking first; specify verbosity | Long-context ordering, fallback responses, tool/reasoning configuration drift |
-| Unknown/new family | Minimal plain or Markdown prompt with no provider-specific inference override | `provider-default` | Qualification must prove structured output, bounded edits, repair, isolation, and credential separation |
+| Family                  | Prompt pack                                                                                                | Inference starting point                                         | Migration risk to test                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| OpenAI reasoning/coding | Lean Markdown, explicit constraints, evidence, stopping condition                                          | Low for economical coding; high only for measured frontier gains | Excess instructions, unnecessary effort, unsupported Codex config                                       |
+| Anthropic Claude        | Clear role and constraints; XML is useful for mixed context; explicitly damp overengineering when observed | Provider default/adaptive thinking first                         | Overexploration, unnecessary abstractions, excessive subagents                                          |
+| Google Gemini           | Direct consistent Markdown or XML; put large context before the final task                                 | Provider default thinking first; specify verbosity               | Long-context ordering, fallback responses, tool/reasoning configuration drift                           |
+| Unknown/new family      | Minimal plain or Markdown prompt with no provider-specific inference override                              | `provider-default`                                               | Qualification must prove structured output, bounded edits, repair, isolation, and credential separation |
 
 Sources: [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model), [Anthropic prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices), [Google Gemini prompt design](https://ai.google.dev/gemini-api/docs/prompting-strategies), and [OpenCode agent options](https://opencode.ai/docs/agents).
 

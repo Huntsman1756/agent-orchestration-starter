@@ -21,9 +21,21 @@ function profile(): ModelProfile {
     version: 1,
     id: 'portable',
     assignments: {
-      orchestrator: { provider: 'frontier-vendor', model: 'frontier-plan', tier: 'frontier', reasoningEffort: 'high', capabilities: ['planning', 'delegation', 'coding'] },
+      orchestrator: {
+        provider: 'frontier-vendor',
+        model: 'frontier-plan',
+        tier: 'frontier',
+        reasoningEffort: 'high',
+        capabilities: ['planning', 'delegation', 'coding'],
+      },
       executor: { provider: 'economy-vendor', model: 'economy-code', tier: 'economy', reasoningEffort: 'low', capabilities: ['coding'] },
-      reviewer: { provider: 'frontier-vendor', model: 'frontier-review', tier: 'frontier', reasoningEffort: 'high', capabilities: ['review'] },
+      reviewer: {
+        provider: 'frontier-vendor',
+        model: 'frontier-review',
+        tier: 'frontier',
+        reasoningEffort: 'high',
+        capabilities: ['review'],
+      },
     },
   };
 }

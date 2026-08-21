@@ -22,8 +22,28 @@ function profile(): RuntimeProfileV4 {
     bindings: {
       ...base.bindings,
       executor: { ...base.bindings.executor, execution: execution(['mechanical', 'localized'], 14, true) },
-      reasoningExecutor: { ...base.bindings.executor, model: 'reasoning-model', execution: execution(['semantic-debugging', 'cross-file-reasoning', 'multimodal'], 32, true) },
-      frontierExecutor: { ...base.bindings.frontierExecutor, execution: execution(['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal', 'long-horizon', 'architecture', 'security-sensitive', 'migration'], 64) },
+      reasoningExecutor: {
+        ...base.bindings.executor,
+        model: 'reasoning-model',
+        execution: execution(['semantic-debugging', 'cross-file-reasoning', 'multimodal'], 32, true),
+      },
+      frontierExecutor: {
+        ...base.bindings.frontierExecutor,
+        execution: execution(
+          [
+            'mechanical',
+            'localized',
+            'semantic-debugging',
+            'cross-file-reasoning',
+            'multimodal',
+            'long-horizon',
+            'architecture',
+            'security-sensitive',
+            'migration',
+          ],
+          64,
+        ),
+      },
     },
   };
 }
@@ -37,7 +57,11 @@ function request(taskTraits: any[], overrides: Partial<RuntimeTaskRequestV4> = {
 }
 
 test('routes explicit mechanical work to the qualified primary economy binding with adaptive limits', () => {
-  const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['mechanical', 'localized']), profile: profile(), sourceSensitivity: 'PUBLIC' });
+  const policy = resolveAdaptiveExecutionPolicyV4({
+    request: request(['mechanical', 'localized']),
+    profile: profile(),
+    sourceSensitivity: 'PUBLIC',
+  });
   assert.equal(policy.lane, 'MECHANICAL_ECONOMY');
   assert.equal(policy.executorRole, 'executor');
   assert.equal(policy.maxSteps, 9);
@@ -47,7 +71,11 @@ test('routes explicit mechanical work to the qualified primary economy binding w
 });
 
 test('routes semantic debugging to a separately qualified reasoning worker', () => {
-  const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['semantic-debugging']), profile: profile(), sourceSensitivity: 'PUBLIC' });
+  const policy = resolveAdaptiveExecutionPolicyV4({
+    request: request(['semantic-debugging']),
+    profile: profile(),
+    sourceSensitivity: 'PUBLIC',
+  });
   assert.equal(policy.lane, 'REASONING_ECONOMY');
   assert.equal(policy.executorRole, 'reasoningExecutor');
   assert.ok(policy.maxSteps >= 16);
@@ -56,7 +84,11 @@ test('routes semantic debugging to a separately qualified reasoning worker', () 
 test('elevates reasoning work to frontier when no reasoning binding is qualified', () => {
   const value = profile();
   delete value.bindings.reasoningExecutor;
-  const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['semantic-debugging']), profile: value, sourceSensitivity: 'PUBLIC' });
+  const policy = resolveAdaptiveExecutionPolicyV4({
+    request: request(['semantic-debugging']),
+    profile: value,
+    sourceSensitivity: 'PUBLIC',
+  });
   assert.equal(policy.lane, 'FRONTIER_EXECUTION');
   assert.equal(policy.executorRole, 'frontierExecutor');
   assert.ok(policy.reasons.some((reason) => reason.includes('lack the required')));
@@ -71,8 +103,16 @@ test('never routes architecture or an explicit frontier request to an economy wo
 });
 
 test('legacy task classes retain deterministic conservative classification', () => {
-  const mechanical = resolveAdaptiveExecutionPolicyV4({ request: validTaskRequest() as RuntimeTaskRequestV4, profile: profile(), sourceSensitivity: 'PUBLIC' });
-  const debugging = resolveAdaptiveExecutionPolicyV4({ request: { ...(validTaskRequest() as RuntimeTaskRequestV4), task_class: 'bug-fix' }, profile: profile(), sourceSensitivity: 'PUBLIC' });
+  const mechanical = resolveAdaptiveExecutionPolicyV4({
+    request: validTaskRequest() as RuntimeTaskRequestV4,
+    profile: profile(),
+    sourceSensitivity: 'PUBLIC',
+  });
+  const debugging = resolveAdaptiveExecutionPolicyV4({
+    request: { ...(validTaskRequest() as RuntimeTaskRequestV4), task_class: 'bug-fix' },
+    profile: profile(),
+    sourceSensitivity: 'PUBLIC',
+  });
   assert.equal(mechanical.executorRole, 'executor');
   assert.equal(debugging.executorRole, 'reasoningExecutor');
 });
@@ -95,19 +135,34 @@ test('automatically contracts routing away from a quarantined exact binding', ()
   const value = profile();
   value.bindings.reasoningExecutor = {
     ...value.bindings.reasoningExecutor!,
-    execution: { ...value.bindings.reasoningExecutor!.execution!, supportedTaskTraits: ['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal'] },
+    execution: {
+      ...value.bindings.reasoningExecutor!.execution!,
+      supportedTaskTraits: ['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal'],
+    },
   };
   const bindingHash = hashCanonicalV4(value.bindings.executor);
-  const observations = ['2026-08-21T10:00:00.000Z', '2026-08-21T10:01:00.000Z'].map((recordedAt, index) => createRuntimeBindingHealthObservationV4({
-    schemaVersion: 4,
-    observationId: `health_failure_${index}`,
+  const observations = ['2026-08-21T10:00:00.000Z', '2026-08-21T10:01:00.000Z'].map((recordedAt, index) =>
+    createRuntimeBindingHealthObservationV4({
+      schemaVersion: 4,
+      observationId: `health_failure_${index}`,
+      bindingHash,
+      taskTrait: 'mechanical',
+      recordedAt,
+      outcome: 'INVALID_OUTPUT',
+    }),
+  );
+  const snapshot = evaluateRuntimeBindingHealthV4({
     bindingHash,
     taskTrait: 'mechanical',
-    recordedAt,
-    outcome: 'INVALID_OUTPUT',
-  }));
-  const snapshot = evaluateRuntimeBindingHealthV4({ bindingHash, taskTrait: 'mechanical', observations, evaluatedAt: '2026-08-21T10:01:01.000Z' });
-  const policy = resolveAdaptiveExecutionPolicyV4({ request: request(['mechanical']), profile: value, sourceSensitivity: 'PUBLIC', bindingHealth: [snapshot] });
+    observations,
+    evaluatedAt: '2026-08-21T10:01:01.000Z',
+  });
+  const policy = resolveAdaptiveExecutionPolicyV4({
+    request: request(['mechanical']),
+    profile: value,
+    sourceSensitivity: 'PUBLIC',
+    bindingHealth: [snapshot],
+  });
   assert.equal(policy.executorRole, 'reasoningExecutor');
   assert.ok(policy.reasons.some((reason) => reason.includes('quarantined')));
   assert.deepEqual(policy.healthEvidenceHashes, [snapshot.snapshotHash]);

@@ -155,4 +155,3 @@ Implementation is not ready for activation until tests prove that:
 - retrieval is deterministic, bounded and reproducible;
 - expiry, supersession and revocation remove content from future bundles; and
 - crash recovery cannot duplicate transitions or reactivate revoked content.
-

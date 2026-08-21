@@ -37,14 +37,14 @@ experiment and cannot be changed after the first run.
 
 The baseline must contain all of these exact identities:
 
-| Field | Meaning |
-| --- | --- |
-| `runtime_commit_sha` | Full 40-character SHA of the repository base (`main`) |
-| `policy_hash` | Frozen repository policy and routing authority |
-| `host_driver_hash` | Privileged host-driver identity |
-| `host_certification_hash` | Exact host certification evidence |
-| `installation_manifest_hash` | Central installation identity |
-| `validation_surface_hash` | Commands and validation configuration |
+| Field                        | Meaning                                               |
+| ---------------------------- | ----------------------------------------------------- |
+| `runtime_commit_sha`         | Full 40-character SHA of the repository base (`main`) |
+| `policy_hash`                | Frozen repository policy and routing authority        |
+| `host_driver_hash`           | Privileged host-driver identity                       |
+| `host_certification_hash`    | Exact host certification evidence                     |
+| `installation_manifest_hash` | Central installation identity                         |
+| `validation_surface_hash`    | Commands and validation configuration                 |
 
 The execution identities that may differ between the two routes are frozen in
 each `route_bindings` entry: `profile_hash`, `worker_capability_hash`,

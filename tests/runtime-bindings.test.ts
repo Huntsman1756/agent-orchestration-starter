@@ -15,7 +15,9 @@ test('resolves the economy executor binding from the profile', () => {
   assert.equal(binding.binding.model, 'economy-coder');
   assert.equal(Object.isFrozen(binding.binding.guidance), true);
   assert.equal(Object.isFrozen(binding.binding.guidance.instructions), true);
-  assert.throws(() => { (binding.binding.guidance as { id: string }).id = 'mutated'; }, /read only|Cannot assign/i);
+  assert.throws(() => {
+    (binding.binding.guidance as { id: string }).id = 'mutated';
+  }, /read only|Cannot assign/i);
 });
 
 test('resolves the distinct economy escalation binding from the profile', () => {
@@ -23,7 +25,12 @@ test('resolves the distinct economy escalation binding from the profile', () => 
   profile.bindings.executor.model = 'economy-coder';
   profile.bindings.escalationExecutor.model = 'escalation-coder';
 
-  const binding = resolveBinding({ profile: profile as RuntimeProfileV4, route: 'ECONOMY', stage: 'ESCALATION', sourceSensitivity: 'PUBLIC' });
+  const binding = resolveBinding({
+    profile: profile as RuntimeProfileV4,
+    route: 'ECONOMY',
+    stage: 'ESCALATION',
+    sourceSensitivity: 'PUBLIC',
+  });
 
   assert.equal(binding.role, 'escalationExecutor');
   assert.equal(binding.binding.model, 'escalation-coder');
@@ -31,7 +38,13 @@ test('resolves the distinct economy escalation binding from the profile', () => 
 
 test('rejects an escalation stage on a direct frontier route', () => {
   assert.throws(
-    () => resolveBinding({ profile: validRuntimeProfile() as RuntimeProfileV4, route: 'FRONTIER', stage: 'ESCALATION', sourceSensitivity: 'PUBLIC' }),
+    () =>
+      resolveBinding({
+        profile: validRuntimeProfile() as RuntimeProfileV4,
+        route: 'FRONTIER',
+        stage: 'ESCALATION',
+        sourceSensitivity: 'PUBLIC',
+      }),
     /INVALID_CONTRACT/u,
   );
 });
@@ -58,10 +71,7 @@ test('rejects a route whose selected binding cannot process private source', () 
 test('rejects a writable binding with the wrong tier or no qualified envelope', () => {
   const wrongTier = validRuntimeProfile() as RuntimeProfileV4;
   wrongTier.bindings.executor = { ...wrongTier.bindings.executor, tier: 'frontier' };
-  assert.throws(
-    () => resolveBinding({ profile: wrongTier, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' }),
-    /economy tier/,
-  );
+  assert.throws(() => resolveBinding({ profile: wrongTier, route: 'ECONOMY', sourceSensitivity: 'PUBLIC' }), /economy tier/);
 
   const missingEnvelope = validRuntimeProfile() as RuntimeProfileV4;
   missingEnvelope.bindings.executor = { ...missingEnvelope.bindings.executor, execution: undefined };

@@ -25,11 +25,14 @@ export interface ProfileAssignment {
 
 export interface Policy {
   version: number;
-  roles: Record<RoleName, {
-    tier: 'frontier' | 'economy';
-    capabilities: string[];
-    permissions: { read: boolean; write: boolean };
-  }>;
+  roles: Record<
+    RoleName,
+    {
+      tier: 'frontier' | 'economy';
+      capabilities: string[];
+      permissions: { read: boolean; write: boolean };
+    }
+  >;
   validation: { commands: string[] };
   routing: { strategies: RoutingStrategy[] };
   isolation: { required: WriteIsolation };

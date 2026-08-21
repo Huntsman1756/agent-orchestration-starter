@@ -22,7 +22,7 @@ validation:
     timeoutSeconds: 300
     sandboxProfile: validation-untrusted
   format-check:
-    argv: [npm, run, format:critical:check]
+    argv: [npm, run, format:check]
     workingDirectory: .
     timeoutSeconds: 300
     sandboxProfile: validation-untrusted

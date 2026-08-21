@@ -1,8 +1,4 @@
-export type SandboxProfileV4 =
-  | 'EXECUTOR_NETWORKED'
-  | 'FRONTIER_NETWORKED'
-  | 'VALIDATION_UNTRUSTED'
-  | 'REVIEW_CAPSULE';
+export type SandboxProfileV4 = 'EXECUTOR_NETWORKED' | 'FRONTIER_NETWORKED' | 'VALIDATION_UNTRUSTED' | 'REVIEW_CAPSULE';
 
 export interface SandboxMountV4 {
   readonly source: string;
@@ -10,9 +6,7 @@ export interface SandboxMountV4 {
   readonly access: 'READ_ONLY' | 'READ_WRITE';
 }
 
-export type SandboxNetworkV4 =
-  | { readonly mode: 'NONE' }
-  | { readonly mode: 'INTERNAL'; readonly name: string };
+export type SandboxNetworkV4 = { readonly mode: 'NONE' } | { readonly mode: 'INTERNAL'; readonly name: string };
 
 export interface SandboxRunRequestV4 {
   readonly execution_id: string;
@@ -77,13 +71,16 @@ export function createDockerContainerRemovalControllerV4(
   const unavailable = (): never => {
     throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process sandbox is unavailable');
   };
-  if (!/^[a-f0-9]{64}$/.test(containerId)
-    || !Number.isSafeInteger(effects.poll_interval_ms)
-    || effects.poll_interval_ms < 1
-    || effects.poll_interval_ms > 1_000
-    || !Number.isSafeInteger(effects.absence_timeout_ms)
-    || effects.absence_timeout_ms < 1
-    || effects.absence_timeout_ms > 30_000) unavailable();
+  if (
+    !/^[a-f0-9]{64}$/.test(containerId) ||
+    !Number.isSafeInteger(effects.poll_interval_ms) ||
+    effects.poll_interval_ms < 1 ||
+    effects.poll_interval_ms > 1_000 ||
+    !Number.isSafeInteger(effects.absence_timeout_ms) ||
+    effects.absence_timeout_ms < 1 ||
+    effects.absence_timeout_ms > 30_000
+  )
+    unavailable();
   let verifiedAbsent = false;
   let inFlight: Promise<void> | null = null;
   const remove = (): Promise<void> => {

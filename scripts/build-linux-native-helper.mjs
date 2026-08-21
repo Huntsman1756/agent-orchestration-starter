@@ -15,8 +15,8 @@ const supportedTargets = new Set(['linux-x64']);
 const legacyCleanupHolderNamePattern = /^\.native-clean-[A-Za-z0-9]{6}$/;
 const argumentsAfterScript = process.argv.slice(2);
 if (
-  argumentsAfterScript.length > 1
-  || argumentsAfterScript.some((argument) => argument !== '--for-package' && argument !== '--clean-only')
+  argumentsAfterScript.length > 1 ||
+  argumentsAfterScript.some((argument) => argument !== '--for-package' && argument !== '--clean-only')
 ) {
   throw new Error('Unknown native helper build argument');
 }
@@ -54,7 +54,7 @@ function requireSameObjectIdentity(actualMetadata, expectedMetadata) {
 
 async function createCleanupNamespace() {
   const projectMetadata = requirePhysicalDirectory(await loadMetadataOrNull(projectRoot));
-  if (await loadMetadataOrNull(cleanupNamespace) !== null) {
+  if ((await loadMetadataOrNull(cleanupNamespace)) !== null) {
     throw new Error('Inherited native cleanup state requires offline remediation');
   }
   await mkdir(cleanupNamespace, { mode: 0o700 });
@@ -71,16 +71,12 @@ async function reproveCleanupNamespace(cleanupMetadata) {
 
 async function waitAtCleanupBarrierForTests() {
   const barrier = process.env.AO_NATIVE_CLEANUP_BARRIER_FOR_TESTS;
-  if (
-    process.env.AO_NATIVE_PACKAGE_TEST !== '1'
-    || typeof barrier !== 'string'
-    || barrier.length === 0
-    || cleanupBarrierUsedForTests
-  ) return;
+  if (process.env.AO_NATIVE_PACKAGE_TEST !== '1' || typeof barrier !== 'string' || barrier.length === 0 || cleanupBarrierUsedForTests)
+    return;
   cleanupBarrierUsedForTests = true;
   await writeFile(`${barrier}.ready`, 'ready\n', { flag: 'wx' });
   const deadline = Date.now() + 10_000;
-  while (await loadMetadataOrNull(`${barrier}.release`) === null) {
+  while ((await loadMetadataOrNull(`${barrier}.release`)) === null) {
     if (Date.now() >= deadline) throw new Error('Native cleanup test barrier timed out');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -90,7 +86,7 @@ async function validateCleanupHolder(path, allowedChild, cleanupMetadata) {
   const metadata = requirePhysicalDirectory(await loadMetadataOrNull(path));
   requireSameFilesystem(metadata, cleanupMetadata);
   const entries = (await readdir(path)).sort();
-  if (entries.length > 1 || entries.length === 1 && entries[0] !== allowedChild) {
+  if (entries.length > 1 || (entries.length === 1 && entries[0] !== allowedChild)) {
     throw new Error('Native cleanup holder inventory is invalid');
   }
   if (entries.length === 1) {
@@ -101,9 +97,10 @@ async function validateCleanupHolder(path, allowedChild, cleanupMetadata) {
 }
 
 async function validateMovedSource(path, sourceMetadata, cleanupMetadata, allowedChild) {
-  const movedMetadata = allowedChild === null
-    ? requirePhysicalDirectory(await loadMetadataOrNull(path))
-    : await validateCleanupHolder(path, allowedChild, cleanupMetadata);
+  const movedMetadata =
+    allowedChild === null
+      ? requirePhysicalDirectory(await loadMetadataOrNull(path))
+      : await validateCleanupHolder(path, allowedChild, cleanupMetadata);
   requireSameObjectIdentity(movedMetadata, sourceMetadata);
   return movedMetadata;
 }
@@ -163,7 +160,7 @@ async function cleanNativeRoot() {
 
 async function verifyExactInventory(outputDirectory, helperPath, manifestPath) {
   const packableCleanupEntries = (await readdir(distRoot)).filter((name) => name.startsWith('.native-clean-'));
-  if (packableCleanupEntries.length !== 0 || await loadMetadataOrNull(cleanupNamespace) !== null) {
+  if (packableCleanupEntries.length !== 0 || (await loadMetadataOrNull(cleanupNamespace)) !== null) {
     throw new Error('Linux native helper inventory verification failed');
   }
   const rootEntries = (await readdir(nativeRoot)).sort();
@@ -178,13 +175,14 @@ async function verifyExactInventory(outputDirectory, helperPath, manifestPath) {
   const helperMetadata = await lstat(helperPath, { bigint: true });
   const manifestMetadata = await lstat(manifestPath, { bigint: true });
   if (
-    !helperMetadata.isFile()
-    || helperMetadata.nlink !== 1n
-    || (helperMetadata.mode & 0o777n) !== 0o555n
-    || !manifestMetadata.isFile()
-    || manifestMetadata.nlink !== 1n
-    || (manifestMetadata.mode & 0o777n) !== 0o444n
-  ) throw new Error('Linux native helper inventory verification failed');
+    !helperMetadata.isFile() ||
+    helperMetadata.nlink !== 1n ||
+    (helperMetadata.mode & 0o777n) !== 0o555n ||
+    !manifestMetadata.isFile() ||
+    manifestMetadata.nlink !== 1n ||
+    (manifestMetadata.mode & 0o777n) !== 0o444n
+  )
+    throw new Error('Linux native helper inventory verification failed');
 }
 
 async function buildLinuxNativeHelper() {
@@ -194,8 +192,8 @@ async function buildLinuxNativeHelper() {
   if (!supportedTargets.has(target)) {
     if (forPackage || process.platform === 'linux') {
       throw new Error(
-        `Unsupported native package target: ${target}. Release tarballs are built only on certified linux-x64; `
-        + 'Windows and macOS cannot manufacture the Linux native broker artifact.',
+        `Unsupported native package target: ${target}. Release tarballs are built only on certified linux-x64; ` +
+          'Windows and macOS cannot manufacture the Linux native broker artifact.',
       );
     }
     return;

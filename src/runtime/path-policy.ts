@@ -56,8 +56,10 @@ function withinRoot(root: string, candidate: string, platform: NodeJS.Platform, 
   const from = platform === 'win32' ? root.toLocaleLowerCase() : root;
   const to = platform === 'win32' ? candidate.toLocaleLowerCase() : candidate;
   const pathToCandidate = pathApi.relative(from, to);
-  return pathToCandidate === ''
-    || (!pathApi.isAbsolute(pathToCandidate) && pathToCandidate !== '..' && !pathToCandidate.startsWith(`..${pathApi.sep}`));
+  return (
+    pathToCandidate === '' ||
+    (!pathApi.isAbsolute(pathToCandidate) && pathToCandidate !== '..' && !pathToCandidate.startsWith(`..${pathApi.sep}`))
+  );
 }
 
 function decodeMountPath(value: string): string {
@@ -71,9 +73,9 @@ export function parseLinuxMountIdentityV4(value: string, mountinfo: string): str
     return [{ id: fields[0], device: fields[2], mountPoint: decodeMountPath(fields[4]) }];
   });
   const matching = entries
-    .filter((entry) => entry.mountPoint === '/'
-      ? value.startsWith('/')
-      : value === entry.mountPoint || value.startsWith(`${entry.mountPoint}/`))
+    .filter((entry) =>
+      entry.mountPoint === '/' ? value.startsWith('/') : value === entry.mountPoint || value.startsWith(`${entry.mountPoint}/`),
+    )
     .sort((left, right) => right.mountPoint.length - left.mountPoint.length)[0];
   return matching === undefined ? null : `${matching.id}:${matching.device}`;
 }
@@ -109,19 +111,21 @@ if (-not [RunnerV4Volume]::GetVolumeNameForVolumeMountPoint($volumePath.ToString
   mount = $volumeName.ToString()
 } | ConvertTo-Json -Compress`;
 
-interface WindowsMetadata { reparse: boolean; mount: string; }
+interface WindowsMetadata {
+  reparse: boolean;
+  mount: string;
+}
 
 function windowsMetadataProvider(): PathMetadataProviderV4 {
   const cache = new Map<string, Promise<WindowsMetadata | null>>();
   const metadataFor = (value: string): Promise<WindowsMetadata | null> => {
     const cached = cache.get(value);
     if (cached !== undefined) return cached;
-    const pending = execFileAsync('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      windowsMetadataScript,
-    ], { env: { ...process.env, RUNNER_V4_LITERAL_PATH: value }, windowsHide: true, maxBuffer: 8_192 })
+    const pending = execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsMetadataScript], {
+      env: { ...process.env, RUNNER_V4_LITERAL_PATH: value },
+      windowsHide: true,
+      maxBuffer: 8_192,
+    })
       .then(({ stdout }) => JSON.parse(stdout.trim()) as WindowsMetadata)
       .catch(() => null);
     cache.set(value, pending);
@@ -206,8 +210,10 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
     if (!withinRoot(canonicalRoot, candidate, input.platform, pathApi)) outOfScope(`outside repository root: ${change.path}`);
     const parent = pathApi.dirname(candidate);
     const canonicalParent = await metadata.realpath(parent).catch(() => outOfScope(`parent cannot be canonicalized: ${change.path}`));
-    if (!withinRoot(canonicalRoot, canonicalParent, input.platform, pathApi)) outOfScope(`canonical parent outside repository root: ${change.path}`);
-    if ((await metadata.stat(canonicalParent)).dev !== rootStats.dev) outOfScope(`parent device differs from repository root: ${change.path}`);
+    if (!withinRoot(canonicalRoot, canonicalParent, input.platform, pathApi))
+      outOfScope(`canonical parent outside repository root: ${change.path}`);
+    if ((await metadata.stat(canonicalParent)).dev !== rootStats.dev)
+      outOfScope(`parent device differs from repository root: ${change.path}`);
 
     let current = canonicalRoot;
     for (const segment of change.path.split('/').slice(0, -1)) {
@@ -221,12 +227,14 @@ export async function inspectAllowedChanges(input: PathInspectionInputV4): Promi
     if (existedAtFreeze) {
       await inspectExistingComponent(metadata, candidate, rootMountIdentity, rootStats.dev, change.path);
     }
-    inspected.push(Object.freeze({
-      path: change.path,
-      operations: Object.freeze([...change.operations]),
-      canonical_parent: canonicalParent,
-      existed_at_freeze: existedAtFreeze,
-    }));
+    inspected.push(
+      Object.freeze({
+        path: change.path,
+        operations: Object.freeze([...change.operations]),
+        canonical_parent: canonicalParent,
+        existed_at_freeze: existedAtFreeze,
+      }),
+    );
   }
   return Object.freeze(inspected);
 }

@@ -40,13 +40,13 @@ Only task-relevant packs should be loaded. Giving a smaller worker every availab
 
 These names are examples, not fixed core identifiers. Each installation or repository may use different IDs, but the qualification catalog must define their exact semantics and probes.
 
-| Work kind | Relevant context | Typical capabilities | Deterministic evidence |
-|---|---|---|---|
-| Frontend component | Nearby components, public types, design tokens, state and test patterns | component implementation, accessibility, browser validation | typecheck, unit tests, production build, approved browser/a11y checks |
-| Backend API | Route/service patterns, public schema, authorization boundary, persistence interface | API implementation, input validation, authorization, integration testing | typecheck, unit/integration tests, API contract checks |
-| Database change | Current schema, migration policy, rollback and fixture rules | migration planning, transactional safety, compatibility testing | migration lint/dry-run, compatibility and rollback evidence |
-| Full-stack feature | Shared public contract and separately bounded frontend/backend context | only the capabilities required by each child story | contract tests followed by backend, frontend and end-to-end gates |
-| Infrastructure/security | Exact policy and target-specific evidence | privileged or high-risk capabilities | frontier route plus repository-defined security/host checks |
+| Work kind               | Relevant context                                                                     | Typical capabilities                                                     | Deterministic evidence                                                |
+| ----------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| Frontend component      | Nearby components, public types, design tokens, state and test patterns              | component implementation, accessibility, browser validation              | typecheck, unit tests, production build, approved browser/a11y checks |
+| Backend API             | Route/service patterns, public schema, authorization boundary, persistence interface | API implementation, input validation, authorization, integration testing | typecheck, unit/integration tests, API contract checks                |
+| Database change         | Current schema, migration policy, rollback and fixture rules                         | migration planning, transactional safety, compatibility testing          | migration lint/dry-run, compatibility and rollback evidence           |
+| Full-stack feature      | Shared public contract and separately bounded frontend/backend context               | only the capabilities required by each child story                       | contract tests followed by backend, frontend and end-to-end gates     |
+| Infrastructure/security | Exact policy and target-specific evidence                                            | privileged or high-risk capabilities                                     | frontier route plus repository-defined security/host checks           |
 
 Database, authentication, authorization, deployment, infrastructure and security-sensitive work should remain frontier-only unless the exact narrower capability has explicit repository authorization and fresh qualification evidence.
 

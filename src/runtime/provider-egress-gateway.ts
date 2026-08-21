@@ -74,9 +74,7 @@ async function docker(executable: string, argv: readonly string[]): Promise<stri
 }
 
 async function exactContainerIdPresentV4(executable: string, containerId: string): Promise<boolean> {
-  const output = await docker(executable, [
-    'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
-  ]);
+  const output = await docker(executable, ['container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}']);
   if (output === '') return false;
   if (output === containerId) return true;
   unavailable();
@@ -84,22 +82,34 @@ async function exactContainerIdPresentV4(executable: string, containerId: string
 
 export function validateProviderGatewayOriginV4(value: string, allowedProviderHosts: readonly string[]): URL {
   let origin: URL;
-  try { origin = new URL(value); } catch { unavailable(); }
-  if (allowedProviderHosts.length < 1
-    || allowedProviderHosts.length > 16
-    || new Set(allowedProviderHosts).size !== allowedProviderHosts.length
-    || !allowedProviderHosts.every((host) => host.length <= 253 && host === host.toLowerCase() && /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host))
-    || !allowedProviderHosts.includes(origin.hostname)
-    || value !== `https://${origin.hostname}`
-    || origin.protocol !== 'https:'
-    || origin.hostname !== origin.hostname.toLowerCase()
-    || isIP(origin.hostname) !== 0
-    || origin.username !== ''
-    || origin.password !== ''
-    || origin.pathname !== '/'
-    || origin.search !== ''
-    || origin.hash !== ''
-    || origin.origin !== value) unavailable();
+  try {
+    origin = new URL(value);
+  } catch {
+    unavailable();
+  }
+  if (
+    allowedProviderHosts.length < 1 ||
+    allowedProviderHosts.length > 16 ||
+    new Set(allowedProviderHosts).size !== allowedProviderHosts.length ||
+    !allowedProviderHosts.every(
+      (host) =>
+        host.length <= 253 &&
+        host === host.toLowerCase() &&
+        /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host),
+    ) ||
+    !allowedProviderHosts.includes(origin.hostname) ||
+    value !== `https://${origin.hostname}` ||
+    origin.protocol !== 'https:' ||
+    origin.hostname !== origin.hostname.toLowerCase() ||
+    isIP(origin.hostname) !== 0 ||
+    origin.username !== '' ||
+    origin.password !== '' ||
+    origin.pathname !== '/' ||
+    origin.search !== '' ||
+    origin.hash !== '' ||
+    origin.origin !== value
+  )
+    unavailable();
   return origin;
 }
 
@@ -113,24 +123,23 @@ function validateStartRequest(request: ProviderGatewayStartRequestV4): URL {
   if (request.allowed_paths.length !== 1 || !isProviderGatewayPathAllowedV4(request.allowed_paths[0]!)) unavailable();
   if (request.real_api_key.length < 16 || request.real_api_key.length > 512 || /[\r\n\0]/.test(request.real_api_key)) unavailable();
   if (!request.ca_pem.includes('-----BEGIN CERTIFICATE-----') || request.ca_pem.length > 128 * 1024) unavailable();
-  if (!Number.isSafeInteger(request.startup_timeout_ms) || request.startup_timeout_ms < 100 || request.startup_timeout_ms > 60_000) unavailable();
+  if (!Number.isSafeInteger(request.startup_timeout_ms) || request.startup_timeout_ms < 100 || request.startup_timeout_ms > 60_000)
+    unavailable();
   return validateProviderGatewayOriginV4(request.provider_origin, request.allowed_provider_hosts);
 }
 
-async function validateNetwork(
-  executable: string,
-  name: string,
-  executionId: string,
-  internal: boolean,
-): Promise<void> {
+async function validateNetwork(executable: string, name: string, executionId: string, internal: boolean): Promise<void> {
   const raw = await docker(executable, ['network', 'inspect', name]);
   try {
     const values = JSON.parse(raw) as Array<{ Driver?: unknown; Internal?: unknown; Labels?: Record<string, string> }>;
     const value = values[0];
-    if (values.length !== 1
-      || value?.Driver !== 'bridge'
-      || value.Internal !== internal
-      || value.Labels?.['agent-orchestration.execution'] !== executionId) unavailable();
+    if (
+      values.length !== 1 ||
+      value?.Driver !== 'bridge' ||
+      value.Internal !== internal ||
+      value.Labels?.['agent-orchestration.execution'] !== executionId
+    )
+      unavailable();
   } catch {
     unavailable();
   }
@@ -153,23 +162,28 @@ async function inspectGatewayNetworkBindingV4(
     const networks = value?.NetworkSettings?.Networks;
     if (values.length !== 1 || value?.Id !== containerId || networks === undefined) unavailable();
     const names = Object.keys(networks).sort();
-    if (names.length !== 2 || names[0] !== [internalNetwork, outboundNetwork].sort()[0] || names[1] !== [internalNetwork, outboundNetwork].sort()[1]) unavailable();
+    if (
+      names.length !== 2 ||
+      names[0] !== [internalNetwork, outboundNetwork].sort()[0] ||
+      names[1] !== [internalNetwork, outboundNetwork].sort()[1]
+    )
+      unavailable();
     const internalAddress = networks[internalNetwork]?.IPAddress;
-    if (typeof internalAddress !== 'string'
-      || isIP(internalAddress) === 0
-      || internalAddress === '0.0.0.0'
-      || internalAddress === '::'
-      || networks[outboundNetwork]?.IPAddress !== outboundAddress) unavailable();
+    if (
+      typeof internalAddress !== 'string' ||
+      isIP(internalAddress) === 0 ||
+      internalAddress === '0.0.0.0' ||
+      internalAddress === '::' ||
+      networks[outboundNetwork]?.IPAddress !== outboundAddress
+    )
+      unavailable();
     return internalAddress;
   } catch {
     unavailable();
   }
 }
 
-async function waitForGatewayNetworkBindingV4(
-  request: ProviderGatewayStartRequestV4,
-  containerId: string,
-): Promise<string> {
+async function waitForGatewayNetworkBindingV4(request: ProviderGatewayStartRequestV4, containerId: string): Promise<string> {
   const deadline = Date.now() + request.startup_timeout_ms;
   while (Date.now() < deadline) {
     try {
@@ -187,26 +201,28 @@ async function waitForGatewayNetworkBindingV4(
   unavailable();
 }
 
-export async function startProviderEgressGatewayV4(
-  request: ProviderGatewayStartRequestV4,
-): Promise<ProviderGatewayLeaseV4> {
+export async function startProviderEgressGatewayV4(request: ProviderGatewayStartRequestV4): Promise<ProviderGatewayLeaseV4> {
   validateStartRequest(request);
-  await registerOrReproveDockerLauncherV4(
-    request.docker_executable,
-    undefined,
-    request.broker_state_directory,
-  );
+  await registerOrReproveDockerLauncherV4(request.docker_executable, undefined, request.broker_state_directory);
   await Promise.all([
     validateNetwork(request.docker_executable, request.internal_network, request.execution_id, true),
     validateNetwork(request.docker_executable, request.outbound_network, request.execution_id, false),
   ]);
   const createArgs = [
     '--interactive',
-    '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=32',
-    '--memory=256m', '--cpus=1', '--user=1000:1000',
-    '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m', '--network=none',
+    '--read-only',
+    '--cap-drop=ALL',
+    '--security-opt=no-new-privileges',
+    '--pids-limit=32',
+    '--memory=256m',
+    '--cpus=1',
+    '--user=1000:1000',
+    '--tmpfs=/tmp:rw,noexec,nosuid,nodev,size=32m',
+    '--network=none',
     request.image_id,
-    'node', '/broker/provider-egress-gateway.js', '--serve',
+    'node',
+    '/broker/provider-egress-gateway.js',
+    '--serve',
     `--origin=${request.provider_origin}`,
     `--allowed-host=${new URL(request.provider_origin).hostname}`,
     '--allowed-method=POST',
@@ -230,7 +246,13 @@ export async function startProviderEgressGatewayV4(
   try {
     await docker(request.docker_executable, ['network', 'disconnect', 'none', containerId]);
     await docker(request.docker_executable, ['network', 'connect', '--alias=provider-gateway', request.internal_network, containerId]);
-    await docker(request.docker_executable, ['network', 'connect', `--ip=${request.outbound_address}`, request.outbound_network, containerId]);
+    await docker(request.docker_executable, [
+      'network',
+      'connect',
+      `--ip=${request.outbound_address}`,
+      request.outbound_network,
+      containerId,
+    ]);
     await registerOrReproveDockerLauncherV4(request.docker_executable);
     attach = startBoundedProcessV4({
       executable: request.docker_executable,
@@ -251,7 +273,8 @@ export async function startProviderEgressGatewayV4(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (error === undefined) resolvePromise(); else reject(error);
+        if (error === undefined) resolvePromise();
+        else reject(error);
       };
       const timer = setTimeout(() => finish(new Error('gateway readiness timeout')), request.startup_timeout_ms);
       timer.unref();
@@ -298,25 +321,27 @@ function argument(name: string): string {
 function ipv4Parts(address: string): [number, number, number, number] | null {
   const parts = address.split('.').map(Number);
   return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
-    ? parts as [number, number, number, number]
+    ? (parts as [number, number, number, number])
     : null;
 }
 
 function publicIpv4(parts: [number, number, number, number]): boolean {
   const [first, second, third] = parts;
-  return !(first === 0
-    || first === 10
-    || first === 127
-    || first >= 224
-    || (first === 100 && second >= 64 && second <= 127)
-    || (first === 169 && second === 254)
-    || (first === 172 && second >= 16 && second <= 31)
-    || (first === 192 && second === 0 && (third === 0 || third === 2))
-    || (first === 192 && second === 88 && third === 99)
-    || (first === 192 && second === 168)
-    || (first === 198 && (second === 18 || second === 19))
-    || (first === 198 && second === 51 && third === 100)
-    || (first === 203 && second === 0 && third === 113));
+  return !(
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    first >= 224 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0 && (third === 0 || third === 2)) ||
+    (first === 192 && second === 88 && third === 99) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    (first === 198 && second === 51 && third === 100) ||
+    (first === 203 && second === 0 && third === 113)
+  );
 }
 
 function ipv6Words(address: string): number[] | null {
@@ -348,21 +373,19 @@ export function isProviderEgressAddressAllowedV4(address: string): boolean {
   if (words === null) return false;
   const first = words[0]!;
   if (words.slice(0, 5).every((word) => word === 0) && (words[5] === 0 || words[5] === 0xffff)) {
-    return publicIpv4([
-      words[6]! >>> 8,
-      words[6]! & 0xff,
-      words[7]! >>> 8,
-      words[7]! & 0xff,
-    ]);
+    return publicIpv4([words[6]! >>> 8, words[6]! & 0xff, words[7]! >>> 8, words[7]! & 0xff]);
   }
-  if ((first & 0xe000) !== 0x2000
-    || (first & 0xfe00) === 0xfc00
-    || (first & 0xffc0) === 0xfe80
-    || (first & 0xffc0) === 0xfec0
-    || (first & 0xff00) === 0xff00
-    || first === 0x2002
-    || (first === 0x0064 && words[1] === 0xff9b)
-    || (first === 0x2001 && (words[1] === 0 || words[1] === 0x0db8 || (words[1]! & 0xfff0) === 0x0010))) return false;
+  if (
+    (first & 0xe000) !== 0x2000 ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
+    (first & 0xff00) === 0xff00 ||
+    first === 0x2002 ||
+    (first === 0x0064 && words[1] === 0xff9b) ||
+    (first === 0x2001 && (words[1] === 0 || words[1] === 0x0db8 || (words[1]! & 0xfff0) === 0x0010))
+  )
+    return false;
   return true;
 }
 
@@ -380,15 +403,17 @@ function audit(input: {
   responseBytes: number;
   startedAt: number;
 }): void {
-  process.stdout.write(`${JSON.stringify({
-    event: 'GATEWAY_REQUEST',
-    host: input.host,
-    path_class: pathClass(input.path),
-    decision: input.decision,
-    request_bytes: input.requestBytes,
-    response_bytes: input.responseBytes,
-    duration_ms: Date.now() - input.startedAt,
-  })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      event: 'GATEWAY_REQUEST',
+      host: input.host,
+      path_class: pathClass(input.path),
+      decision: input.decision,
+      request_bytes: input.requestBytes,
+      response_bytes: input.responseBytes,
+      duration_ms: Date.now() - input.startedAt,
+    })}\n`,
+  );
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<Buffer> {
@@ -415,16 +440,20 @@ async function proxyRequest(
   const path = incoming.url ?? '';
   const method = incoming.method ?? '';
   const prohibitedTargetHeaders = ['forwarded', 'x-forwarded-host', 'x-forwarded-proto', 'x-target-origin'];
-  if (!allowedMethods.has(method)
-    || !allowedPaths.has(path)
-    || prohibitedTargetHeaders.some((header) => incoming.headers[header] !== undefined)) {
+  if (
+    !allowedMethods.has(method) ||
+    !allowedPaths.has(path) ||
+    prohibitedTargetHeaders.some((header) => incoming.headers[header] !== undefined)
+  ) {
     audit({ host: origin.hostname, path, decision: 'DENY', requestBytes: 0, responseBytes: 0, startedAt });
     response.writeHead(403, { 'content-type': 'application/json' });
     response.end('{"error":"gateway policy denied request"}');
     return;
   }
   let body: Buffer;
-  try { body = await readRequestBody(incoming); } catch {
+  try {
+    body = await readRequestBody(incoming);
+  } catch {
     audit({ host: origin.hostname, path, decision: 'DENY', requestBytes: 0, responseBytes: 0, startedAt });
     response.writeHead(413, { 'content-type': 'application/json' });
     response.end('{"error":"request too large"}');
@@ -434,47 +463,51 @@ async function proxyRequest(
     const addresses = await lookup(origin.hostname, { all: true, verbatim: true });
     if (addresses.length === 0 || addresses.some((entry) => !isProviderEgressAddressAllowedV4(entry.address))) unavailable();
     const target = addresses[0]!;
-    const outbound = httpsRequest({
-      protocol: 'https:',
-      hostname: target.address,
-      family: target.family,
-      servername: origin.hostname,
-      port: origin.port === '' ? 443 : Number(origin.port),
-      method,
-      path,
-      ca: boot.ca_pem,
-      rejectUnauthorized: true,
-      headers: {
-        host: origin.host,
-        authorization: `Bearer ${boot.api_key}`,
-        accept: typeof incoming.headers.accept === 'string' ? incoming.headers.accept : 'application/json',
-        'content-type': typeof incoming.headers['content-type'] === 'string' ? incoming.headers['content-type'] : 'application/json',
-        'content-length': String(body.length),
+    const outbound = httpsRequest(
+      {
+        protocol: 'https:',
+        hostname: target.address,
+        family: target.family,
+        servername: origin.hostname,
+        port: origin.port === '' ? 443 : Number(origin.port),
+        method,
+        path,
+        ca: boot.ca_pem,
+        rejectUnauthorized: true,
+        headers: {
+          host: origin.host,
+          authorization: `Bearer ${boot.api_key}`,
+          accept: typeof incoming.headers.accept === 'string' ? incoming.headers.accept : 'application/json',
+          'content-type': typeof incoming.headers['content-type'] === 'string' ? incoming.headers['content-type'] : 'application/json',
+          'content-length': String(body.length),
+        },
       },
-    }, (upstream) => {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      upstream.on('data', (value: Buffer | string) => {
-        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        size += chunk.length;
-        if (size > maxResponseBytes) upstream.destroy(new Error('response too large'));
-        else chunks.push(chunk);
-      });
-      upstream.once('end', () => {
-        const payload = Buffer.concat(chunks);
-        if ((upstream.statusCode ?? 500) >= 300 && (upstream.statusCode ?? 500) < 400) {
-          audit({ host: origin.hostname, path, decision: 'DENY', requestBytes: body.length, responseBytes: 0, startedAt });
-          response.writeHead(502, { 'content-type': 'application/json' });
-          response.end('{"error":"provider redirect denied"}');
-          return;
-        }
-        audit({ host: origin.hostname, path, decision: 'ALLOW', requestBytes: body.length, responseBytes: payload.length, startedAt });
-        response.writeHead(upstream.statusCode ?? 502, {
-          'content-type': typeof upstream.headers['content-type'] === 'string' ? upstream.headers['content-type'] : 'application/octet-stream',
+      (upstream) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        upstream.on('data', (value: Buffer | string) => {
+          const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+          size += chunk.length;
+          if (size > maxResponseBytes) upstream.destroy(new Error('response too large'));
+          else chunks.push(chunk);
         });
-        response.end(payload);
-      });
-    });
+        upstream.once('end', () => {
+          const payload = Buffer.concat(chunks);
+          if ((upstream.statusCode ?? 500) >= 300 && (upstream.statusCode ?? 500) < 400) {
+            audit({ host: origin.hostname, path, decision: 'DENY', requestBytes: body.length, responseBytes: 0, startedAt });
+            response.writeHead(502, { 'content-type': 'application/json' });
+            response.end('{"error":"provider redirect denied"}');
+            return;
+          }
+          audit({ host: origin.hostname, path, decision: 'ALLOW', requestBytes: body.length, responseBytes: payload.length, startedAt });
+          response.writeHead(upstream.statusCode ?? 502, {
+            'content-type':
+              typeof upstream.headers['content-type'] === 'string' ? upstream.headers['content-type'] : 'application/octet-stream',
+          });
+          response.end(payload);
+        });
+      },
+    );
     outbound.setTimeout(10_000, () => outbound.destroy(new Error('provider timeout')));
     outbound.once('error', () => {
       if (!response.headersSent) {
@@ -500,14 +533,17 @@ async function readBootPayload(): Promise<GatewayBootPayloadV4> {
   lines.close();
   try {
     const value = JSON.parse(line) as Partial<GatewayBootPayloadV4>;
-    if (typeof value.api_key !== 'string'
-      || value.api_key.length < 16
-      || typeof value.ca_pem !== 'string'
-      || !value.ca_pem.includes('-----BEGIN CERTIFICATE-----')
-      || typeof value.listen_address !== 'string'
-      || isIP(value.listen_address) === 0
-      || value.listen_address === '0.0.0.0'
-      || value.listen_address === '::') unavailable();
+    if (
+      typeof value.api_key !== 'string' ||
+      value.api_key.length < 16 ||
+      typeof value.ca_pem !== 'string' ||
+      !value.ca_pem.includes('-----BEGIN CERTIFICATE-----') ||
+      typeof value.listen_address !== 'string' ||
+      isIP(value.listen_address) === 0 ||
+      value.listen_address === '0.0.0.0' ||
+      value.listen_address === '::'
+    )
+      unavailable();
     return { api_key: value.api_key, ca_pem: value.ca_pem, listen_address: value.listen_address };
   } catch {
     unavailable();
@@ -534,5 +570,7 @@ async function serveGateway(): Promise<void> {
 }
 
 if (process.argv[1]?.endsWith('/provider-egress-gateway.js') && process.argv.includes('--serve')) {
-  void serveGateway().catch(() => { process.exitCode = 1; });
+  void serveGateway().catch(() => {
+    process.exitCode = 1;
+  });
 }

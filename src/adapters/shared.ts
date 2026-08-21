@@ -1,22 +1,31 @@
 import type { GeneratedFile, Harness } from './index.js';
 import type { ResolvedPolicy, WriteIsolation } from '../core/types.js';
 
-export function policyManifest(harness: Harness, policy: ResolvedPolicy, path: string, effectiveWriteIsolation: WriteIsolation): GeneratedFile {
+export function policyManifest(
+  harness: Harness,
+  policy: ResolvedPolicy,
+  path: string,
+  effectiveWriteIsolation: WriteIsolation,
+): GeneratedFile {
   return {
     path,
-    content: `${JSON.stringify({
-      schemaVersion: 1,
-      harness,
-      policyVersion: policy.policyVersion,
-      profileVersion: policy.profileVersion,
-      profileId: policy.profileId,
-      roles: policy.roles,
-      validation: policy.validation,
-      routing: policy.routing,
-      isolation: policy.isolation,
-      requiredWriteIsolation: policy.isolation.required,
-      effectiveWriteIsolation,
-    }, null, 2)}\n`,
+    content: `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        harness,
+        policyVersion: policy.policyVersion,
+        profileVersion: policy.profileVersion,
+        profileId: policy.profileId,
+        roles: policy.roles,
+        validation: policy.validation,
+        routing: policy.routing,
+        isolation: policy.isolation,
+        requiredWriteIsolation: policy.isolation.required,
+        effectiveWriteIsolation,
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 

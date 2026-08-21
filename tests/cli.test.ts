@@ -10,22 +10,30 @@ async function configFiles(): Promise<{ directory: string; policy: string; profi
   const directory = await mkdtemp(join(tmpdir(), 'agent-orchestration-cli-'));
   const policy = join(directory, 'orchestration.yaml');
   const profile = join(directory, 'profile.yaml');
-  await writeFile(policy, `
+  await writeFile(
+    policy,
+    `
 version: 1
 roles:
   orchestrator: { tier: frontier, capabilities: [planning, delegation], permissions: { read: true, write: false } }
   executor: { tier: economy, capabilities: [coding], permissions: { read: true, write: true } }
   reviewer: { tier: frontier, capabilities: [review], permissions: { read: true, write: false } }
 validation: { commands: [npm test] }
-`, 'utf8');
-  await writeFile(profile, `
+`,
+    'utf8',
+  );
+  await writeFile(
+    profile,
+    `
 version: 1
 id: cli-test
 assignments:
   orchestrator: { provider: frontier, model: main, tier: frontier, reasoningEffort: high, capabilities: [planning, delegation] }
   executor: { provider: economy, model: code, tier: economy, reasoningEffort: low, capabilities: [coding] }
   reviewer: { provider: frontier, model: main, tier: frontier, reasoningEffort: high, capabilities: [review] }
-`, 'utf8');
+`,
+    'utf8',
+  );
   return { directory, policy, profile };
 }
 
@@ -103,8 +111,14 @@ test('benchmark prints a deterministic provider-neutral routing report', async (
     frontierTokens: { input: attemptedRoute === 'frontier_execution' ? 100 : 0, output: 0 },
     economyTokens: { input: attemptedRoute === 'economy_only' ? 100 : 0, output: 0 },
   });
-  await writeFile(observations, `${JSON.stringify(record('task-1', 'economy_only', 0.5))}\n${JSON.stringify(record('task-1', 'frontier_execution', 1))}\n`, 'utf8');
-  await writeFile(routingPolicy, `
+  await writeFile(
+    observations,
+    `${JSON.stringify(record('task-1', 'economy_only', 0.5))}\n${JSON.stringify(record('task-1', 'frontier_execution', 1))}\n`,
+    'utf8',
+  );
+  await writeFile(
+    routingPolicy,
+    `
 schemaVersion: 2
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only]
@@ -116,7 +130,9 @@ maxEscalationRate: 0
 maxPostAcceptanceDefectIncidenceRate: 0
 maxHighSeverityPostAcceptanceDefects: 0
 maxCriticalSeverityPostAcceptanceDefects: 0
-`, 'utf8');
+`,
+    'utf8',
+  );
   const output: string[] = [];
 
   const code = await runCli(['benchmark', '--observations', observations, '--routing-policy', routingPolicy], {
@@ -124,7 +140,9 @@ maxCriticalSeverityPostAcceptanceDefects: 0
   });
 
   assert.equal(code, 0);
-  assert.equal(output.join('\n'), `{
+  assert.equal(
+    output.join('\n'),
+    `{
   "schemaVersion": 2,
   "decisions": [
     {
@@ -188,7 +206,8 @@ maxCriticalSeverityPostAcceptanceDefects: 0
       }
     }
   ]
-}`);
+}`,
+  );
   const report = JSON.parse(output.join('\n'));
   assert.equal(report.decisions[0].decision, 'promote');
   assert.equal(report.decisions[0].candidateRoute, 'economy_only');
@@ -199,10 +218,20 @@ test('runtime lifecycle commands dispatch exact bounded operations and fail clos
   const output: string[] = [];
   const io = {
     stdout: (line: string) => output.push(line),
-    runtimeDaemon: async () => { calls.push('daemon'); },
-    runtimeMcpStdio: async () => { calls.push('mcp'); },
-    runtimeDoctor: async (input: { repository_policy: string; profile: string }) => { calls.push(`doctor:${input.repository_policy}:${input.profile}`); return ['ready']; },
-    runtimeStatus: async (runId: string) => { calls.push(`status:${runId}`); return { run_id: runId, state: 'READY_FOR_EXECUTOR' }; },
+    runtimeDaemon: async () => {
+      calls.push('daemon');
+    },
+    runtimeMcpStdio: async () => {
+      calls.push('mcp');
+    },
+    runtimeDoctor: async (input: { repository_policy: string; profile: string }) => {
+      calls.push(`doctor:${input.repository_policy}:${input.profile}`);
+      return ['ready'];
+    },
+    runtimeStatus: async (runId: string) => {
+      calls.push(`status:${runId}`);
+      return { run_id: runId, state: 'READY_FOR_EXECUTOR' };
+    },
   };
   const runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1';
   assert.equal(await runCli(['runtime', 'daemon'], io), 0);
@@ -221,11 +250,17 @@ test('runtime lifecycle commands dispatch exact bounded operations and fail clos
 
 test('runtime doctor diagnoses delegation without a privileged host composition', async () => {
   const output: string[] = [];
-  const code = await runCli([
-    'runtime', 'doctor',
-    '--repository-policy', join(process.cwd(), 'policies', 'repository-policy.example.yaml'),
-    '--profile', join(process.cwd(), 'profiles', 'nan-opencode.example.yaml'),
-  ], { stdout: (line) => output.push(line) });
+  const code = await runCli(
+    [
+      'runtime',
+      'doctor',
+      '--repository-policy',
+      join(process.cwd(), 'policies', 'repository-policy.example.yaml'),
+      '--profile',
+      join(process.cwd(), 'profiles', 'nan-opencode.example.yaml'),
+    ],
+    { stdout: (line) => output.push(line) },
+  );
 
   assert.equal(code, 0);
   assert.match(output.join('\n'), /delegation: DEGRADED/);

@@ -26,10 +26,7 @@ export const REQUIRED_SANDBOX_EFFECTS_V4 = Object.freeze([
 export type SandboxHostileEffectV4 = (typeof REQUIRED_SANDBOX_EFFECTS_V4)[number];
 
 export type SandboxCertificationArtifactKindV4 =
-  | 'DOCKER_IDENTITY_RESULT'
-  | 'HOSTILE_PROCESS_RESULT'
-  | 'TIMEOUT_TREE_RESULT'
-  | 'GATEWAY_NETWORK_RESULT';
+  'DOCKER_IDENTITY_RESULT' | 'HOSTILE_PROCESS_RESULT' | 'TIMEOUT_TREE_RESULT' | 'GATEWAY_NETWORK_RESULT';
 
 export interface SandboxCertificationIdentityV4 {
   readonly backend_id: 'docker-engine-linux-v4';
@@ -84,11 +81,18 @@ const transcriptKeys = ['artifacts', 'completed_at', 'identity', 'observations',
 const artifactKeys = ['artifact_id', 'completed_at', 'content_base64', 'content_hash', 'execution_id', 'kind', 'started_at'] as const;
 const observationKeys = ['artifact_ids', 'effect', 'passed'] as const;
 const artifactKinds = new Set<SandboxCertificationArtifactKindV4>([
-  'DOCKER_IDENTITY_RESULT', 'HOSTILE_PROCESS_RESULT', 'TIMEOUT_TREE_RESULT', 'GATEWAY_NETWORK_RESULT',
+  'DOCKER_IDENTITY_RESULT',
+  'HOSTILE_PROCESS_RESULT',
+  'TIMEOUT_TREE_RESULT',
+  'GATEWAY_NETWORK_RESULT',
 ]);
 const gatewayEffects = new Set<SandboxHostileEffectV4>([
-  'gateway_allowlisted_success', 'gateway_non_allowlisted_blocked', 'direct_ip_blocked',
-  'gateway_credential_separated', 'gateway_no_repository_mount', 'metadata_only_logs',
+  'gateway_allowlisted_success',
+  'gateway_non_allowlisted_blocked',
+  'direct_ip_blocked',
+  'gateway_credential_separated',
+  'gateway_no_repository_mount',
+  'metadata_only_logs',
 ]);
 
 function exactKeys(value: object, expected: readonly string[]): boolean {
@@ -115,19 +119,25 @@ export function validateSandboxCertificationTranscriptV4(
   checkedAt: string,
 ): ValidatedSandboxCertificationEvidenceV4 {
   if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 900) unavailable();
-  if (!exactIsoTimestamp(checkedAt)
-    || typeof candidate !== 'object'
-    || candidate === null
-    || Array.isArray(candidate)
-    || !exactKeys(candidate, transcriptKeys)) unavailable();
+  if (
+    !exactIsoTimestamp(checkedAt) ||
+    typeof candidate !== 'object' ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    !exactKeys(candidate, transcriptKeys)
+  )
+    unavailable();
   const transcript = candidate as Partial<SandboxCertificationTranscriptV4>;
-  if (typeof transcript.run_id !== 'string'
-    || !/^cert_run_[a-z0-9_-]{4,96}$/.test(transcript.run_id)
-    || !exactIsoTimestamp(transcript.started_at)
-    || !exactIsoTimestamp(transcript.completed_at)
-    || hashCanonicalV4(transcript.identity) !== hashCanonicalV4(identity)
-    || !Array.isArray(transcript.artifacts)
-    || !Array.isArray(transcript.observations)) unavailable();
+  if (
+    typeof transcript.run_id !== 'string' ||
+    !/^cert_run_[a-z0-9_-]{4,96}$/.test(transcript.run_id) ||
+    !exactIsoTimestamp(transcript.started_at) ||
+    !exactIsoTimestamp(transcript.completed_at) ||
+    hashCanonicalV4(transcript.identity) !== hashCanonicalV4(identity) ||
+    !Array.isArray(transcript.artifacts) ||
+    !Array.isArray(transcript.observations)
+  )
+    unavailable();
   const started = new Date(transcript.started_at).getTime();
   const completed = new Date(transcript.completed_at).getTime();
   const checked = new Date(checkedAt).getTime();
@@ -138,28 +148,37 @@ export function validateSandboxCertificationTranscriptV4(
   const seenKinds = new Set<SandboxCertificationArtifactKindV4>();
   let decodedBytes = 0;
   for (const candidateArtifact of transcript.artifacts) {
-    if (typeof candidateArtifact !== 'object'
-      || candidateArtifact === null
-      || Array.isArray(candidateArtifact)
-      || !exactKeys(candidateArtifact, artifactKeys)) unavailable();
+    if (
+      typeof candidateArtifact !== 'object' ||
+      candidateArtifact === null ||
+      Array.isArray(candidateArtifact) ||
+      !exactKeys(candidateArtifact, artifactKeys)
+    )
+      unavailable();
     const artifact = candidateArtifact as SandboxCertificationArtifactV4;
-    if (!/^artifact_[a-z0-9_-]{4,96}$/.test(artifact.artifact_id)
-      || artifacts.has(artifact.artifact_id)
-      || !/^exec_[a-z0-9_-]{8,96}$/.test(artifact.execution_id)
-      || !artifactKinds.has(artifact.kind)
-      || !exactIsoTimestamp(artifact.started_at)
-      || !exactIsoTimestamp(artifact.completed_at)
-      || !/^[A-Za-z0-9+/]+={0,2}$/.test(artifact.content_base64)
-      || !/^sha256:[a-f0-9]{64}$/.test(artifact.content_hash)
-      || seenKinds.has(artifact.kind)) unavailable();
+    if (
+      !/^artifact_[a-z0-9_-]{4,96}$/.test(artifact.artifact_id) ||
+      artifacts.has(artifact.artifact_id) ||
+      !/^exec_[a-z0-9_-]{8,96}$/.test(artifact.execution_id) ||
+      !artifactKinds.has(artifact.kind) ||
+      !exactIsoTimestamp(artifact.started_at) ||
+      !exactIsoTimestamp(artifact.completed_at) ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(artifact.content_base64) ||
+      !/^sha256:[a-f0-9]{64}$/.test(artifact.content_hash) ||
+      seenKinds.has(artifact.kind)
+    )
+      unavailable();
     const artifactStarted = new Date(artifact.started_at).getTime();
     const artifactCompleted = new Date(artifact.completed_at).getTime();
     if (artifactStarted < started || artifactCompleted > completed || artifactCompleted < artifactStarted) unavailable();
     const content = Buffer.from(artifact.content_base64, 'base64');
-    if (content.length === 0
-      || content.length > 256 * 1024
-      || content.toString('base64') !== artifact.content_base64
-      || artifact.content_hash !== `sha256:${createHash('sha256').update(content).digest('hex')}`) unavailable();
+    if (
+      content.length === 0 ||
+      content.length > 256 * 1024 ||
+      content.toString('base64') !== artifact.content_base64 ||
+      artifact.content_hash !== `sha256:${createHash('sha256').update(content).digest('hex')}`
+    )
+      unavailable();
     decodedBytes += content.length;
     if (decodedBytes > 1024 * 1024) unavailable();
     artifacts.set(artifact.artifact_id, artifact);
@@ -179,25 +198,33 @@ export function validateSandboxCertificationTranscriptV4(
   const effects = new Set<SandboxHostileEffectV4>();
   const referencedArtifacts = new Set<string>();
   for (const candidateObservation of transcript.observations) {
-    if (typeof candidateObservation !== 'object'
-      || candidateObservation === null
-      || Array.isArray(candidateObservation)
-      || !exactKeys(candidateObservation, observationKeys)) unavailable();
+    if (
+      typeof candidateObservation !== 'object' ||
+      candidateObservation === null ||
+      Array.isArray(candidateObservation) ||
+      !exactKeys(candidateObservation, observationKeys)
+    )
+      unavailable();
     const observation = candidateObservation as SandboxCertificationObservationV4;
-    if (!REQUIRED_SANDBOX_EFFECTS_V4.includes(observation.effect)
-      || effects.has(observation.effect)
-      || observation.passed !== true
-      || !Array.isArray(observation.artifact_ids)
-      || observation.artifact_ids.length === 0
-      || observation.artifact_ids.length > 4) unavailable();
+    if (
+      !REQUIRED_SANDBOX_EFFECTS_V4.includes(observation.effect) ||
+      effects.has(observation.effect) ||
+      observation.passed !== true ||
+      !Array.isArray(observation.artifact_ids) ||
+      observation.artifact_ids.length === 0 ||
+      observation.artifact_ids.length > 4
+    )
+      unavailable();
     const requiredKind = artifactKindForEffect(observation.effect);
     if (observation.artifact_ids.some((artifactId) => artifacts.get(artifactId)?.kind !== requiredKind)) unavailable();
     for (const artifactId of observation.artifact_ids) referencedArtifacts.add(artifactId);
     effects.add(observation.effect);
   }
   if (REQUIRED_SANDBOX_EFFECTS_V4.some((effect) => !effects.has(effect))) unavailable();
-  if ([...artifacts.values()].some((artifact) => artifact.kind !== 'DOCKER_IDENTITY_RESULT'
-    && !referencedArtifacts.has(artifact.artifact_id))) unavailable();
+  if (
+    [...artifacts.values()].some((artifact) => artifact.kind !== 'DOCKER_IDENTITY_RESULT' && !referencedArtifacts.has(artifact.artifact_id))
+  )
+    unavailable();
   const expiresAt = new Date(completed + ttlSeconds * 1_000).toISOString();
   return Object.freeze({
     evidence_hash: `sha256:${hashCanonicalV4(transcript)}`,

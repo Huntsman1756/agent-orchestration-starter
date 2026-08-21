@@ -12,7 +12,9 @@ function normalize(value: unknown, ancestors: Set<object>): unknown {
 
   ancestors.add(value);
   const sorted = Object.fromEntries(
-    Object.entries(value).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map(([key, item]) => [key, normalize(item, ancestors)]),
+    Object.entries(value)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => [key, normalize(item, ancestors)]),
   );
   ancestors.delete(value);
   return sorted;

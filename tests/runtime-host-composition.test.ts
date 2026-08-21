@@ -13,7 +13,12 @@ function daemonFixture() {
   const failures: RuntimeFailureV4[] = [];
   let aborts = 0;
   const daemon: BrokerDaemonV4 = {
-    submit: async (command) => ({ request_id: command.type === 'RUN_CODING_TASK' ? command.request.request_id : result.request_id, run_id: runId, state: result.state, status_token: 'a'.repeat(64) }),
+    submit: async (command) => ({
+      request_id: command.type === 'RUN_CODING_TASK' ? command.request.request_id : result.request_id,
+      run_id: runId,
+      state: result.state,
+      status_token: 'a'.repeat(64),
+    }),
     status: async () => result,
     recover: async () => undefined,
     close: async () => undefined,
@@ -21,8 +26,15 @@ function daemonFixture() {
     reinspect: async () => undefined,
     recordExternalProcessStarted: async () => undefined,
     recordAcceptedCandidate: async () => undefined,
-    recordFailure: async (_id, failure) => { failures.push(failure); result.state = 'FAILED'; result.failure = failure; },
-    recordAbort: async () => { aborts += 1; result.state = 'ABORTED'; },
+    recordFailure: async (_id, failure) => {
+      failures.push(failure);
+      result.state = 'FAILED';
+      result.failure = failure;
+    },
+    recordAbort: async () => {
+      aborts += 1;
+      result.state = 'ABORTED';
+    },
     recordCommitCreated: async () => undefined,
     recordPublication: async () => undefined,
   };
@@ -43,8 +55,18 @@ test('automatically schedules one daemon-owned pipeline flight for replayed subm
   const fixture = daemonFixture();
   let advances = 0;
   let release!: () => void;
-  const blocked = new Promise<void>((resolve) => { release = resolve; });
-  const host = composeRuntimeHostControlV4(fixture.daemon, operations({ advance: async () => { advances += 1; await blocked; } }));
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const host = composeRuntimeHostControlV4(
+    fixture.daemon,
+    operations({
+      advance: async () => {
+        advances += 1;
+        await blocked;
+      },
+    }),
+  );
   const request = { schema_version: 4, request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1' } as never;
   await host.daemon.submit({ type: 'RUN_CODING_TASK', command_id: 'one', request });
   await host.daemon.submit({ type: 'RUN_CODING_TASK', command_id: 'two', request });
@@ -56,7 +78,14 @@ test('automatically schedules one daemon-owned pipeline flight for replayed subm
 
 test('persists bounded terminal failure without leaking operation details', async () => {
   const fixture = daemonFixture();
-  const host = composeRuntimeHostControlV4(fixture.daemon, operations({ advance: async () => { throw new Error('VALIDATION_FAILED: C:/secret/project/raw.log'); } }));
+  const host = composeRuntimeHostControlV4(
+    fixture.daemon,
+    operations({
+      advance: async () => {
+        throw new Error('VALIDATION_FAILED: C:/secret/project/raw.log');
+      },
+    }),
+  );
   const request = { schema_version: 4, request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N1' } as never;
   await host.daemon.submit({ type: 'RUN_CODING_TASK', command_id: 'one', request });
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -68,12 +97,26 @@ test('persists bounded terminal failure without leaking operation details', asyn
 test('wires repair, finalize, and abort through exact host operations', async () => {
   const fixture = daemonFixture();
   const calls: string[] = [];
-  const host = composeRuntimeHostControlV4(fixture.daemon, operations({
-    prepareRepair: async (input) => { calls.push(`repair:${input.command_id}:${input.findings[0]?.id}`); },
-    finalize: async (input) => { calls.push(`finalize:${input.command_id}`); fixture.result.state = 'FINALIZED'; },
-    stopExternal: async (id) => { calls.push(`abort:${id}`); },
-  }));
-  await host.controlPlane.repair({ command_id: 'repair-one', run_id: runId, findings: [{ id: 'finding-1', evidence_hash: 'b'.repeat(64) }] });
+  const host = composeRuntimeHostControlV4(
+    fixture.daemon,
+    operations({
+      prepareRepair: async (input) => {
+        calls.push(`repair:${input.command_id}:${input.findings[0]?.id}`);
+      },
+      finalize: async (input) => {
+        calls.push(`finalize:${input.command_id}`);
+        fixture.result.state = 'FINALIZED';
+      },
+      stopExternal: async (id) => {
+        calls.push(`abort:${id}`);
+      },
+    }),
+  );
+  await host.controlPlane.repair({
+    command_id: 'repair-one',
+    run_id: runId,
+    findings: [{ id: 'finding-1', evidence_hash: 'b'.repeat(64) }],
+  });
   await new Promise<void>((resolve) => setImmediate(resolve));
   fixture.result.state = 'REVIEW_ACCEPTED';
   await host.controlPlane.finalize({ command_id: 'finalize-one', run_id: runId });

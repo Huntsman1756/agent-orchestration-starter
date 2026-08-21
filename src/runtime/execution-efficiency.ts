@@ -51,8 +51,11 @@ export function aggregateRuntimeExecutionEfficiencyV4(values: readonly RuntimeEx
     if (attempts < 1) throw new Error('INVALID_EFFICIENCY_EVIDENCE: attempts');
     repairs += nonNegativeInteger(value.repairs, 'repairs');
     escalations += nonNegativeInteger(value.escalations, 'escalations');
-    workerTokens += nonNegativeInteger(value.workerInputTokens, 'workerInputTokens') + nonNegativeInteger(value.workerOutputTokens, 'workerOutputTokens');
-    frontierTokens += nonNegativeInteger(value.frontierInputTokens, 'frontierInputTokens') + nonNegativeInteger(value.frontierOutputTokens, 'frontierOutputTokens');
+    workerTokens +=
+      nonNegativeInteger(value.workerInputTokens, 'workerInputTokens') + nonNegativeInteger(value.workerOutputTokens, 'workerOutputTokens');
+    frontierTokens +=
+      nonNegativeInteger(value.frontierInputTokens, 'frontierInputTokens') +
+      nonNegativeInteger(value.frontierOutputTokens, 'frontierOutputTokens');
     providerCostMicroUnits += nonNegativeInteger(value.providerCostMicroUnits, 'providerCostMicroUnits');
     humanInterventionSeconds += nonNegativeInteger(value.humanInterventionSeconds, 'humanInterventionSeconds');
     humanCostMicroUnits += nonNegativeInteger(value.humanCostMicroUnits, 'humanCostMicroUnits');

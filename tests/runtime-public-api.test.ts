@@ -25,7 +25,9 @@ test('runtime-v4 keeps an intentional entry-point module surface', async () => {
 });
 
 test('package exports identify stable, boundary-specific, and experimental runtime surfaces', async () => {
-  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { exports?: Record<string, unknown> };
+  const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
+    exports?: Record<string, unknown>;
+  };
   assert.deepEqual(Object.keys(packageJson.exports ?? {}), [
     './fingerprint',
     './pilot-v3',

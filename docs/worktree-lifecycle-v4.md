@@ -30,11 +30,11 @@ like a runtime run ID.
 
 The default policy is:
 
-| Terminal state | Retention | Default disposition |
-| --- | ---: | --- |
-| `FINALIZED` | immediate | caller supplies `MERGED`, `KEEP_BRANCH`, or the explicit disposition |
-| `ABORTED` | 24 hours | caller supplies the evidence-bound disposition |
-| `FAILED` | 7 days | caller supplies the evidence-bound disposition |
+| Terminal state | Retention | Default disposition                                                  |
+| -------------- | --------: | -------------------------------------------------------------------- |
+| `FINALIZED`    | immediate | caller supplies `MERGED`, `KEEP_BRANCH`, or the explicit disposition |
+| `ABORTED`      |  24 hours | caller supplies the evidence-bound disposition                       |
+| `FAILED`       |    7 days | caller supplies the evidence-bound disposition                       |
 
 `markTerminal()` durably records the terminal evidence before attempting
 cleanup. A finalized clean worktree can therefore be reclaimed immediately.

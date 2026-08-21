@@ -12,14 +12,14 @@ launcher, or a future replacement for Docker.
 
 Record and pin the exact tuple before executing a repository:
 
-| Component | Required identity |
-| --- | --- |
-| runtime source | repository URL and commit SHA or immutable release artifact hash |
-| execution image | content digest, not a mutable tag |
-| launcher | audited source hash and exact effective arguments |
-| host | OS, architecture, container-engine identity and relevant kernel features |
-| policy | canonical sandbox-profile hash and allowed mount/network authority |
-| credentials | adapter/gateway identity and proof that descendants cannot read secrets |
+| Component       | Required identity                                                        |
+| --------------- | ------------------------------------------------------------------------ |
+| runtime source  | repository URL and commit SHA or immutable release artifact hash         |
+| execution image | content digest, not a mutable tag                                        |
+| launcher        | audited source hash and exact effective arguments                        |
+| host            | OS, architecture, container-engine identity and relevant kernel features |
+| policy          | canonical sandbox-profile hash and allowed mount/network authority       |
+| credentials     | adapter/gateway identity and proof that descendants cannot read secrets  |
 
 Changing any member invalidates prior evidence. A new model alone may only require
 capability requalification; changing its harness, launcher, credential mechanism,

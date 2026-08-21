@@ -52,10 +52,7 @@ function unpairedObservations(count: number, route: RoutingStrategy): BenchmarkO
 }
 
 test('reports insufficient evidence until a candidate and baseline have enough comparable pairs', () => {
-  const report = evaluateRouting([
-    ...observations(29, 'economy_only'),
-    ...observations(30, 'frontier_execution'),
-  ], gate);
+  const report = evaluateRouting([...observations(29, 'economy_only'), ...observations(30, 'frontier_execution')], gate);
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
@@ -65,10 +62,7 @@ test('reports insufficient evidence until a candidate and baseline have enough c
 });
 
 test('does not count unpaired candidate and baseline observations toward the gate minimum', () => {
-  const report = evaluateRouting([
-    ...unpairedObservations(30, 'economy_only'),
-    ...unpairedObservations(30, 'frontier_execution'),
-  ], gate);
+  const report = evaluateRouting([...unpairedObservations(30, 'economy_only'), ...unpairedObservations(30, 'frontier_execution')], gate);
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
@@ -78,10 +72,13 @@ test('does not count unpaired candidate and baseline observations toward the gat
 });
 
 test('does not pair equal task IDs produced from different case conditions', () => {
-  const report = evaluateRouting([
-    ...observations(30, 'economy_only', { caseFingerprint: 'a'.repeat(64) }),
-    ...observations(30, 'frontier_execution', { caseFingerprint: 'b'.repeat(64) }),
-  ], gate);
+  const report = evaluateRouting(
+    [
+      ...observations(30, 'economy_only', { caseFingerprint: 'a'.repeat(64) }),
+      ...observations(30, 'frontier_execution', { caseFingerprint: 'b'.repeat(64) }),
+    ],
+    gate,
+  );
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
@@ -90,10 +87,10 @@ test('does not pair equal task IDs produced from different case conditions', () 
 });
 
 test('rejects a candidate that does not reduce accepted-task cost enough', () => {
-  const report = evaluateRouting([
-    ...observations(30, 'economy_only', { totalCostUsd: 0.85 }),
-    ...observations(30, 'frontier_execution', { totalCostUsd: 1 }),
-  ], gate);
+  const report = evaluateRouting(
+    [...observations(30, 'economy_only', { totalCostUsd: 0.85 }), ...observations(30, 'frontier_execution', { totalCostUsd: 1 })],
+    gate,
+  );
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
@@ -104,10 +101,7 @@ test('rejects a candidate that does not reduce accepted-task cost enough', () =>
 });
 
 test('promotes a sufficiently sampled candidate with lower accepted-task cost and equal quality', () => {
-  const report = evaluateRouting([
-    ...observations(30, 'orchestrated'),
-    ...observations(30, 'frontier_execution'),
-  ], gate);
+  const report = evaluateRouting([...observations(30, 'orchestrated'), ...observations(30, 'frontier_execution')], gate);
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'orchestrated');
   assert.ok(decision);
@@ -116,39 +110,43 @@ test('promotes a sufficiently sampled candidate with lower accepted-task cost an
 });
 
 test('records rescued economy attempts as first-pass failures and rejects excessive escalation', () => {
-  const report = evaluateRouting([
-    ...observations(30, 'economy_only', {
-      firstPassAccepted: false,
-      finalAccepted: true,
-      escalated: true,
-      frontierTokens: { input: 500, output: 100 },
-    }),
-    ...observations(30, 'frontier_execution'),
-  ], gate);
+  const report = evaluateRouting(
+    [
+      ...observations(30, 'economy_only', {
+        firstPassAccepted: false,
+        finalAccepted: true,
+        escalated: true,
+        frontierTokens: { input: 500, output: 100 },
+      }),
+      ...observations(30, 'frontier_execution'),
+    ],
+    gate,
+  );
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
   assert.equal(decision.candidate.finalAcceptanceRate, 1);
   assert.equal(decision.candidate.firstPassAcceptanceRate, 0);
   assert.equal(decision.decision, 'reject');
-  assert.deepEqual(decision.reasons, [
-    'first_pass_acceptance_drop_above_maximum',
-    'escalation_rate_above_maximum',
-  ]);
+  assert.deepEqual(decision.reasons, ['first_pass_acceptance_drop_above_maximum', 'escalation_rate_above_maximum']);
 });
 
 test('rejects equal first-pass performance when the candidate leaves fewer tasks finally accepted', () => {
-  const candidate = Array.from({ length: 30 }, (_, index) => observation(index, 'economy_only', {
-    firstPassAccepted: index < 20,
-    finalAccepted: index < 20,
-    totalCostUsd: 0.1,
-  }));
-  const baseline = Array.from({ length: 30 }, (_, index) => observation(index, 'frontier_execution', {
-    firstPassAccepted: index < 20,
-    finalAccepted: true,
-    totalCostUsd: 1,
-    repairCount: index < 20 ? 0 : 1,
-  }));
+  const candidate = Array.from({ length: 30 }, (_, index) =>
+    observation(index, 'economy_only', {
+      firstPassAccepted: index < 20,
+      finalAccepted: index < 20,
+      totalCostUsd: 0.1,
+    }),
+  );
+  const baseline = Array.from({ length: 30 }, (_, index) =>
+    observation(index, 'frontier_execution', {
+      firstPassAccepted: index < 20,
+      finalAccepted: true,
+      totalCostUsd: 1,
+      repairCount: index < 20 ? 0 : 1,
+    }),
+  );
 
   const report = evaluateRouting([...candidate, ...baseline], gate);
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
@@ -171,10 +169,7 @@ test('gates post-acceptance defect incidence while retaining severity counts', (
       { severity: 'low', description: 'diagnostic wording' },
     ],
   };
-  const report = evaluateRouting([
-    ...candidate,
-    ...observations(30, 'frontier_execution'),
-  ], gate);
+  const report = evaluateRouting([...candidate, ...observations(30, 'frontier_execution')], gate);
 
   const decision = report.decisions.find((item) => item.candidateRoute === 'economy_only');
   assert.ok(decision);
@@ -193,10 +188,7 @@ for (const severity of ['high', 'critical'] as const) {
       postAcceptanceDefective: true,
       postAcceptanceDefects: [{ severity, description: 'escaped material regression' }],
     };
-    const report = evaluateRouting([
-      ...candidate,
-      ...observations(50, 'frontier_execution'),
-    ], {
+    const report = evaluateRouting([...candidate, ...observations(50, 'frontier_execution')], {
       ...gate,
       minPairedSamplesPerRoute: 50,
       maxPostAcceptanceDefectIncidenceRate: 0.02,
@@ -217,7 +209,9 @@ test('loads strict provider-neutral JSONL observations and YAML gate policy', as
   const economy = observation(1, 'economy_only', { taskId: 'shared-task' });
   const frontier = observation(1, 'frontier_execution', { taskId: 'shared-task' });
   await writeFile(observationsPath, `${JSON.stringify(economy)}\n${JSON.stringify(frontier)}\n`, 'utf8');
-  await writeFile(gatePath, `
+  await writeFile(
+    gatePath,
+    `
 schemaVersion: 2
 baselineRoute: frontier_execution
 candidateRoutes: [economy_only, orchestrated]
@@ -229,7 +223,9 @@ maxEscalationRate: 0.2
 maxPostAcceptanceDefectIncidenceRate: 0.02
 maxHighSeverityPostAcceptanceDefects: 0
 maxCriticalSeverityPostAcceptanceDefects: 0
-`, 'utf8');
+`,
+    'utf8',
+  );
 
   const loadedObservations = await loadBenchmarkObservations(observationsPath);
   const loadedGate = await loadRoutingGatePolicy(gatePath);

@@ -54,7 +54,7 @@ function assertValidLog(log: readonly PilotEventV3[]): void {
 }
 
 function assertReferencesKnown(log: readonly PilotEventV3[], event: PilotEventV3): void {
-  const knownEvents = new Map(log.map(candidate => [candidate.event_id, candidate]));
+  const knownEvents = new Map(log.map((candidate) => [candidate.event_id, candidate]));
   if (event.supersedes_event_id) {
     const superseded = knownEvents.get(event.supersedes_event_id);
     if (!superseded) throw new Error(`Unknown superseded event ${event.supersedes_event_id}`);
@@ -75,15 +75,12 @@ export function appendEvent(log: readonly PilotEventV3[], event: PilotEventV3): 
   const stableLog = ownedLog(log);
   assertValidLog(stableLog);
   const stableEvent = snapshotEvent(event);
-  const existing = stableLog.find(candidate => candidate.event_id === stableEvent.event_id);
+  const existing = stableLog.find((candidate) => candidate.event_id === stableEvent.event_id);
   if (existing) {
     if (canonicalize(existing) === canonicalize(stableEvent)) return stableLog;
     throw new Error(`event_id ${stableEvent.event_id} already exists with different content`);
   }
-  const expectedSequence = stableLog.reduce(
-    (count, candidate) => count + Number(candidate.block_id === stableEvent.block_id),
-    1,
-  );
+  const expectedSequence = stableLog.reduce((count, candidate) => count + Number(candidate.block_id === stableEvent.block_id), 1);
   if (stableEvent.sequence_number !== expectedSequence) {
     throw new Error(`Expected contiguous sequence ${expectedSequence} for block ${stableEvent.block_id}`);
   }
@@ -106,5 +103,5 @@ export function activeEvents(log: readonly PilotEventV3[]): readonly PilotEventV
   for (const event of stableLog) {
     if (!inactiveEventIds.has(event.event_id) && event.supersedes_event_id) inactiveEventIds.add(event.supersedes_event_id);
   }
-  return Object.freeze(stableLog.filter(event => !inactiveEventIds.has(event.event_id)));
+  return Object.freeze(stableLog.filter((event) => !inactiveEventIds.has(event.event_id)));
 }

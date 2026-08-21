@@ -5,7 +5,9 @@ import { resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const lockfile = JSON.parse(await readFile(resolve(root, 'package-lock.json'), 'utf8'));
-const lockHash = createHash('sha256').update(await readFile(resolve(root, 'package-lock.json'))).digest('hex');
+const lockHash = createHash('sha256')
+  .update(await readFile(resolve(root, 'package-lock.json')))
+  .digest('hex');
 
 function packageName(path, metadata) {
   if (typeof metadata.name === 'string') return metadata.name;

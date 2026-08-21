@@ -58,7 +58,10 @@ test('chains entries and reports an integrity breach after historical tampering'
   await trail.close();
 
   const path = join(auditTrailDirectoryV4(stateDirectory), 'audit-trail.v4.ndjson');
-  const records = (await readFile(path, 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  const records = (await readFile(path, 'utf8'))
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
   const first = records[0]!;
   const firstEntry = first.entry as Record<string, unknown>;
   firstEntry.status = 'TAMPERED';
@@ -79,8 +82,14 @@ test('serializes concurrent append callers into one valid deterministic hash cha
   const report = await verifyAuditTrailV4(trailDirectory);
   assert.equal(report.status, 'OK');
   assert.equal(report.record_count, 20);
-  const records = (await readFile(join(trailDirectory, 'audit-trail.v4.ndjson'), 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line) as { sequence: number });
-  assert.deepEqual(records.map((record) => record.sequence), Array.from({ length: 20 }, (_, index) => index + 1));
+  const records = (await readFile(join(trailDirectory, 'audit-trail.v4.ndjson'), 'utf8'))
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line) as { sequence: number });
+  assert.deepEqual(
+    records.map((record) => record.sequence),
+    Array.from({ length: 20 }, (_, index) => index + 1),
+  );
 });
 
 test('CLI audit verification returns a deterministic OK report for an empty ledger', async () => {

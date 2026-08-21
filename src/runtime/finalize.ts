@@ -10,8 +10,13 @@ import type { ValidationResultV4 } from './validation.js';
 const SHA1 = /^[a-f0-9]{40}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 
-export interface FinalizationLockV4 { release(): Promise<void>; }
-export interface ValidationManifestV4 { readonly results: readonly ValidationResultV4[]; readonly manifest_hash: string; }
+export interface FinalizationLockV4 {
+  release(): Promise<void>;
+}
+export interface ValidationManifestV4 {
+  readonly results: readonly ValidationResultV4[];
+  readonly manifest_hash: string;
+}
 export interface CommitCreatedEventV4 {
   readonly type: 'COMMIT_CREATED';
   readonly command_id: string;
@@ -59,8 +64,12 @@ export interface FinalizedRunV4 {
   readonly review_attestation_hash: string;
 }
 
-function evidenceFailure(message: string): never { throw new Error(`EVIDENCE_HASH_MISMATCH: ${message}`); }
-function finalizationFailure(message: string): never { throw new Error(`FINALIZATION_FAILED: ${message}`); }
+function evidenceFailure(message: string): never {
+  throw new Error(`EVIDENCE_HASH_MISMATCH: ${message}`);
+}
+function finalizationFailure(message: string): never {
+  throw new Error(`FINALIZATION_FAILED: ${message}`);
+}
 
 function exactCanonical(left: unknown, right: unknown, label: string): void {
   if (hashCanonicalV4(left) !== hashCanonicalV4(right)) evidenceFailure(`${label} changed after acceptance`);
@@ -69,8 +78,10 @@ function exactCanonical(left: unknown, right: unknown, label: string): void {
 function verifyContract(input: FinalizeRunInputV4): void {
   const { contract_hash: supplied, ...body } = input.contract;
   if (supplied !== hashCanonicalV4(body)) evidenceFailure('work contract self-hash is invalid');
-  if (input.contract.policy_hash !== input.expected_policy_hash || input.contract.profile_hash !== input.expected_profile_hash) evidenceFailure('policy or profile hash is stale');
-  if (input.contract.base_sha !== input.expected_old_sha || !SHA1.test(input.expected_old_sha)) evidenceFailure('finalization base does not match the contract');
+  if (input.contract.policy_hash !== input.expected_policy_hash || input.contract.profile_hash !== input.expected_profile_hash)
+    evidenceFailure('policy or profile hash is stale');
+  if (input.contract.base_sha !== input.expected_old_sha || !SHA1.test(input.expected_old_sha))
+    evidenceFailure('finalization base does not match the contract');
   if (input.task_ref !== `refs/heads/codex/auto/${input.contract.run_id}`) evidenceFailure('task ref is not bound to this run');
 }
 
@@ -88,7 +99,12 @@ function verifyValidation(input: FinalizeRunInputV4): void {
   if (input.validation_manifest.results.length < 1) evidenceFailure('validation manifest is empty');
   for (const result of input.validation_manifest.results) {
     const { result_hash: supplied, ...body } = result;
-    if (supplied !== hashCanonicalV4(body) || !result.passed || result.validated_tree_hash !== input.accepted_diff.tree_hash || result.policy_hash !== input.expected_policy_hash) {
+    if (
+      supplied !== hashCanonicalV4(body) ||
+      !result.passed ||
+      result.validated_tree_hash !== input.accepted_diff.tree_hash ||
+      result.policy_hash !== input.expected_policy_hash
+    ) {
       evidenceFailure(`validation ${result.validation_id} is failed, forged, or stale`);
     }
   }
@@ -107,7 +123,8 @@ function verifySnapshot(entries: readonly AcceptedTreeEntryV4[], diff: DiffPolic
       if (entry !== undefined) evidenceFailure(`deleted path remains in accepted snapshot: ${change.path}`);
       continue;
     }
-    if (entry === undefined || entry.path !== change.path || change.content_hash === null) evidenceFailure(`changed path is absent from accepted snapshot: ${change.path}`);
+    if (entry === undefined || entry.path !== change.path || change.content_hash === null)
+      evidenceFailure(`changed path is absent from accepted snapshot: ${change.path}`);
     const actual = createHash('sha256').update(entry.bytes).digest('hex');
     if (actual !== change.content_hash) evidenceFailure(`accepted bytes changed after review: ${change.path}`);
   }
@@ -115,7 +132,8 @@ function verifySnapshot(entries: readonly AcceptedTreeEntryV4[], diff: DiffPolic
 
 export async function finalizeRun(input: FinalizeRunInputV4): Promise<FinalizedRunV4> {
   verifyContract(input);
-  if (!SHA256.test(input.accepted_diff.tree_hash) || !SHA256.test(input.accepted_diff.diff_hash)) evidenceFailure('accepted diff identity is invalid');
+  if (!SHA256.test(input.accepted_diff.tree_hash) || !SHA256.test(input.accepted_diff.diff_hash))
+    evidenceFailure('accepted diff identity is invalid');
   verifyValidation(input);
   const attestation = verifyReviewAttestation({
     attestation: input.review_attestation,
@@ -154,7 +172,11 @@ export async function finalizeRun(input: FinalizeRunInputV4): Promise<FinalizedR
     const currentRef = await input.read_task_ref(input.task_ref);
     if (currentRef !== commit.commit_sha) {
       if (currentRef !== input.expected_old_sha) finalizationFailure('task ref changed concurrently');
-      await input.writer.updateTaskRef({ task_ref: input.task_ref, new_commit_sha: commit.commit_sha, expected_old_sha: input.expected_old_sha });
+      await input.writer.updateTaskRef({
+        task_ref: input.task_ref,
+        new_commit_sha: commit.commit_sha,
+        expected_old_sha: input.expected_old_sha,
+      });
     }
     const verifiedRef = await input.read_task_ref(input.task_ref);
     if (verifiedRef !== commit.commit_sha) finalizationFailure('task ref does not resolve to intended commit');

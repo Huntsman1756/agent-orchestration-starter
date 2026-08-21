@@ -27,9 +27,14 @@ export function resolveBinding(input: BindingResolutionInputV4): ResolvedBinding
   if (input.route === 'FRONTIER' && stage === 'ESCALATION') {
     throw new Error('INVALID_CONTRACT: direct frontier routes cannot select the economy escalation binding');
   }
-  const role: RuntimeRoleV4 = input.route === 'FRONTIER'
-    ? 'frontierExecutor'
-    : stage === 'ESCALATION' ? 'escalationExecutor' : stage === 'REASONING' ? 'reasoningExecutor' : 'executor';
+  const role: RuntimeRoleV4 =
+    input.route === 'FRONTIER'
+      ? 'frontierExecutor'
+      : stage === 'ESCALATION'
+        ? 'escalationExecutor'
+        : stage === 'REASONING'
+          ? 'reasoningExecutor'
+          : 'executor';
   const binding = input.profile.bindings[role];
   if (binding === undefined) {
     throw new Error(`INVALID_CONTRACT: required ${role} binding is unavailable`);

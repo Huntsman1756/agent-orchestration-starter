@@ -116,7 +116,8 @@ bindings:
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
     execution:
-      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning, long-horizon, architecture, security-sensitive, migration]
+      supportedTaskTraits:
+        [mechanical, localized, semantic-debugging, cross-file-reasoning, long-horizon, architecture, security-sensitive, migration]
       maxSteps: 64
       maxToolUses: 128
       maxNoMutationSteps: 12

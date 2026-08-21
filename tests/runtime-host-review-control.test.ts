@@ -36,7 +36,12 @@ function fixture() {
   const packet = buildBrokerReviewPacket({ result, envelope });
   const verdicts: unknown[] = [];
   const daemon: BrokerDaemonV4 = {
-    submit: async () => ({ request_id: result.request_id, run_id: runId, state: result.state, status_token: hashCanonicalV4({ run_id: runId, state: result.state, artifact_manifest_hash: result.artifact_manifest_hash }) }),
+    submit: async () => ({
+      request_id: result.request_id,
+      run_id: runId,
+      state: result.state,
+      status_token: hashCanonicalV4({ run_id: runId, state: result.state, artifact_manifest_hash: result.artifact_manifest_hash }),
+    }),
     status: async () => result,
     recover: async () => undefined,
     close: async () => undefined,
@@ -46,7 +51,9 @@ function fixture() {
     recordAcceptedCandidate: async () => undefined,
     recordFailure: async () => undefined,
     recordAbort: async () => undefined,
-    recordReviewVerdict: async (_id, verdict) => { verdicts.push(verdict); },
+    recordReviewVerdict: async (_id, verdict) => {
+      verdicts.push(verdict);
+    },
   };
   return { daemon, packet, verdicts };
 }
@@ -60,17 +67,32 @@ test('APPROVED records only the bound verdict while REJECTED enters the existing
     const state = fixture();
     const calls: string[] = [];
     const operations: RuntimeHostOperationsV4 = {
-      advance: async () => { calls.push('advance'); },
-      prepareRepair: async (input) => { calls.push(`repair:${input.findings[0]!.evidence_hash}`); },
-      finalize: async () => { calls.push('finalize'); },
+      advance: async () => {
+        calls.push('advance');
+      },
+      prepareRepair: async (input) => {
+        calls.push(`repair:${input.findings[0]!.evidence_hash}`);
+      },
+      finalize: async () => {
+        calls.push('finalize');
+      },
       stopExternal: async () => undefined,
       getReviewPacket: async () => state.packet,
     };
     const host = composeRuntimeHostControlV4(state.daemon, operations);
-    await host.controlPlane.submitVerdict!({ command_id: `verdict-${verdict.toLowerCase()}`, run_id: runId, packet_hash: state.packet.packet_hash, verdict, reason: `review ${verdict.toLowerCase()}` });
+    await host.controlPlane.submitVerdict!({
+      command_id: `verdict-${verdict.toLowerCase()}`,
+      run_id: runId,
+      packet_hash: state.packet.packet_hash,
+      verdict,
+      reason: `review ${verdict.toLowerCase()}`,
+    });
     await settle();
     assert.equal(state.verdicts.length, 1);
-    assert.equal(calls.some((call) => call.startsWith('repair:')), verdict === 'REJECTED');
+    assert.equal(
+      calls.some((call) => call.startsWith('repair:')),
+      verdict === 'REJECTED',
+    );
     assert.equal(calls.includes('finalize'), false);
     await host.close();
   }

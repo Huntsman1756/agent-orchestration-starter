@@ -17,8 +17,30 @@ import { validModelGuidance } from './runtime-contracts.test.js';
 
 const execFileAsync = promisify(execFile);
 const fakeHarness = new URL('./fixtures/bin/fake-opencode.mjs', import.meta.url).pathname.replace(/^\/(.:\/)/, '$1');
-const identity = { profile_hash: 'a'.repeat(64), harness: 'opencode', harness_version: '1.18.15', agent_policy_hash: 'b'.repeat(64), broker_version: '0.1.0', probe_version: 1 } as const;
-const capability = await probeRuntimeBinding({ identity, probed_at: '2026-08-10T08:00:00.000Z', ttl_seconds: 3600, run_probe: async (iteration) => ({ structured_result: true, exact_bounded_edit: true, multi_step_file_tools: true, repair_from_validation_evidence: true, capsule_only: true, credential_separation: true, tool_network_denied: true, shell_used: false, transcript_hash: String(iteration + 1).repeat(64) }) });
+const identity = {
+  profile_hash: 'a'.repeat(64),
+  harness: 'opencode',
+  harness_version: '1.18.15',
+  agent_policy_hash: 'b'.repeat(64),
+  broker_version: '0.1.0',
+  probe_version: 1,
+} as const;
+const capability = await probeRuntimeBinding({
+  identity,
+  probed_at: '2026-08-10T08:00:00.000Z',
+  ttl_seconds: 3600,
+  run_probe: async (iteration) => ({
+    structured_result: true,
+    exact_bounded_edit: true,
+    multi_step_file_tools: true,
+    repair_from_validation_evidence: true,
+    capsule_only: true,
+    credential_separation: true,
+    tool_network_denied: true,
+    shell_used: false,
+    transcript_hash: String(iteration + 1).repeat(64),
+  }),
+});
 
 test('runtime example keeps concrete provider and model choices outside stable policy', async () => {
   const profile = loadRuntimeProfileV4(parse(await readFile(new URL('../profiles/runtime.example.yaml', import.meta.url), 'utf8')));
@@ -30,13 +52,40 @@ test('runtime example keeps concrete provider and model choices outside stable p
 function localSandbox(): ProcessSandboxBackendV4 {
   return {
     id: 'fixture-sandbox',
-    probe: async () => ({ status: 'SUPPORTED', backend_id: 'fixture-sandbox', policy_hash: 'd'.repeat(64), certification_hash: 'e'.repeat(64), expires_at: '2026-08-10T09:00:00.000Z' }),
+    probe: async () => ({
+      status: 'SUPPORTED',
+      backend_id: 'fixture-sandbox',
+      policy_hash: 'd'.repeat(64),
+      certification_hash: 'e'.repeat(64),
+      expires_at: '2026-08-10T09:00:00.000Z',
+    }),
     run: async (request: SandboxRunRequestV4) => {
       const started = Date.now();
       const capsule = request.mounts.find((mount) => mount.target === '/capsule')!.source;
-      const environment = Object.fromEntries(Object.entries(request.environment).map(([key, value]) => [key, value.replace(/^\/capsule(?=\/|$)/, capsule.replaceAll('\\', '/'))]));
-      const { stdout, stderr } = await execFileAsync(request.argv[0]!, request.argv.slice(1), { cwd: capsule, env: environment, encoding: 'utf8', timeout: request.timeout_ms, maxBuffer: request.max_output_bytes });
-      return { execution_id: request.execution_id, exit_code: 0, signal: null, timed_out: false, stdout, stderr, stdout_truncated: false, stderr_truncated: false, duration_ms: Date.now() - started };
+      const environment = Object.fromEntries(
+        Object.entries(request.environment).map(([key, value]) => [
+          key,
+          value.replace(/^\/capsule(?=\/|$)/, capsule.replaceAll('\\', '/')),
+        ]),
+      );
+      const { stdout, stderr } = await execFileAsync(request.argv[0]!, request.argv.slice(1), {
+        cwd: capsule,
+        env: environment,
+        encoding: 'utf8',
+        timeout: request.timeout_ms,
+        maxBuffer: request.max_output_bytes,
+      });
+      return {
+        execution_id: request.execution_id,
+        exit_code: 0,
+        signal: null,
+        timed_out: false,
+        stdout,
+        stderr,
+        stdout_truncated: false,
+        stderr_truncated: false,
+        duration_ms: Date.now() - started,
+      };
     },
     terminate: async () => {},
   };
@@ -54,17 +103,65 @@ test('runs the profile-selected model and agent with only broker config and leas
     await writeFile(join(capsule, 'repo', 'opencode.json'), '{"model":"hostile/model","plugin":["./pwn.ts"]}');
     await mkdir(join(capsule, 'repo', '.opencode', 'tools'), { recursive: true });
     await writeFile(join(capsule, 'repo', '.opencode', 'tools', 'bash.ts'), 'export default { execute(){ throw new Error("pwn") } }');
-    const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'profile-selected-provider', model: 'economy/model-v1', tier: 'economy', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() }, binding_hash: 'f'.repeat(64) };
+    const binding: ResolvedBindingV4 = {
+      role: 'executor',
+      binding: {
+        harness: 'opencode',
+        provider: 'profile-selected-provider',
+        model: 'economy/model-v1',
+        tier: 'economy',
+        capability: 'agentic_tool_execution',
+        allowedDataScopes: ['SOURCE_CODE_ONLY'],
+        allowedSourceSensitivity: ['PUBLIC'],
+        permissions: 'contract-write',
+        guidance: validModelGuidance(),
+      },
+      binding_hash: 'f'.repeat(64),
+    };
     let revoked = false;
     const credentials: CredentialAdapterV4 = {
-      lease: async () => ({ lease_id: 'lease_fixture', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }),
-      revoke: async (id) => { assert.equal(id, 'lease_fixture'); revoked = true; },
+      lease: async () => ({
+        lease_id: 'lease_fixture',
+        environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' },
+        provider_endpoint: 'http://provider-gateway:8080/v1',
+        internal_network: 'ao-int-exec-fixture-0001',
+        expires_at: '2026-08-10T08:10:00.000Z',
+      }),
+      revoke: async (id) => {
+        assert.equal(id, 'lease_fixture');
+        revoked = true;
+      },
     };
-    const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_economy_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
+    const runner = createOpenCodeRunner({
+      sandbox: localSandbox(),
+      credentials,
+      harness_argv: [process.execPath, fakeHarness],
+      now: () => '2026-08-10T08:01:00.000Z',
+      capability_identity_for: () => identity,
+      enforce_economy_diff: async () => ({
+        changes: [],
+        changed_files: 0,
+        changed_lines: 0,
+        diff_hash: '2'.repeat(64),
+        tree_hash: '3'.repeat(64),
+      }),
+    });
     const result = await runner.execute({
-      execution_id: 'exec_fixture_0001', binding, capability, capsule_root: capsule, worktree_root: worktree,
-      agent: 'executor', objective: 'Change greeting', base_sha: '1'.repeat(40),
-      allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], acceptance_tests: ['tests/greeting.test.ts'], implementation_targets: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }], max_files_changed: 1, max_changed_lines: 20, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64),
+      execution_id: 'exec_fixture_0001',
+      binding,
+      capability,
+      capsule_root: capsule,
+      worktree_root: worktree,
+      agent: 'executor',
+      objective: 'Change greeting',
+      base_sha: '1'.repeat(40),
+      allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
+      acceptance_tests: ['tests/greeting.test.ts'],
+      implementation_targets: [{ path: 'src/greeting.ts', operations: ['MODIFY'] }],
+      max_files_changed: 1,
+      max_changed_lines: 20,
+      attempt_number: 1,
+      expected_sandbox_policy_hash: 'd'.repeat(64),
     });
     assert.equal(result.session_id, 'session_fixture_0001');
     assert.match(result.capability_snapshot_hash, /^[a-f0-9]{64}$/);
@@ -76,10 +173,38 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.ok(capture.argv.includes('--dir=/capsule'));
     assert.ok(capture.argv.includes('--model=profile-selected-provider/economy/model-v1'));
     assert.ok(capture.argv.includes('--agent=executor'));
-    const platformBaseline = process.platform === 'win32'
-      ? ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR']
-      : process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : [];
-    assert.deepEqual(capture.environment_keys, ['AO_EXECUTION_ID', 'HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', ...platformBaseline, 'PROVIDER_GATEWAY_TOKEN', 'TMPDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME'].sort());
+    const platformBaseline =
+      process.platform === 'win32'
+        ? [
+            'HOMEDRIVE',
+            'HOMEPATH',
+            'LOGONSERVER',
+            'PATH',
+            'SYSTEMDRIVE',
+            'SYSTEMROOT',
+            'TEMP',
+            'USERDOMAIN',
+            'USERNAME',
+            'USERPROFILE',
+            'WINDIR',
+          ]
+        : process.platform === 'darwin'
+          ? ['__CF_USER_TEXT_ENCODING']
+          : [];
+    assert.deepEqual(
+      capture.environment_keys,
+      [
+        'AO_EXECUTION_ID',
+        'HOME',
+        'OPENCODE_CONFIG',
+        'OPENCODE_CONFIG_DIR',
+        ...platformBaseline,
+        'PROVIDER_GATEWAY_TOKEN',
+        'TMPDIR',
+        'XDG_CACHE_HOME',
+        'XDG_CONFIG_HOME',
+      ].sort(),
+    );
     assert.equal(capture.config.share, 'disabled');
     assert.equal(capture.config.autoupdate, false);
     assert.deepEqual(capture.config.enabled_providers, ['profile-selected-provider']);
@@ -92,7 +217,14 @@ test('runs the profile-selected model and agent with only broker config and leas
       },
       models: { 'economy/model-v1': { name: 'economy/model-v1' } },
     });
-    assert.deepEqual(capture.config.agent.executor, { description: 'Broker-owned executor agent', mode: 'primary', model: 'profile-selected-provider/economy/model-v1', reasoningEffort: 'low', textVerbosity: 'low', steps: 16 });
+    assert.deepEqual(capture.config.agent.executor, {
+      description: 'Broker-owned executor agent',
+      mode: 'primary',
+      model: 'profile-selected-provider/economy/model-v1',
+      reasoningEffort: 'low',
+      textVerbosity: 'low',
+      steps: 16,
+    });
     assert.match(capture.argv.at(-1), /# Instructions[\s\S]*Keep the change minimal[\s\S]*# Task[\s\S]*Change greeting/);
     assert.deepEqual(capture.config.permission.edit, { '*': 'deny', 'repo/src/greeting.ts': 'allow' });
     assert.equal(capture.hostile_project_config_present, true);
@@ -103,16 +235,73 @@ test('runs the profile-selected model and agent with only broker config and leas
 });
 
 test('rejects an unverified capability before leasing credentials or launching a harness', async () => {
-  const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
-  const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
-  await assert.rejects(() => runner.execute({ execution_id: 'exec_bad_0001', binding: {} as ResolvedBindingV4, capability: { ...capability, status: 'UNQUALIFIED' }, capsule_root: 'x', worktree_root: 'x', agent: 'executor', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64) }), /CAPABILITY_UNVERIFIED/);
+  const credentials: CredentialAdapterV4 = {
+    lease: async () => ({
+      lease_id: 'lease',
+      environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' },
+      provider_endpoint: 'http://provider-gateway:8080/v1',
+      internal_network: 'ao-int-exec-fixture-0001',
+      expires_at: '2026-08-10T08:10:00.000Z',
+    }),
+    revoke: async () => {},
+  };
+  const runner = createOpenCodeRunner({
+    sandbox: localSandbox(),
+    credentials,
+    harness_argv: [process.execPath, fakeHarness],
+    now: () => '2026-08-10T08:01:00.000Z',
+    capability_identity_for: () => identity,
+    enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }),
+  });
+  await assert.rejects(
+    () =>
+      runner.execute({
+        execution_id: 'exec_bad_0001',
+        binding: {} as ResolvedBindingV4,
+        capability: { ...capability, status: 'UNQUALIFIED' },
+        capsule_root: 'x',
+        worktree_root: 'x',
+        agent: 'executor',
+        objective: 'x',
+        base_sha: '1'.repeat(40),
+        allowed_changes: [],
+        max_files_changed: 1,
+        max_changed_lines: 1,
+        attempt_number: 1,
+        expected_sandbox_policy_hash: 'd'.repeat(64),
+      }),
+    /CAPABILITY_UNVERIFIED/,
+  );
 });
 
 test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', async () => {
   const parent = await mkdtemp(join(tmpdir(), 'ao-opencode-invalid-'));
   const worktree = await mkdtemp(join(tmpdir(), 'ao-opencode-worktree-'));
-  const binding: ResolvedBindingV4 = { role: 'executor', binding: { harness: 'opencode', provider: 'provider', model: 'model', tier: 'economy', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() }, binding_hash: 'f'.repeat(64) };
-  const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
+  const binding: ResolvedBindingV4 = {
+    role: 'executor',
+    binding: {
+      harness: 'opencode',
+      provider: 'provider',
+      model: 'model',
+      tier: 'economy',
+      capability: 'agentic_tool_execution',
+      allowedDataScopes: ['SOURCE_CODE_ONLY'],
+      allowedSourceSensitivity: ['PUBLIC'],
+      permissions: 'contract-write',
+      guidance: validModelGuidance(),
+    },
+    binding_hash: 'f'.repeat(64),
+  };
+  const credentials: CredentialAdapterV4 = {
+    lease: async () => ({
+      lease_id: 'lease',
+      environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' },
+      provider_endpoint: 'http://provider-gateway:8080/v1',
+      internal_network: 'ao-int-exec-fixture-0001',
+      expires_at: '2026-08-10T08:10:00.000Z',
+    }),
+    revoke: async () => {},
+  };
   const outputs = [
     'not-json\n',
     `${JSON.stringify({ type: 'step_start', sessionID: 's', part: { type: 'step-start' } })}\n${JSON.stringify({ type: 'text', sessionID: 's', part: { type: 'text', text: '<tool_call>' } })}\n${JSON.stringify({ type: 'step_finish', sessionID: 's', part: { type: 'step-finish', reason: 'stop' } })}\n`,
@@ -129,12 +318,56 @@ test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', 
       await mkdir(join(capsule, 'config'), { recursive: true });
       const sandbox: ProcessSandboxBackendV4 = {
         id: 'fixture',
-        probe: async () => ({ status: 'SUPPORTED', backend_id: 'fixture', policy_hash: 'd'.repeat(64), certification_hash: 'e'.repeat(64), expires_at: '2026-08-10T09:00:00.000Z' }),
-        run: async (request) => ({ execution_id: request.execution_id, exit_code: 0, signal: null, timed_out: false, stdout, stderr: '', stdout_truncated: false, stderr_truncated: false, duration_ms: 1 }),
+        probe: async () => ({
+          status: 'SUPPORTED',
+          backend_id: 'fixture',
+          policy_hash: 'd'.repeat(64),
+          certification_hash: 'e'.repeat(64),
+          expires_at: '2026-08-10T09:00:00.000Z',
+        }),
+        run: async (request) => ({
+          execution_id: request.execution_id,
+          exit_code: 0,
+          signal: null,
+          timed_out: false,
+          stdout,
+          stderr: '',
+          stdout_truncated: false,
+          stderr_truncated: false,
+          duration_ms: 1,
+        }),
         terminate: async () => {},
       };
-  const runner = createOpenCodeRunner({ sandbox, credentials, harness_argv: ['opencode'], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_economy_diff: async () => { diffChecks += 1; return { changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }; } });
-      await assert.rejects(() => runner.execute({ execution_id: `exec_invalid_${index}`, binding, capability, capsule_root: capsule, worktree_root: worktree, agent: 'executor', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, attempt_number: 1, expected_sandbox_policy_hash: 'd'.repeat(64) }), /EXECUTOR_INVALID_OUTPUT/);
+      const runner = createOpenCodeRunner({
+        sandbox,
+        credentials,
+        harness_argv: ['opencode'],
+        now: () => '2026-08-10T08:01:00.000Z',
+        capability_identity_for: () => identity,
+        enforce_economy_diff: async () => {
+          diffChecks += 1;
+          return { changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) };
+        },
+      });
+      await assert.rejects(
+        () =>
+          runner.execute({
+            execution_id: `exec_invalid_${index}`,
+            binding,
+            capability,
+            capsule_root: capsule,
+            worktree_root: worktree,
+            agent: 'executor',
+            objective: 'x',
+            base_sha: '1'.repeat(40),
+            allowed_changes: [],
+            max_files_changed: 1,
+            max_changed_lines: 1,
+            attempt_number: 1,
+            expected_sandbox_policy_hash: 'd'.repeat(64),
+          }),
+        /EXECUTOR_INVALID_OUTPUT/,
+      );
     }
     assert.equal(diffChecks, outputs.length, 'every malformed harness attempt must still be inspected');
   } finally {
@@ -144,15 +377,122 @@ test('rejects malformed or unsafe OpenCode JSONL before accepting the attempt', 
 });
 
 test('requires distinct persisted authority for repair, model escalation, and direct frontier execution', async () => {
-  const credentials: CredentialAdapterV4 = { lease: async () => ({ lease_id: 'lease', environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' }, provider_endpoint: 'http://provider-gateway:8080/v1', internal_network: 'ao-int-exec-fixture-0001', expires_at: '2026-08-10T08:10:00.000Z' }), revoke: async () => {} };
-  const runner = createOpenCodeRunner({ sandbox: localSandbox(), credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity, enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }) });
-  const policyRunner = createOpenCodeRunner({ sandbox: { ...localSandbox(), probe: async () => { throw new Error('POLICY_AUTHORITY_ACCEPTED'); } }, credentials, harness_argv: [process.execPath, fakeHarness], now: () => '2026-08-10T08:01:00.000Z', capability_identity_for: () => identity });
-  const baseBinding = { harness: 'opencode', provider: 'provider', model: 'model', tier: 'economy', capability: 'agentic_tool_execution', allowedDataScopes: ['SOURCE_CODE_ONLY'], allowedSourceSensitivity: ['PUBLIC'], permissions: 'contract-write', guidance: validModelGuidance() } as const;
-  const common = { execution_id: 'exec_policy_0001', capability, capsule_root: 'x', worktree_root: 'x', objective: 'x', base_sha: '1'.repeat(40), allowed_changes: [], max_files_changed: 1, max_changed_lines: 1, expected_sandbox_policy_hash: 'd'.repeat(64) } as const;
-  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'executor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'executor', attempt_number: 2 }), /persisted findings/);
-  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'escalationExecutor', attempt_number: 1 }), /escalation authority/);
-  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: { ...baseBinding, tier: 'frontier' }, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1 }), /frontier route authority/);
-  await assert.rejects(() => policyRunner.execute({ ...common, binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'escalationExecutor', attempt_number: 1, review_rejection_hashes: ['a'.repeat(64), 'b'.repeat(64)], escalation_decision_hash: 'c'.repeat(64) }), /POLICY_AUTHORITY_ACCEPTED/);
-  await assert.rejects(() => policyRunner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1, route_decision_hash: 'c'.repeat(64) }), /POLICY_AUTHORITY_ACCEPTED/);
-  await assert.rejects(() => runner.execute({ ...common, binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) }, agent: 'frontierExecutor', attempt_number: 1, route_decision_hash: 'c'.repeat(64), escalation_decision_hash: 'd'.repeat(64) }), /frontier route authority/);
+  const credentials: CredentialAdapterV4 = {
+    lease: async () => ({
+      lease_id: 'lease',
+      environment: { PROVIDER_GATEWAY_TOKEN: 'broker-gateway' },
+      provider_endpoint: 'http://provider-gateway:8080/v1',
+      internal_network: 'ao-int-exec-fixture-0001',
+      expires_at: '2026-08-10T08:10:00.000Z',
+    }),
+    revoke: async () => {},
+  };
+  const runner = createOpenCodeRunner({
+    sandbox: localSandbox(),
+    credentials,
+    harness_argv: [process.execPath, fakeHarness],
+    now: () => '2026-08-10T08:01:00.000Z',
+    capability_identity_for: () => identity,
+    enforce_diff: async () => ({ changes: [], changed_files: 0, changed_lines: 0, diff_hash: '2'.repeat(64), tree_hash: '3'.repeat(64) }),
+  });
+  const policyRunner = createOpenCodeRunner({
+    sandbox: {
+      ...localSandbox(),
+      probe: async () => {
+        throw new Error('POLICY_AUTHORITY_ACCEPTED');
+      },
+    },
+    credentials,
+    harness_argv: [process.execPath, fakeHarness],
+    now: () => '2026-08-10T08:01:00.000Z',
+    capability_identity_for: () => identity,
+  });
+  const baseBinding = {
+    harness: 'opencode',
+    provider: 'provider',
+    model: 'model',
+    tier: 'economy',
+    capability: 'agentic_tool_execution',
+    allowedDataScopes: ['SOURCE_CODE_ONLY'],
+    allowedSourceSensitivity: ['PUBLIC'],
+    permissions: 'contract-write',
+    guidance: validModelGuidance(),
+  } as const;
+  const common = {
+    execution_id: 'exec_policy_0001',
+    capability,
+    capsule_root: 'x',
+    worktree_root: 'x',
+    objective: 'x',
+    base_sha: '1'.repeat(40),
+    allowed_changes: [],
+    max_files_changed: 1,
+    max_changed_lines: 1,
+    expected_sandbox_policy_hash: 'd'.repeat(64),
+  } as const;
+  await assert.rejects(
+    () =>
+      runner.execute({
+        ...common,
+        binding: { role: 'executor', binding: baseBinding, binding_hash: 'f'.repeat(64) },
+        agent: 'executor',
+        attempt_number: 2,
+      }),
+    /persisted findings/,
+  );
+  await assert.rejects(
+    () =>
+      runner.execute({
+        ...common,
+        binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) },
+        agent: 'escalationExecutor',
+        attempt_number: 1,
+      }),
+    /escalation authority/,
+  );
+  await assert.rejects(
+    () =>
+      runner.execute({
+        ...common,
+        binding: { role: 'frontierExecutor', binding: { ...baseBinding, tier: 'frontier' }, binding_hash: 'f'.repeat(64) },
+        agent: 'frontierExecutor',
+        attempt_number: 1,
+      }),
+    /frontier route authority/,
+  );
+  await assert.rejects(
+    () =>
+      policyRunner.execute({
+        ...common,
+        binding: { role: 'escalationExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) },
+        agent: 'escalationExecutor',
+        attempt_number: 1,
+        review_rejection_hashes: ['a'.repeat(64), 'b'.repeat(64)],
+        escalation_decision_hash: 'c'.repeat(64),
+      }),
+    /POLICY_AUTHORITY_ACCEPTED/,
+  );
+  await assert.rejects(
+    () =>
+      policyRunner.execute({
+        ...common,
+        binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) },
+        agent: 'frontierExecutor',
+        attempt_number: 1,
+        route_decision_hash: 'c'.repeat(64),
+      }),
+    /POLICY_AUTHORITY_ACCEPTED/,
+  );
+  await assert.rejects(
+    () =>
+      runner.execute({
+        ...common,
+        binding: { role: 'frontierExecutor', binding: baseBinding, binding_hash: 'f'.repeat(64) },
+        agent: 'frontierExecutor',
+        attempt_number: 1,
+        route_decision_hash: 'c'.repeat(64),
+        escalation_decision_hash: 'd'.repeat(64),
+      }),
+    /frontier route authority/,
+  );
 });

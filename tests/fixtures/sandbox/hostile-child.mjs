@@ -74,17 +74,23 @@ async function scanForCredentialMaterial() {
 async function descendantCredentialMaterial() {
   const source = [
     "const keys=['ARLIAI_API_KEY','OPENAI_API_KEY'];",
-    "const found=Object.fromEntries(keys.filter((key)=>process.env[key]!==undefined).map((key)=>[key,process.env[key]]));",
-    "process.stdout.write(JSON.stringify({found,argv:process.argv.slice(1)}));",
+    'const found=Object.fromEntries(keys.filter((key)=>process.env[key]!==undefined).map((key)=>[key,process.env[key]]));',
+    'process.stdout.write(JSON.stringify({found,argv:process.argv.slice(1)}));',
   ].join('');
   return await new Promise((resolve) => {
     const child = spawn(process.execPath, ['-e', source], { stdio: ['ignore', 'pipe', 'ignore'] });
     let stdout = '';
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
     child.once('error', () => resolve({ found: {}, argv: [] }));
     child.once('close', () => {
-      try { resolve(JSON.parse(stdout)); } catch { resolve({ found: {}, argv: [] }); }
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        resolve({ found: {}, argv: [] });
+      }
     });
   });
 }
@@ -92,11 +98,23 @@ async function descendantCredentialMaterial() {
 async function exhaustPidLimit() {
   const children = [];
   let rejected = 0;
-  await Promise.all(Array.from({ length: 100 }, async () => await new Promise((resolve) => {
-    const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
-    child.once('spawn', () => { children.push(child); resolve(); });
-    child.once('error', () => { rejected += 1; resolve(); });
-  })));
+  await Promise.all(
+    Array.from(
+      { length: 100 },
+      async () =>
+        await new Promise((resolve) => {
+          const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+          child.once('spawn', () => {
+            children.push(child);
+            resolve();
+          });
+          child.once('error', () => {
+            rejected += 1;
+            resolve();
+          });
+        }),
+    ),
+  );
   for (const child of children) child.kill('SIGKILL');
   await Promise.all(children.map(async (child) => await new Promise((resolve) => child.once('close', resolve))));
   return { started: children.length, rejected };
@@ -117,12 +135,10 @@ if (mode === 'grandchild') {
   const pidLimit = await exhaustPidLimit();
   const descendant = await descendantCredentialMaterial();
   const result = {
-    outside_sentinel_readable: await readable(hostSentinelPath) || await readable('/outside-sentinel/secret.txt'),
-    host_home_enumerable: await enumerable(hostHomePath) || await enumerable('/host-home'),
+    outside_sentinel_readable: (await readable(hostSentinelPath)) || (await readable('/outside-sentinel/secret.txt')),
+    host_home_enumerable: (await enumerable(hostHomePath)) || (await enumerable('/host-home')),
     credential_environment: Object.fromEntries(
-      ['ARLIAI_API_KEY', 'OPENAI_API_KEY']
-        .filter((key) => process.env[key] !== undefined)
-        .map((key) => [key, process.env[key]]),
+      ['ARLIAI_API_KEY', 'OPENAI_API_KEY'].filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]),
     ),
     credential_argv: process.argv.filter((value) => /synthetic-(?:arliai|openai)-credential/i.test(value)),
     credential_files: await scanForCredentialMaterial(),
@@ -130,7 +146,10 @@ if (mode === 'grandchild') {
     descendant_credential_argv: descendant.argv,
     outside_write_succeeded: await writable('/broker/hostile-write.txt'),
     pid_limit: pidLimit,
-    docker_socket_exists: await access('/var/run/docker.sock').then(() => true, () => false),
+    docker_socket_exists: await access('/var/run/docker.sock').then(
+      () => true,
+      () => false,
+    ),
     docker_socket_connectable: await connectable('/var/run/docker.sock'),
     host_loopback_connectable: await connectable({ host: '127.0.0.1', port: hostLoopbackPort }),
     host_loopback_port: hostLoopbackPort,

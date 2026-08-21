@@ -45,7 +45,10 @@ test('falls back to root files plus exported dependency signatures when the cont
     await mkdir(join(root, 'src'), { recursive: true });
     await mkdir(join(root, 'tests'), { recursive: true });
     await writeFile(join(root, 'src', 'A.ts'), "import { Contract } from './B.js';\nexport const a: Contract = { value: 'a' };\n");
-    await writeFile(join(root, 'src', 'B.ts'), `export interface Contract { value: string }\nexport const implementation = '${'x'.repeat(30_000)}';\n`);
+    await writeFile(
+      join(root, 'src', 'B.ts'),
+      `export interface Contract { value: string }\nexport const implementation = '${'x'.repeat(30_000)}';\n`,
+    );
     await writeFile(join(root, 'tests', 'A.test.ts'), "import { a } from '../src/A.js';\nvoid a;\n");
 
     const snapshot = await build_capability_snapshot(contract(), { repository_root: root, max_bytes: 8 * 1024 });
@@ -65,12 +68,18 @@ test('does not evaluate dynamic imports and records them as ignored static-analy
   try {
     await mkdir(join(root, 'src'), { recursive: true });
     await mkdir(join(root, 'tests'), { recursive: true });
-    await writeFile(join(root, 'src', 'A.ts'), "const modulePath = './Z.js';\nexport async function load() { return import(modulePath); }\n");
+    await writeFile(
+      join(root, 'src', 'A.ts'),
+      "const modulePath = './Z.js';\nexport async function load() { return import(modulePath); }\n",
+    );
     await writeFile(join(root, 'src', 'Z.ts'), 'export const secret = 1;\n');
     await writeFile(join(root, 'tests', 'A.test.ts'), "import { load } from '../src/A.js';\nvoid load;\n");
 
     const snapshot = await build_capability_snapshot(contract(), { repository_root: root });
-    assert.equal(snapshot.files.some((file) => file.path === 'src/Z.ts'), false);
+    assert.equal(
+      snapshot.files.some((file) => file.path === 'src/Z.ts'),
+      false,
+    );
     assert.ok(snapshot.ignored_dynamic_imports.some((entry) => entry.includes('dynamic-import-ignored')));
   } finally {
     await rm(root, { recursive: true, force: true });

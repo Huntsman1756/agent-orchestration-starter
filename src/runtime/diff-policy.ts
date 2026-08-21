@@ -7,7 +7,8 @@ import { isNormalizedRepositoryRelativePathV4 } from './contract-schemas.js';
 import type { AllowedChangeV4, ChangeOperationV4 } from './contracts.js';
 import { gitTextV4, runGit } from './git-runner.js';
 
-export const ECONOMY_POLICY_REPAIR_INSTRUCTION_V4 = 'Intentaste modificar los tests de aceptación. Esto está prohibido por el contrato. Solo modifica los archivos de implementación.';
+export const ECONOMY_POLICY_REPAIR_INSTRUCTION_V4 =
+  'Intentaste modificar los tests de aceptación. Esto está prohibido por el contrato. Solo modifica los archivos de implementación.';
 
 export class EconomyPolicyViolationErrorV4 extends Error {
   readonly code = 'ECONOMY_POLICY_VIOLATION' as const;
@@ -33,7 +34,10 @@ export interface DiffPolicyInputV4 {
   readonly max_changed_lines: number;
 }
 
-export interface EconomyDiffPolicyInputV4 extends Omit<DiffPolicyInputV4, 'allowed_changes' | 'acceptance_tests' | 'reject_acceptance_test_changes'> {
+export interface EconomyDiffPolicyInputV4 extends Omit<
+  DiffPolicyInputV4,
+  'allowed_changes' | 'acceptance_tests' | 'reject_acceptance_test_changes'
+> {
   readonly acceptance_tests: readonly string[];
   readonly implementation_targets: readonly AllowedChangeV4[];
 }
@@ -52,10 +56,19 @@ export interface DiffPolicyResultV4 {
   readonly tree_hash: string;
 }
 
-function reject(message: string): never { throw new Error(`OUT_OF_SCOPE_CHANGE: ${message}`); }
-function rejectEconomyPolicy(path: string): never { throw new EconomyPolicyViolationErrorV4(path); }
+function reject(message: string): never {
+  throw new Error(`OUT_OF_SCOPE_CHANGE: ${message}`);
+}
+function rejectEconomyPolicy(path: string): never {
+  throw new EconomyPolicyViolationErrorV4(path);
+}
 function nulFields(buffer: Buffer): string[] {
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(buffer).split('\0').filter((value) => value.length > 0); } catch {
+  try {
+    return new TextDecoder('utf-8', { fatal: true })
+      .decode(buffer)
+      .split('\0')
+      .filter((value) => value.length > 0);
+  } catch {
     return reject('Git emitted a non-UTF-8 path');
   }
 }
@@ -64,18 +77,28 @@ export async function enforceDiffPolicy(input: DiffPolicyInputV4): Promise<DiffP
   if (!/^[a-f0-9]{40}$/.test(input.base_sha)) reject('diff base must be an exact commit');
   const allowed = new Map<string, AllowedChangeV4>();
   for (const change of input.allowed_changes) {
-    if (!isNormalizedRepositoryRelativePathV4(change.path) || allowed.has(change.path.toLowerCase())) reject(`ambiguous allowed path: ${change.path}`);
+    if (!isNormalizedRepositoryRelativePathV4(change.path) || allowed.has(change.path.toLowerCase()))
+      reject(`ambiguous allowed path: ${change.path}`);
     allowed.set(change.path.toLowerCase(), change);
   }
 
   const classified = new Map<string, ChangeOperationV4>();
   const trackedChangedPaths = new Set<string>();
   const acceptanceTests = new Set((input.acceptance_tests ?? []).map((path) => path.toLocaleLowerCase('en-US')));
-  const names = nulFields((await runGit(input.repository_root, ['diff', '--name-status', '-z', '--no-renames', input.base_sha, '--'])).stdout);
+  const names = nulFields(
+    (await runGit(input.repository_root, ['diff', '--name-status', '-z', '--no-renames', input.base_sha, '--'])).stdout,
+  );
   for (let index = 0; index < names.length; index += 2) {
     const status = names[index] ?? '';
     const path = names[index + 1] ?? '';
-    const operation = status === 'A' ? 'CREATE' : status === 'M' ? 'MODIFY' : status === 'D' ? 'DELETE' : reject(`unsupported Git change status: ${status}`);
+    const operation =
+      status === 'A'
+        ? 'CREATE'
+        : status === 'M'
+          ? 'MODIFY'
+          : status === 'D'
+            ? 'DELETE'
+            : reject(`unsupported Git change status: ${status}`);
     classified.set(path, operation);
     trackedChangedPaths.add(path);
   }
@@ -95,25 +118,29 @@ export async function enforceDiffPolicy(input: DiffPolicyInputV4): Promise<DiffP
   }
 
   let changedLines = 0;
-  for (const record of nulFields((await runGit(input.repository_root, ['diff', '--numstat', '-z', '--no-renames', input.base_sha, '--'])).stdout)) {
+  for (const record of nulFields(
+    (await runGit(input.repository_root, ['diff', '--numstat', '-z', '--no-renames', input.base_sha, '--'])).stdout,
+  )) {
     const match = /^(\d+|-)\t(\d+|-)\t/.exec(record);
     if (match === null || match[1] === '-' || match[2] === '-') reject('binary or unparseable diff');
     changedLines += Number(match[1]) + Number(match[2]);
   }
 
   const changes: DiffPolicyChangeV4[] = [];
-  for (const [path, operation] of [...classified].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
+  for (const [path, operation] of [...classified].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))) {
     if (!isNormalizedRepositoryRelativePathV4(path)) reject(`invalid changed path: ${path}`);
     if (input.reject_acceptance_test_changes === true && acceptanceTests.has(path.toLocaleLowerCase('en-US'))) rejectEconomyPolicy(path);
     const policy = allowed.get(path.toLowerCase());
-    if (policy === undefined || policy.path !== path || !policy.operations.includes(operation)) reject(`change not allowed: ${path} (${operation})`);
+    if (policy === undefined || policy.path !== path || !policy.operations.includes(operation))
+      reject(`change not allowed: ${path} (${operation})`);
     let contentHash: string | null = null;
     if (operation !== 'DELETE') {
       const metadata = await lstat(join(input.repository_root, ...path.split('/')));
       if (!metadata.isFile() || metadata.isSymbolicLink()) reject(`non-regular changed path: ${path}`);
       const content = await readFile(join(input.repository_root, ...path.split('/')));
       contentHash = createHash('sha256').update(content).digest('hex');
-      if (operation === 'CREATE' && !trackedChangedPaths.has(path)) changedLines += content.length === 0 ? 0 : content.toString('utf8').split('\n').length - (content.at(-1) === 10 ? 1 : 0);
+      if (operation === 'CREATE' && !trackedChangedPaths.has(path))
+        changedLines += content.length === 0 ? 0 : content.toString('utf8').split('\n').length - (content.at(-1) === 10 ? 1 : 0);
     }
     changes.push(Object.freeze({ path, operation, content_hash: contentHash }));
   }

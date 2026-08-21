@@ -37,7 +37,14 @@ function contractInput(): DeriveWorkContractInputV4 {
   return {
     request: validTaskRequest() as RuntimeTaskRequestV4,
     run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
-    registration: { repository_id: 'fixture-repo', canonical_root: 'C:/broker/repos/fixture-repo', policy_ref: 'policy', profile_ref: 'profile', worktree_parent: 'C:/broker/worktrees', state_path: 'C:/broker/state/fixture.json' },
+    registration: {
+      repository_id: 'fixture-repo',
+      canonical_root: 'C:/broker/repos/fixture-repo',
+      policy_ref: 'policy',
+      profile_ref: 'profile',
+      worktree_parent: 'C:/broker/worktrees',
+      state_path: 'C:/broker/state/fixture.json',
+    },
     policy: freezeRepositoryPolicy(policy),
     profile,
     base_sha: 'b'.repeat(40),
@@ -93,18 +100,36 @@ test('analysis-only exposes route collapse and host gaps as warnings without aut
 test('isolated execution requires complete hashed host evidence and disabled publication', () => {
   const { policy, profile } = privateInputs();
   policy.publication = { ...policy.publication, enabled: false };
-  const ready = assessRuntimeActivationV4({ target: 'ISOLATED_EXECUTION', policy, profile, hostEvidence: verifiedHostEvidence(), assessedAt: timestamp });
+  const ready = assessRuntimeActivationV4({
+    target: 'ISOLATED_EXECUTION',
+    policy,
+    profile,
+    hostEvidence: verifiedHostEvidence(),
+    assessedAt: timestamp,
+  });
   assert.equal(ready.status, 'READY');
   assert.equal(ready.checks.find((item) => item.code === 'V3_TELEMETRY_ADAPTER')?.status, 'WARNING');
 
-  const blocked = assessRuntimeActivationV4({ target: 'ISOLATED_EXECUTION', policy, profile, hostEvidence: verifiedHostEvidence().slice(1), assessedAt: timestamp });
+  const blocked = assessRuntimeActivationV4({
+    target: 'ISOLATED_EXECUTION',
+    policy,
+    profile,
+    hostEvidence: verifiedHostEvidence().slice(1),
+    assessedAt: timestamp,
+  });
   assert.equal(blocked.status, 'BLOCKED');
   assert.equal(blocked.checks.find((item) => item.code === 'NATIVE_HOST_COMPOSITION')?.status, 'BLOCKED');
 });
 
 test('autonomous publication independently requires enabled policy and GitHub lease evidence', () => {
   const { policy, profile } = privateInputs();
-  const blocked = assessRuntimeActivationV4({ target: 'AUTONOMOUS_PUBLICATION', policy, profile, hostEvidence: verifiedHostEvidence(), assessedAt: timestamp });
+  const blocked = assessRuntimeActivationV4({
+    target: 'AUTONOMOUS_PUBLICATION',
+    policy,
+    profile,
+    hostEvidence: verifiedHostEvidence(),
+    assessedAt: timestamp,
+  });
   assert.equal(blocked.status, 'BLOCKED');
   assert.equal(blocked.checks.find((item) => item.code === 'GITHUB_PUBLICATION_LEASE')?.status, 'BLOCKED');
 
@@ -120,9 +145,35 @@ test('autonomous publication independently requires enabled policy and GitHub le
 
 test('rejects forged or duplicate host evidence and publishes a strict report schema', async () => {
   const { policy, profile } = privateInputs();
-  assert.throws(() => assessRuntimeActivationV4({ target: 'ANALYSIS_ONLY', policy, profile, hostEvidence: [{ code: 'CREDENTIAL_ISOLATION', status: 'VERIFIED', evidenceHash: null }], assessedAt: timestamp }), /INVALID_CONTRACT/);
-  assert.throws(() => assessRuntimeActivationV4({ target: 'UNKNOWN' as 'ANALYSIS_ONLY', policy, profile, hostEvidence: [], assessedAt: timestamp }), /INVALID_CONTRACT/);
-  assert.throws(() => assessRuntimeActivationV4({ target: 'ANALYSIS_ONLY', policy, profile, hostEvidence: [{ code: 'CREDENTIAL_ISOLATION', status: 'UNAVAILABLE', evidenceHash: null }, { code: 'CREDENTIAL_ISOLATION', status: 'UNAVAILABLE', evidenceHash: null }], assessedAt: timestamp }), /INVALID_CONTRACT/);
+  assert.throws(
+    () =>
+      assessRuntimeActivationV4({
+        target: 'ANALYSIS_ONLY',
+        policy,
+        profile,
+        hostEvidence: [{ code: 'CREDENTIAL_ISOLATION', status: 'VERIFIED', evidenceHash: null }],
+        assessedAt: timestamp,
+      }),
+    /INVALID_CONTRACT/,
+  );
+  assert.throws(
+    () => assessRuntimeActivationV4({ target: 'UNKNOWN' as 'ANALYSIS_ONLY', policy, profile, hostEvidence: [], assessedAt: timestamp }),
+    /INVALID_CONTRACT/,
+  );
+  assert.throws(
+    () =>
+      assessRuntimeActivationV4({
+        target: 'ANALYSIS_ONLY',
+        policy,
+        profile,
+        hostEvidence: [
+          { code: 'CREDENTIAL_ISOLATION', status: 'UNAVAILABLE', evidenceHash: null },
+          { code: 'CREDENTIAL_ISOLATION', status: 'UNAVAILABLE', evidenceHash: null },
+        ],
+        assessedAt: timestamp,
+      }),
+    /INVALID_CONTRACT/,
+  );
 
   const schema = JSON.parse(await readFile(new URL('../contracts/runtime-activation-readiness-v4.schema.json', import.meta.url), 'utf8'));
   const validate = new Ajv2020({ strict: true, formats: { 'date-time': true } }).compile(schema);

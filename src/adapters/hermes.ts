@@ -12,23 +12,29 @@ export function compileHermes(policy: ResolvedPolicy, effectiveWriteIsolation: W
   if (reviewer.modelRef !== orchestrator.modelRef) {
     throw new Error('Hermes requires the reviewer to use the same frontier parent model as the orchestrator');
   }
-  const distribution = stringify({
-    name: 'agent-orchestration-starter',
-    version: `${policy.policyVersion}.${policy.profileVersion}.0`,
-    description: 'Frontier orchestrator and reviewer with an economy delegation model',
-    distribution_owned: ['SOUL.md', 'config.yaml', 'policy-manifest.json', 'PERMISSION_BOUNDARY.md'],
-  }, { lineWidth: 0 });
-  const config = stringify({
-    model: { provider: providerFor(orchestrator, 'hermes'), default: orchestrator.model },
-    delegation: {
-      provider: providerFor(executor, 'hermes'),
-      model: executor.model,
-      max_concurrent_children: 3,
-      max_spawn_depth: 1,
-      orchestrator_enabled: false,
+  const distribution = stringify(
+    {
+      name: 'agent-orchestration-starter',
+      version: `${policy.policyVersion}.${policy.profileVersion}.0`,
+      description: 'Frontier orchestrator and reviewer with an economy delegation model',
+      distribution_owned: ['SOUL.md', 'config.yaml', 'policy-manifest.json', 'PERMISSION_BOUNDARY.md'],
     },
-    fallback_providers: [],
-  }, { lineWidth: 0 });
+    { lineWidth: 0 },
+  );
+  const config = stringify(
+    {
+      model: { provider: providerFor(orchestrator, 'hermes'), default: orchestrator.model },
+      delegation: {
+        provider: providerFor(executor, 'hermes'),
+        model: executor.model,
+        max_concurrent_children: 3,
+        max_spawn_depth: 1,
+        orchestrator_enabled: false,
+      },
+      fallback_providers: [],
+    },
+    { lineWidth: 0 },
+  );
   const soul = [
     '# Agent orchestration role',
     '',

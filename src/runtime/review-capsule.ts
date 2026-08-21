@@ -6,22 +6,38 @@ import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import { isNormalizedRepositoryRelativePathV4 } from './contract-schemas.js';
 import type { ReviewEnvelopeV4 } from './review-envelope.js';
 
-export interface ReviewContextV4 { readonly path: string; readonly content: string; readonly content_hash: string; }
+export interface ReviewContextV4 {
+  readonly path: string;
+  readonly content: string;
+  readonly content_hash: string;
+}
 export interface ReviewCapsuleInputV4 {
   readonly capsule_parent: string;
   readonly envelope: ReviewEnvelopeV4;
   readonly forbidden_roots: readonly string[];
   readonly approved_context: readonly ReviewContextV4[];
 }
-export interface ReviewCapsuleV4 { readonly root: string; readonly manifest_hash: string; }
+export interface ReviewCapsuleV4 {
+  readonly root: string;
+  readonly manifest_hash: string;
+}
 
-function invalid(message: string): never { throw new Error(`REVIEW_ATTESTATION_INVALID: ${message}`); }
-function within(parent: string, child: string): boolean { const value = relative(resolve(parent), resolve(child)); return value === '' || (!value.startsWith('..') && !isAbsolute(value)); }
+function invalid(message: string): never {
+  throw new Error(`REVIEW_ATTESTATION_INVALID: ${message}`);
+}
+function within(parent: string, child: string): boolean {
+  const value = relative(resolve(parent), resolve(child));
+  return value === '' || (!value.startsWith('..') && !isAbsolute(value));
+}
 
 export async function buildReviewCapsule(input: ReviewCapsuleInputV4): Promise<ReviewCapsuleV4> {
   const { envelope_hash: suppliedEnvelopeHash, ...envelopeBody } = input.envelope;
-  if (input.approved_context.length > 64 || !/^[a-f0-9]{64}$/.test(suppliedEnvelopeHash)
-    || suppliedEnvelopeHash !== hashCanonicalV4(envelopeBody)) invalid('capsule input is invalid');
+  if (
+    input.approved_context.length > 64 ||
+    !/^[a-f0-9]{64}$/.test(suppliedEnvelopeHash) ||
+    suppliedEnvelopeHash !== hashCanonicalV4(envelopeBody)
+  )
+    invalid('capsule input is invalid');
   await mkdir(input.capsule_parent, { recursive: true, mode: 0o700 });
   const parent = await realpath(input.capsule_parent);
   for (const forbidden of input.forbidden_roots) {
@@ -46,7 +62,8 @@ export async function buildReviewCapsule(input: ReviewCapsuleInputV4): Promise<R
   for (const item of input.approved_context) {
     const bytes = Buffer.from(item.content, 'utf8');
     const actual = createHash('sha256').update(bytes).digest('hex');
-    if (!isNormalizedRepositoryRelativePathV4(item.path) || actual !== item.content_hash || seen.has(item.path.toLowerCase())) invalid('approved review context is invalid');
+    if (!isNormalizedRepositoryRelativePathV4(item.path) || actual !== item.content_hash || seen.has(item.path.toLowerCase()))
+      invalid('approved review context is invalid');
     seen.add(item.path.toLowerCase());
     total += bytes.length;
     if (total > 256 * 1024) invalid('approved review context exceeds policy');
@@ -58,6 +75,9 @@ export async function buildReviewCapsule(input: ReviewCapsuleInputV4): Promise<R
   files.sort((a, b) => a.path.localeCompare(b.path));
   const manifestBody = { schema_version: 4, envelope_hash: input.envelope.envelope_hash, files };
   const manifestHash = hashCanonicalV4(manifestBody);
-  await writeFile(join(root, 'manifest.json'), `${canonicalJsonV4({ ...manifestBody, manifest_hash: manifestHash })}\n`, { flag: 'wx', mode: 0o400 });
+  await writeFile(join(root, 'manifest.json'), `${canonicalJsonV4({ ...manifestBody, manifest_hash: manifestHash })}\n`, {
+    flag: 'wx',
+    mode: 0o400,
+  });
   return Object.freeze({ root, manifest_hash: manifestHash });
 }

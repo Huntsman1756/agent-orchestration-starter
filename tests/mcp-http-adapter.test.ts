@@ -24,7 +24,9 @@ function broker(): McpBrokerControlClientV4 {
 test('serves the broker over authenticated Streamable HTTP at /mcp', async () => {
   const token = 'local-review-token-1234';
   const adapter = await createMcpHttpAdapter({ client: broker() }, { bearerToken: token });
-  const transport = new StreamableHTTPClientTransport(new URL(`http://${adapter.host}:${adapter.port}${adapter.path}`), { requestInit: { headers: { authorization: `Bearer ${token}` } } });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://${adapter.host}:${adapter.port}${adapter.path}`), {
+    requestInit: { headers: { authorization: `Bearer ${token}` } },
+  });
   const client = new Client({ name: 'http-test-client', version: '1.0.0' });
   try {
     await client.connect(transport);

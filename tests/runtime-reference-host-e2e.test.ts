@@ -38,7 +38,13 @@ test('reference host demonstrates activation through publication dry-run without
   const hostRoot = await mkdtemp(join(tmpdir(), 'reference-host-install-'));
   const driverSource = await readFile(new URL('../examples/reference-host-driver/reference-host-driver.mjs', import.meta.url), 'utf8');
   const fixture = await createRuntimeHostFixtureV4({ driverSource });
-  const installation = await installRuntimeHostV4({ sourceRoot, hostRoot, hostDriver: fixture.driverSource, hostComponentsManifest: fixture.componentManifestPath, installedAt: '2026-08-10T12:00:00.000Z' });
+  const installation = await installRuntimeHostV4({
+    sourceRoot,
+    hostRoot,
+    hostDriver: fixture.driverSource,
+    hostComponentsManifest: fixture.componentManifestPath,
+    installedAt: '2026-08-10T12:00:00.000Z',
+  });
 
   const repositoryRoot = await mkdtemp(join(tmpdir(), 'reference-runtime-repository-'));
   const stateDirectory = await mkdtemp(join(tmpdir(), 'reference-runtime-state-'));
@@ -48,7 +54,11 @@ test('reference host demonstrates activation through publication dry-run without
   assert.equal(spawnSync('git', ['init', repositoryRoot], { windowsHide: true }).status, 0);
   const policyPath = join(repositoryRoot, 'repository-policy.json');
   const profilePath = join(repositoryRoot, 'runtime-profile.json');
-  const policy = { ...(validRepositoryPolicy() as RuntimeRepositoryPolicyV4), repositoryId: 'fixture-repo', publication: { ...(validRepositoryPolicy() as RuntimeRepositoryPolicyV4).publication, enabled: false } };
+  const policy = {
+    ...(validRepositoryPolicy() as RuntimeRepositoryPolicyV4),
+    repositoryId: 'fixture-repo',
+    publication: { ...(validRepositoryPolicy() as RuntimeRepositoryPolicyV4).publication, enabled: false },
+  };
   const profile = validRuntimeProfile() as RuntimeProfileV4;
   await writeFile(policyPath, `${canonicalJsonV4(policy)}\n`);
   await writeFile(profilePath, `${canonicalJsonV4(profile)}\n`);
@@ -63,18 +73,37 @@ test('reference host demonstrates activation through publication dry-run without
     activatedAt: '2026-08-10T12:00:00.000Z',
   });
   const driver = await loadRuntimeHostDriverV4(join(repositoryRoot, '.agent-orchestration', 'activation-v4.json'));
-  assert.deepEqual(await driver.doctor(), ['reference-only host driver', 'components: credential_gateway,task_source,issue_planner,practice_pack_resolver,sandbox_coordinator,capability_issuer,github_publisher,post_merge_verifier']);
+  assert.deepEqual(await driver.doctor(), [
+    'reference-only host driver',
+    'components: credential_gateway,task_source,issue_planner,practice_pack_resolver,sandbox_coordinator,capability_issuer,github_publisher,post_merge_verifier',
+  ]);
   stages.push('activation');
 
-  const request = { ...(validTaskRequest() as RuntimeTaskRequestV4), repository_id: 'fixture-repo', allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] as const }] };
+  const request = {
+    ...(validTaskRequest() as RuntimeTaskRequestV4),
+    repository_id: 'fixture-repo',
+    allowed_changes: [{ path: 'src/greeting.ts', operations: ['MODIFY'] as const }],
+  };
   const deps: BrokerDaemonDependenciesV4 = {
     stateDirectory,
-    registry: { repositories: [{ repository_id: 'fixture-repo', canonical_root: repositoryRoot, policy_ref: policyPath, profile_ref: profilePath, worktree_parent: worktreeParent, state_path: stateDirectory }] },
+    registry: {
+      repositories: [
+        {
+          repository_id: 'fixture-repo',
+          canonical_root: repositoryRoot,
+          policy_ref: policyPath,
+          profile_ref: profilePath,
+          worktree_parent: worktreeParent,
+          state_path: stateDirectory,
+        },
+      ],
+    },
     loadPolicy: async () => freezeRepositoryPolicy(policy),
     loadProfile: async () => profile,
     resolveBaseSha: async () => 'b'.repeat(40),
     sandboxProfiles: { 'executor-networked': {}, 'frontier-networked': {}, 'validation-untrusted': {}, 'review-capsule': {} },
-    inspectChanges: async (input) => input.changes.map((change) => ({ ...change, canonical_parent: repositoryRoot, existed_at_freeze: true })),
+    inspectChanges: async (input) =>
+      input.changes.map((change) => ({ ...change, canonical_parent: repositoryRoot, existed_at_freeze: true })),
     generateRunId: () => runId,
     lockOwnerStatus: async () => 'dead',
     reclamationCoordinator: createInProcessReclamationCoordinatorV4('reference-e2e'),
@@ -85,7 +114,11 @@ test('reference host demonstrates activation through publication dry-run without
     advance: async (id, daemon) => {
       stages.push('execution');
       await daemon.recordExternalProcessStarted(id, { pid: process.pid, boot_nonce: 'reference-e2e-boot' });
-      await daemon.recordAttempt(id, { attempt: 1, executor_binding_ref: 'fixture-economy-worker', result_hash: hashCanonicalV4({ stage: 'execution', id }) });
+      await daemon.recordAttempt(id, {
+        attempt: 1,
+        executor_binding_ref: 'fixture-economy-worker',
+        result_hash: hashCanonicalV4({ stage: 'execution', id }),
+      });
       stages.push('validation');
       await daemon.reinspect(id);
       const diffHash = hashCanonicalV4({ file: 'src/greeting.ts', content: 'export const greeting = true;\n' });

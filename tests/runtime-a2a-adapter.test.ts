@@ -12,7 +12,15 @@ const timestamp = '2026-08-10T12:00:00.000Z';
 
 function result(state: string, attempts = 0): RuntimeResultV4 {
   const base = validRuntimeResult();
-  return { ...base, state, attempts: Array.from({ length: attempts }, (_, index) => ({ attempt: index + 1, executor_binding_ref: 'executor', result_hash: 'a'.repeat(64) })) } as RuntimeResultV4;
+  return {
+    ...base,
+    state,
+    attempts: Array.from({ length: attempts }, (_, index) => ({
+      attempt: index + 1,
+      executor_binding_ref: 'executor',
+      result_hash: 'a'.repeat(64),
+    })),
+  } as RuntimeResultV4;
 }
 
 test('projects broker lifecycle states to A2A v1 task states without content artifacts', () => {

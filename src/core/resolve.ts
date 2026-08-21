@@ -21,9 +21,7 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     if (assignment.tier !== requirement.tier) {
       throw new Error(`${roleName} requires tier ${requirement.tier}, received ${assignment.tier}`);
     }
-    const missing = requirement.capabilities.filter(
-      (capability) => !assignment.capabilities.includes(capability),
-    );
+    const missing = requirement.capabilities.filter((capability) => !assignment.capabilities.includes(capability));
     if (missing.length > 0) {
       throw new Error(`${roleName} is missing required capabilities: ${missing.join(', ')}`);
     }
@@ -40,10 +38,7 @@ export function resolveRoles(policy: Policy, profile: ModelProfile): ResolvedPol
     };
   }
 
-  if (
-    policy.routing.strategies.includes('frontier_execution')
-    && !profile.assignments.orchestrator.capabilities.includes('coding')
-  ) {
+  if (policy.routing.strategies.includes('frontier_execution') && !profile.assignments.orchestrator.capabilities.includes('coding')) {
     throw new Error('frontier_execution requires coding capability from the frontier orchestrator assignment');
   }
 

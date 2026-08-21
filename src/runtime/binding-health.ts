@@ -59,11 +59,31 @@ export const DEFAULT_RUNTIME_BINDING_HEALTH_POLICY_V4: RuntimeBindingHealthPolic
 
 const hashPattern = /^[a-f0-9]{64}$/u;
 const idPattern = /^health_[A-Za-z0-9_-]{8,96}$/u;
-const taskTraits = new Set<RuntimeTaskTraitV4>(['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal', 'long-horizon', 'architecture', 'security-sensitive', 'migration']);
-const failures = new Set<RuntimeBindingHealthOutcomeV4>(['VALIDATION_FAILED', 'REVIEW_REJECTED', 'INVALID_OUTPUT', 'BUDGET_EXCEEDED', 'PROVIDER_UNAVAILABLE', 'AUTHORITY_VIOLATION', 'FALSE_ACCEPTANCE']);
+const taskTraits = new Set<RuntimeTaskTraitV4>([
+  'mechanical',
+  'localized',
+  'semantic-debugging',
+  'cross-file-reasoning',
+  'multimodal',
+  'long-horizon',
+  'architecture',
+  'security-sensitive',
+  'migration',
+]);
+const failures = new Set<RuntimeBindingHealthOutcomeV4>([
+  'VALIDATION_FAILED',
+  'REVIEW_REJECTED',
+  'INVALID_OUTPUT',
+  'BUDGET_EXCEEDED',
+  'PROVIDER_UNAVAILABLE',
+  'AUTHORITY_VIOLATION',
+  'FALSE_ACCEPTANCE',
+]);
 const criticalFailures = new Set<RuntimeBindingHealthOutcomeV4>(['AUTHORITY_VIOLATION', 'FALSE_ACCEPTANCE']);
 
-function invalid(message: string): never { throw new Error(`INVALID_BINDING_HEALTH_EVIDENCE: ${message}`); }
+function invalid(message: string): never {
+  throw new Error(`INVALID_BINDING_HEALTH_EVIDENCE: ${message}`);
+}
 function timestamp(value: string): number {
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) invalid('timestamp is not canonical UTC');
@@ -82,8 +102,16 @@ function verifyPolicy(policy: RuntimeBindingHealthPolicyV4): string {
   return hashCanonicalV4(policy);
 }
 
-export function createRuntimeBindingHealthObservationV4(input: Omit<RuntimeBindingHealthObservationV4, 'observationHash'>): RuntimeBindingHealthObservationV4 {
-  if (input.schemaVersion !== 4 || !idPattern.test(input.observationId) || !hashPattern.test(input.bindingHash) || !taskTraits.has(input.taskTrait)) invalid('observation identity is invalid');
+export function createRuntimeBindingHealthObservationV4(
+  input: Omit<RuntimeBindingHealthObservationV4, 'observationHash'>,
+): RuntimeBindingHealthObservationV4 {
+  if (
+    input.schemaVersion !== 4 ||
+    !idPattern.test(input.observationId) ||
+    !hashPattern.test(input.bindingHash) ||
+    !taskTraits.has(input.taskTrait)
+  )
+    invalid('observation identity is invalid');
   timestamp(input.recordedAt);
   if (![...failures, 'ACCEPTED', 'CANARY_ACCEPTED'].includes(input.outcome)) invalid('outcome is invalid');
   const body = structuredClone(input);
@@ -108,9 +136,19 @@ export function evaluateRuntimeBindingHealthV4(input: {
   const evaluatedAt = timestamp(input.evaluatedAt);
   const policy = Object.freeze({ ...(input.policy ?? DEFAULT_RUNTIME_BINDING_HEALTH_POLICY_V4) });
   const policyHash = verifyPolicy(policy);
-  const observations = input.observations.map(loadObservation).sort((left, right) => timestamp(left.recordedAt) - timestamp(right.recordedAt) || left.observationId.localeCompare(right.observationId));
+  const observations = input.observations
+    .map(loadObservation)
+    .sort(
+      (left, right) => timestamp(left.recordedAt) - timestamp(right.recordedAt) || left.observationId.localeCompare(right.observationId),
+    );
   if (new Set(observations.map((value) => value.observationId)).size !== observations.length) invalid('observation IDs are not unique');
-  if (observations.some((value) => value.bindingHash !== input.bindingHash || value.taskTrait !== input.taskTrait || timestamp(value.recordedAt) > evaluatedAt)) invalid('observation scope or time is invalid');
+  if (
+    observations.some(
+      (value) =>
+        value.bindingHash !== input.bindingHash || value.taskTrait !== input.taskTrait || timestamp(value.recordedAt) > evaluatedAt,
+    )
+  )
+    invalid('observation scope or time is invalid');
 
   let status: RuntimeBindingHealthSnapshotV4['status'] = 'HEALTHY';
   let quarantineTriggeredAt: string | null = null;
@@ -124,9 +162,11 @@ export function evaluateRuntimeBindingHealthV4(input: {
       consecutiveFailures = failed ? consecutiveFailures + 1 : 0;
       const failureCount = recent.filter((value) => failures.has(value.outcome)).length;
       const failureRate = recent.length === 0 ? 0 : Math.round((failureCount * 10_000) / recent.length);
-      if (criticalFailures.has(observation.outcome)
-        || consecutiveFailures >= policy.maximumConsecutiveFailures
-        || (recent.length >= policy.minimumObservations && failureRate > policy.maximumFailureRateBasisPoints)) {
+      if (
+        criticalFailures.has(observation.outcome) ||
+        consecutiveFailures >= policy.maximumConsecutiveFailures ||
+        (recent.length >= policy.minimumObservations && failureRate > policy.maximumFailureRateBasisPoints)
+      ) {
         status = 'QUARANTINED';
         quarantineTriggeredAt = observation.recordedAt;
         recoveryCanarySuccesses = 0;
@@ -155,8 +195,10 @@ export function evaluateRuntimeBindingHealthV4(input: {
   const window = recent.slice(-policy.windowSize);
   const failureCount = window.filter((value) => failures.has(value.outcome)).length;
   const failureRateBasisPoints = window.length === 0 ? 0 : Math.round((failureCount * 10_000) / window.length);
-  const cooldownElapsed = quarantineTriggeredAt !== null && evaluatedAt >= timestamp(quarantineTriggeredAt) + policy.cooldownSeconds * 1_000;
-  const recommendedAction: RuntimeBindingHealthSnapshotV4['recommendedAction'] = status === 'HEALTHY' ? 'USE' : cooldownElapsed ? 'RUN_CANARY' : 'QUARANTINE';
+  const cooldownElapsed =
+    quarantineTriggeredAt !== null && evaluatedAt >= timestamp(quarantineTriggeredAt) + policy.cooldownSeconds * 1_000;
+  const recommendedAction: RuntimeBindingHealthSnapshotV4['recommendedAction'] =
+    status === 'HEALTHY' ? 'USE' : cooldownElapsed ? 'RUN_CANARY' : 'QUARANTINE';
   const body = {
     schemaVersion: 4 as const,
     bindingHash: input.bindingHash,
@@ -181,13 +223,17 @@ export function runtimeBindingHealthAllowsV4(input: {
   readonly taskTraits: readonly RuntimeTaskTraitV4[];
 }): boolean {
   const scopes = input.snapshots.map((value) => `${value.bindingHash}:${value.taskTrait}`);
-  if (input.snapshots.length > 128
-    || new Set(input.snapshots.map((value) => value.snapshotHash)).size !== input.snapshots.length
-    || new Set(scopes).size !== scopes.length) invalid('snapshot set is unbounded, duplicated or ambiguous');
+  if (
+    input.snapshots.length > 128 ||
+    new Set(input.snapshots.map((value) => value.snapshotHash)).size !== input.snapshots.length ||
+    new Set(scopes).size !== scopes.length
+  )
+    invalid('snapshot set is unbounded, duplicated or ambiguous');
   for (const snapshot of input.snapshots) {
     const { snapshotHash, ...body } = snapshot;
     timestamp(snapshot.evaluatedAt);
-    if (!hashPattern.test(snapshot.bindingHash) || !taskTraits.has(snapshot.taskTrait) || snapshotHash !== hashCanonicalV4(body)) invalid('snapshot hash or scope is invalid');
+    if (!hashPattern.test(snapshot.bindingHash) || !taskTraits.has(snapshot.taskTrait) || snapshotHash !== hashCanonicalV4(body))
+      invalid('snapshot hash or scope is invalid');
   }
   return input.taskTraits.every((trait) => {
     const snapshot = input.snapshots.find((value) => value.bindingHash === input.bindingHash && value.taskTrait === trait);

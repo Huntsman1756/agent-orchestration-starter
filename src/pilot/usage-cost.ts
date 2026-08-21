@@ -102,15 +102,10 @@ function assertArithmeticInputs(usage: UsageRecordedV3, snapshot: PricingSnapsho
 }
 
 function hasDimensionEvidence(usage: UsageRecordedV3, kind: EvidenceKindV3): boolean {
-  return dimensions.some(dimension => usage[tokenField(kind, dimension)] !== null);
+  return dimensions.some((dimension) => usage[tokenField(kind, dimension)] !== null);
 }
 
-function dimensionalCost(
-  usage: UsageRecordedV3,
-  tariff: TariffV3,
-  kind: EvidenceKindV3,
-  errors: string[],
-): number | null {
+function dimensionalCost(usage: UsageRecordedV3, tariff: TariffV3, kind: EvidenceKindV3, errors: string[]): number | null {
   let total = 0n;
   let complete = true;
   for (const dimension of dimensions) {
@@ -138,7 +133,7 @@ function snapshotErrors(usage: UsageRecordedV3, snapshot: PricingSnapshotV3): { 
     if (tariffBindings.has(tariff.binding_ref)) errors.push(`PRICING_TARIFF_BINDING_DUPLICATE:${tariff.binding_ref}`);
     tariffBindings.add(tariff.binding_ref);
   }
-  const matches = snapshot.tariffs.filter(candidate => candidate.binding_ref === usage.binding_ref);
+  const matches = snapshot.tariffs.filter((candidate) => candidate.binding_ref === usage.binding_ref);
   if (matches.length === 0) errors.push('PRICING_TARIFF_NOT_FOUND');
   return { errors, tariff: matches.length === 1 ? matches[0] : null };
 }
@@ -154,8 +149,11 @@ export function priceUsage(usage: UsageRecordedV3, snapshot: PricingSnapshotV3):
 
   if (snapshotCheck.tariff && errors.length === 0) {
     const tariff = snapshotCheck.tariff;
-    const observedEvidence = hasDimensionEvidence(usage, 'observed')
-      || usage.cost_observed !== null || usage.provider_usage_id !== null || usage.cost_provenance === 'AUTHORITATIVE_BILL';
+    const observedEvidence =
+      hasDimensionEvidence(usage, 'observed') ||
+      usage.cost_observed !== null ||
+      usage.provider_usage_id !== null ||
+      usage.cost_provenance === 'AUTHORITATIVE_BILL';
     if (observedEvidence) {
       if (usage.cost_provenance === 'AUTHORITATIVE_BILL') {
         const authoritativeErrors: string[] = [];
@@ -187,9 +185,12 @@ export function priceUsage(usage: UsageRecordedV3, snapshot: PricingSnapshotV3):
       }
     }
 
-    const estimatedEvidence = hasDimensionEvidence(usage, 'estimated')
-      || usage.token_estimator_id !== null || usage.token_estimator_version !== null
-      || usage.cost_estimated !== null || usage.cost_provenance === 'ESTIMATED_TARIFF';
+    const estimatedEvidence =
+      hasDimensionEvidence(usage, 'estimated') ||
+      usage.token_estimator_id !== null ||
+      usage.token_estimator_version !== null ||
+      usage.cost_estimated !== null ||
+      usage.cost_provenance === 'ESTIMATED_TARIFF';
     if (estimatedEvidence) {
       if (usage.token_estimator_id === null || usage.token_estimator_version === null) errors.push('ESTIMATOR_IDENTITY_MISSING');
       const reproduced = dimensionalCost(usage, tariff, 'estimated', errors);
@@ -236,15 +237,19 @@ function aggregateMeasure(values: readonly (number | null)[], label: string): Ag
 }
 
 function strongTokenAggregate(events: readonly PricedUsageV3[], kind: EvidenceKindV3): StrongTokenAggregateV3 {
-  const values = (dimension: DimensionV3): Array<number | null> => events.map(event => {
+  const values = (dimension: DimensionV3): Array<number | null> =>
+    events.map((event) => {
+      if (kind === 'estimated' && (event.token_estimator_id === null || event.token_estimator_version === null)) return null;
+      return event[tokenField(kind, dimension)] as number | null;
+    });
+  const totals = events.map((event) => {
     if (kind === 'estimated' && (event.token_estimator_id === null || event.token_estimator_version === null)) return null;
-    return event[tokenField(kind, dimension)] as number | null;
-  });
-  const totals = events.map(event => {
-    if (kind === 'estimated' && (event.token_estimator_id === null || event.token_estimator_version === null)) return null;
-    const counts = dimensions.map(dimension => event[tokenField(kind, dimension)] as number | null);
-    if (counts.some(count => count === null)) return null;
-    return safeNumber(counts.reduce<bigint>((sum, count) => sum + BigInt(count as number), 0n), `strong_tokens_${kind}.total_operation`);
+    const counts = dimensions.map((dimension) => event[tokenField(kind, dimension)] as number | null);
+    if (counts.some((count) => count === null)) return null;
+    return safeNumber(
+      counts.reduce<bigint>((sum, count) => sum + BigInt(count as number), 0n),
+      `strong_tokens_${kind}.total_operation`,
+    );
   });
   return {
     input: aggregateMeasure(values('input'), `strong_tokens_${kind}.input`),
@@ -278,9 +283,11 @@ export function aggregateUsage(
     if (bindings.has(binding.binding_ref)) throw new Error(`DUPLICATE_BINDING_REF:${binding.binding_ref}`);
     bindings.set(binding.binding_ref, binding);
   }
-  const unregisteredTariffBindings = sortedUnique(snapshot.tariffs
-    .filter(tariff => !bindings.has(tariff.binding_ref))
-    .map(tariff => `PRICING_TARIFF_BINDING_UNREGISTERED:${tariff.binding_ref}`));
+  const unregisteredTariffBindings = sortedUnique(
+    snapshot.tariffs
+      .filter((tariff) => !bindings.has(tariff.binding_ref))
+      .map((tariff) => `PRICING_TARIFF_BINDING_UNREGISTERED:${tariff.binding_ref}`),
+  );
 
   const unknownBindingUsageIds: string[] = [];
   const incompleteUsage: Array<{ usage_id: string; reason_codes: readonly string[] }> = [];
@@ -294,9 +301,13 @@ export function aggregateUsage(
       }
       if (reasonCodes.includes('UNKNOWN_BINDING') || unregisteredTariffBindings.length > 0) {
         priced = {
-          ...priced, cost_observed: null, cost_estimated: null,
-          observed_pricing_complete: false, estimated_pricing_complete: false,
-          observed_cost_provenance: null, estimated_cost_provenance: null,
+          ...priced,
+          cost_observed: null,
+          cost_estimated: null,
+          observed_pricing_complete: false,
+          estimated_pricing_complete: false,
+          observed_cost_provenance: null,
+          estimated_cost_provenance: null,
           pricing_errors: sortedUnique(reasonCodes),
         };
       }
@@ -309,16 +320,22 @@ export function aggregateUsage(
     .sort((left, right) => compareCodeUnits(left.usage_id, right.usage_id));
 
   incompleteUsage.sort((left, right) => compareCodeUnits(left.usage_id, right.usage_id));
-  const strongUsage = pricedUsage.filter(event => bindings.get(event.binding_ref)?.capability_class === 'strong');
+  const strongUsage = pricedUsage.filter((event) => bindings.get(event.binding_ref)?.capability_class === 'strong');
   return deepFreeze({
     operations: pricedUsage.length,
     duplicate_replays: duplicateReplays,
-    usage_ids: pricedUsage.map(event => event.usage_id),
+    usage_ids: pricedUsage.map((event) => event.usage_id),
     priced_usage: pricedUsage,
     unknown_binding_usage_ids: unknownBindingUsageIds.sort(compareCodeUnits),
     incomplete_usage: incompleteUsage,
-    cost_observed: aggregateMeasure(pricedUsage.map(event => event.cost_observed), 'cost_observed'),
-    cost_estimated: aggregateMeasure(pricedUsage.map(event => event.cost_estimated), 'cost_estimated'),
+    cost_observed: aggregateMeasure(
+      pricedUsage.map((event) => event.cost_observed),
+      'cost_observed',
+    ),
+    cost_estimated: aggregateMeasure(
+      pricedUsage.map((event) => event.cost_estimated),
+      'cost_estimated',
+    ),
     strong_tokens_observed: strongTokenAggregate(strongUsage, 'observed'),
     strong_tokens_estimated: strongTokenAggregate(strongUsage, 'estimated'),
   });
