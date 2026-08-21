@@ -191,6 +191,8 @@ the publication authority.
 - [ ] Source sensitivity matches the real repository.
 - [ ] Credentials remain outside repository-controlled descendants.
 - [ ] Code workers use clean isolated worktrees and exact path contracts.
+- [ ] The certified host uses durable worktree ownership records, finite quotas
+      and terminal retention; unowned paths remain report-only.
 - [ ] Validation and review are independent from worker claims.
 - [ ] Retry ownership is explicit; frontier-led runs prove through the decision chain and iteration binding that no second worker call occurs without durable frontier authority.
 - [ ] Repositories claiming mandatory delegation enable signed provenance enforcement outside the model; CI retrieves evidence from protected storage rather than the candidate tree.
@@ -212,6 +214,8 @@ the publication authority.
 - Allowing a report-only extractor to create publishable facts or drafts directly.
 - Reusing Linux, model or harness qualification after any identity change.
 - Giving the model GitHub, deployment, database or saved provider credentials.
+- Running broad age-, prefix- or branch-based cleanup instead of the hash-bound
+  worktree ownership protocol.
 
 These shortcuts may still support an explicitly named local experiment, but
 they must not be represented as certified autonomous execution.

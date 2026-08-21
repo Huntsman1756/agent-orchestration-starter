@@ -152,6 +152,12 @@ The intended autonomous loop is bounded and durable:
 7. Finalization creates a local commit. Publication, if policy allows it, is a
    broker-owned exact push, PR, required-check and head-bound merge sequence.
 
+Worktree ownership is durable and bounded. Finalized runs are reclaimed through
+an exact manifest-bound Git operation; failed and aborted runs retain evidence
+for a configured period. Quotas stop runaway task creation, and unowned or
+ambiguous folders are never deleted. See the
+[worktree lifecycle guide](docs/worktree-lifecycle-v4.md).
+
 The [iterative executor](docs/iterative-executor-v4.md) is inspired by Ralph:
 one dependency-ready story per context, explicit budgets and retry from the
 last accepted tree. It is not a free-running shell loop. The model cannot mark

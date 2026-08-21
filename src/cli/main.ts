@@ -27,6 +27,7 @@ import { activateRuntimeRepositoryV4, installRuntimeHostV4, verifyRuntimeHostIns
 import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
 import { verifyDelegationProvenanceV4 } from '../runtime/delegation-provenance.js';
 import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../runtime/audit-trail.js';
+import { createWorktreeManagerV4 } from '../runtime/worktree.js';
 
 export interface CliIo {
   stdout?: (line: string) => void;
@@ -276,6 +277,19 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         const report = await verifyAuditTrailV4(auditTrailDirectoryV4(values.get('--state-directory')!));
         stdout(JSON.stringify(report));
         return report.status === 'OK' ? 0 : 1;
+      }
+      if (subcommand === 'worktree-gc') {
+        const values = exactOptions(argv.slice(2), ['--repository-root','--worktree-parent','--mode','--expected-report-hash'], ['--repository-root','--worktree-parent','--mode']);
+        const mode = values.get('--mode');
+        if (mode !== 'REPORT' && mode !== 'APPLY') throw new Error('INVALID_CONTRACT: worktree-gc mode must be REPORT or APPLY');
+        const expectedReportHash = values.get('--expected-report-hash');
+        if ((mode === 'APPLY') !== (expectedReportHash !== undefined)) throw new Error('INVALID_CONTRACT: APPLY requires one expected report hash and REPORT forbids it');
+        const manager = createWorktreeManagerV4({ repository_root: values.get('--repository-root')!, worktree_parent: values.get('--worktree-parent')! });
+        const report = mode === 'REPORT'
+          ? await manager.reconcile({ mode: 'REPORT' })
+          : await manager.reconcile({ mode: 'APPLY', expected_report_hash: expectedReportHash! });
+        stdout(JSON.stringify(report));
+        return 0;
       }
       throw new Error('INVALID_CONTRACT: unsupported runtime command');
     }
