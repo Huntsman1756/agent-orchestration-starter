@@ -64,6 +64,7 @@ export interface RuntimeExecutionPolicyV4 {
   maxAttempts: number;
   repairBase: RuntimeRepairBaseV4;
   reasons: readonly string[];
+  healthEvidenceHashes?: readonly string[];
   policyHash: string;
 }
 

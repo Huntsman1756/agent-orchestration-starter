@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../src/runtime/audit-trail.js';
+import { createRuntimeBindingHealthObservationV4, evaluateRuntimeBindingHealthV4 } from '../src/runtime/binding-health.js';
 import { createBrokerDaemon, type BrokerDaemonDependenciesV4 } from '../src/runtime/broker-daemon.js';
+import { hashCanonicalV4 } from '../src/runtime/canonical.js';
 import { acquireRepositoryLockV4, acquireRunLockV4, createInProcessReclamationCoordinatorV4, type ReclamationCoordinatorV4 } from '../src/runtime/repository-lock.js';
 import { freezeRepositoryPolicy } from '../src/runtime/repository-policy.js';
 import { writeBrokerStateCacheV4 } from '../src/runtime/run-state.js';
@@ -57,6 +59,56 @@ test('generates the run ID, projects lifecycle evidence and reaches executor-rea
   const report = await verifyAuditTrailV4(auditTrailDirectoryV4(stateDirectory));
   assert.equal(report.status, 'OK');
   assert.equal(report.record_count, 2);
+});
+
+test('binds trusted health evidence during admission and contracts routing away from a quarantined executor', async () => {
+  const profile = validRuntimeProfile() as RuntimeProfileV4;
+  profile.bindings.reasoningExecutor = {
+    ...profile.bindings.executor,
+    model: 'fixture-reasoning-model',
+    execution: {
+      supportedTaskTraits: ['mechanical', 'localized'],
+      maxSteps: 24,
+      maxToolUses: 48,
+      maxNoMutationSteps: 8,
+      timeoutSeconds: 600,
+      supportsFailedCandidateRepair: true,
+    },
+  };
+  const bindingHash = hashCanonicalV4(profile.bindings.executor);
+  const observations = ['2026-08-21T10:00:00.000Z', '2026-08-21T10:01:00.000Z'].map((recordedAt, index) => createRuntimeBindingHealthObservationV4({
+    schemaVersion: 4,
+    observationId: `health_broker_failure_${index}`,
+    bindingHash,
+    taskTrait: 'mechanical',
+    recordedAt,
+    outcome: 'INVALID_OUTPUT',
+  }));
+  const snapshot = evaluateRuntimeBindingHealthV4({
+    bindingHash,
+    taskTrait: 'mechanical',
+    observations,
+    evaluatedAt: '2026-08-21T10:01:01.000Z',
+  });
+  const { deps, stateDirectory } = await daemonFixture({
+    loadProfile: async () => profile,
+    loadBindingHealth: async () => [snapshot],
+  });
+  const daemon = createBrokerDaemon(deps);
+
+  await daemon.submit(runCommand());
+  await daemon.close();
+
+  const journal = await import('../src/runtime/journal.js').then(({ reopenJournalV4 }) => reopenJournalV4(stateDirectory));
+  const accepted = journal.records[0]?.command;
+  assert.equal(accepted?.type, 'RUN_ACCEPTED');
+  if (accepted?.type !== 'RUN_ACCEPTED') throw new Error('expected a RUN_ACCEPTED journal command');
+  const executionPolicy = accepted.contract.execution_policy;
+  assert.ok(executionPolicy !== undefined);
+  assert.equal(executionPolicy.executorRole, 'reasoningExecutor');
+  assert.deepEqual(executionPolicy.healthEvidenceHashes, [snapshot.snapshotHash]);
+  assert.ok(executionPolicy.reasons.some((reason: string) => reason.includes('quarantined')));
+  await journal.close();
 });
 
 test('does not append a run when pre-launch inspection fails', async () => {

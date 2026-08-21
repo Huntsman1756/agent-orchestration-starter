@@ -6,6 +6,7 @@ export * from './readiness.js';
 export * from './routing.js';
 export * from './adaptive-execution.js';
 export * from './execution-efficiency.js';
+export * from './binding-health.js';
 export * from './iterative-executor.js';
 export * from './frontier-supervisor.js';
 export * from './autonomous-dispatcher.js';

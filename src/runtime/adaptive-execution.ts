@@ -8,6 +8,7 @@ import type {
   RuntimeTaskTraitV4,
   SourceSensitivityV4,
 } from './contracts.js';
+import { runtimeBindingHealthAllowsV4, type RuntimeBindingHealthSnapshotV4 } from './binding-health.js';
 
 const frontierTraits = new Set<RuntimeTaskTraitV4>(['architecture', 'security-sensitive', 'migration', 'long-horizon']);
 const reasoningTraits = new Set<RuntimeTaskTraitV4>(['semantic-debugging', 'cross-file-reasoning', 'multimodal']);
@@ -34,10 +35,14 @@ function executionEnvelope(binding: RuntimeBindingV4, fallbackTraits: readonly R
   };
 }
 
-function compatible(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[], fallbackTraits: readonly RuntimeTaskTraitV4[]): binding is RuntimeBindingV4 {
+function qualified(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[], fallbackTraits: readonly RuntimeTaskTraitV4[]): binding is RuntimeBindingV4 {
   if (binding === undefined || binding.permissions !== 'contract-write' || !binding.allowedSourceSensitivity.includes(sensitivity)) return false;
   const supported = new Set(executionEnvelope(binding, fallbackTraits).supportedTaskTraits);
   return traits.every((trait) => supported.has(trait));
+}
+
+function healthy(binding: RuntimeBindingV4, traits: readonly RuntimeTaskTraitV4[], snapshots: readonly RuntimeBindingHealthSnapshotV4[]): boolean {
+  return runtimeBindingHealthAllowsV4({ snapshots, bindingHash: hashCanonicalV4(binding), taskTraits: traits });
 }
 
 function requestedLane(request: RuntimeTaskRequestV4, traits: readonly RuntimeTaskTraitV4[]): RuntimeExecutionLaneV4 {
@@ -51,30 +56,40 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
   readonly profile: RuntimeProfileV4;
   readonly sourceSensitivity: SourceSensitivityV4;
   readonly forceFrontier?: boolean;
+  readonly bindingHealth?: readonly RuntimeBindingHealthSnapshotV4[];
 }): RuntimeExecutionPolicyV4 {
   const requirements = input.request.execution_requirements;
   const traits = Object.freeze([...(requirements?.taskTraits ?? inferredTraits(input.request.task_class))].sort()) as readonly RuntimeTaskTraitV4[];
   const requested = input.forceFrontier ? 'FRONTIER_EXECUTION' : requestedLane(input.request, traits);
   const reasons: string[] = [`task traits: ${traits.join(', ')}`];
+  const bindingHealth = input.bindingHealth ?? [];
 
   let lane = requested;
   let executorRole: RuntimeExecutionPolicyV4['executorRole'];
   let binding: RuntimeBindingV4;
-  if (lane === 'MECHANICAL_ECONOMY' && compatible(input.profile.bindings.executor, input.sourceSensitivity, traits, ['mechanical', 'localized'])) {
+  const executorQualified = qualified(input.profile.bindings.executor, input.sourceSensitivity, traits, ['mechanical', 'localized']);
+  const executorHealthy = executorQualified && healthy(input.profile.bindings.executor, traits, bindingHealth);
+  const reasoningBinding = input.profile.bindings.reasoningExecutor;
+  const reasoningQualified = qualified(reasoningBinding, input.sourceSensitivity, traits, ['semantic-debugging', 'cross-file-reasoning', 'multimodal']);
+  const reasoningHealthy = reasoningQualified && healthy(reasoningBinding, traits, bindingHealth);
+  if (executorQualified && !executorHealthy) reasons.push('primary economy binding is quarantined for a requested task trait');
+  if (reasoningQualified && !reasoningHealthy) reasons.push('reasoning economy binding is quarantined for a requested task trait');
+  if (lane === 'MECHANICAL_ECONOMY' && executorHealthy) {
     executorRole = 'executor';
     binding = input.profile.bindings.executor;
-  } else if (lane !== 'FRONTIER_EXECUTION' && compatible(input.profile.bindings.reasoningExecutor, input.sourceSensitivity, traits, ['semantic-debugging', 'cross-file-reasoning', 'multimodal'])) {
+  } else if (lane !== 'FRONTIER_EXECUTION' && reasoningHealthy) {
     lane = 'REASONING_ECONOMY';
     executorRole = 'reasoningExecutor';
-    binding = input.profile.bindings.reasoningExecutor;
+    binding = reasoningBinding;
     if (requested === 'MECHANICAL_ECONOMY') reasons.push('primary economy binding lacks the required qualified traits');
   } else {
     lane = 'FRONTIER_EXECUTION';
     executorRole = 'frontierExecutor';
     binding = input.profile.bindings.frontierExecutor;
-    if (!compatible(binding, input.sourceSensitivity, traits, traits)) {
+    if (!qualified(binding, input.sourceSensitivity, traits, traits)) {
       throw new Error('CAPABILITY_UNVERIFIED: no writable binding supports the requested task traits and source sensitivity');
     }
+    if (!healthy(binding, traits, bindingHealth)) throw new Error('CAPABILITY_UNVERIFIED: frontier binding is quarantined for a requested task trait');
     if (requested !== lane) reasons.push('economy bindings lack the required qualified traits');
   }
 
@@ -102,6 +117,7 @@ export function resolveAdaptiveExecutionPolicyV4(input: {
     maxAttempts,
     repairBase,
     reasons: Object.freeze(reasons),
+    healthEvidenceHashes: Object.freeze(bindingHealth.map((value) => value.snapshotHash).sort()),
   };
   return Object.freeze({ ...body, policyHash: hashCanonicalV4(body) });
 }

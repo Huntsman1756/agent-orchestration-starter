@@ -11,6 +11,7 @@ import { acquireRepositoryLockV4, acquireRunLockV4, type LockOwnerStatusV4, type
 import { freezeRepositoryPolicy, type FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import { loadRepositoryRegistration, type RegisteredRepositoryV4, type RepositoryRegistryV4 } from './repository-registry.js';
 import { deriveWorkContract } from './routing.js';
+import type { RuntimeBindingHealthSnapshotV4 } from './binding-health.js';
 import {
   recoverBrokerStateV4,
   reduceBrokerStateV4,
@@ -51,6 +52,8 @@ export interface BrokerDaemonDependenciesV4 {
   registry: RepositoryRegistryV4;
   loadPolicy(registration: RegisteredRepositoryV4): Promise<FrozenRepositoryPolicyV4 | RuntimeRepositoryPolicyV4>;
   loadProfile(registration: RegisteredRepositoryV4): Promise<RuntimeProfileV4>;
+  /** Loads broker-owned, hash-verified health snapshots for admission-time routing contraction. */
+  loadBindingHealth?(registration: RegisteredRepositoryV4): Promise<readonly RuntimeBindingHealthSnapshotV4[]>;
   resolveBaseSha(registration: RegisteredRepositoryV4, policy: FrozenRepositoryPolicyV4): Promise<string>;
   sandboxProfiles: Readonly<Record<string, unknown>>;
   inspectChanges?: (input: PathInspectionInputV4) => Promise<readonly InspectedChangeV4[]>;
@@ -371,7 +374,11 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       let runLock: RunLockV4 | null = null;
       let accepted = false;
       try {
-        const [policyValue, profile] = await Promise.all([deps.loadPolicy(registration), deps.loadProfile(registration)]);
+        const [policyValue, profile, bindingHealth] = await Promise.all([
+          deps.loadPolicy(registration),
+          deps.loadProfile(registration),
+          deps.loadBindingHealth?.(registration) ?? Promise.resolve([]),
+        ]);
         const policy = asFrozenPolicy(policyValue);
         const baseSha = await deps.resolveBaseSha(registration, policy);
         await (deps.inspectChanges ?? inspectAllowedChanges)({
@@ -390,6 +397,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
           profile,
           base_sha: baseSha,
           sandbox_profiles: deps.sandboxProfiles,
+          binding_health: bindingHealth,
         });
         await persist({
           type: 'RUN_ACCEPTED',
