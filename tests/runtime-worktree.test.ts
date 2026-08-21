@@ -178,7 +178,7 @@ test('never deletes a path whose ownership record was altered', async () => {
     await writeFile(recordPath, `${JSON.stringify({ ...record, base_sha: 'f'.repeat(40) })}\n`);
 
     const report = await manager.report();
-    assert.equal(report.entries.find((entry) => entry.path === recordPath)?.classification, 'INDETERMINATE');
+    assert.ok(report.entries.some((entry) => entry.classification === 'INDETERMINATE' && entry.detail.includes('self-hash')));
     assert.equal(report.entries.find((entry) => entry.path === created.path)?.classification, 'UNOWNED');
     const applied = await manager.reconcile({ mode: 'APPLY', expected_report_hash: report.report_hash });
     assert.ok(applied.entries.some((entry) => entry.classification === 'UNOWNED' && entry.path === created.path));
