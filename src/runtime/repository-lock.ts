@@ -154,8 +154,11 @@ export async function acquireRepositoryLockV4(options: RepositoryLockOptionsV4):
     try {
       await file.writeFile(`${canonicalJsonV4(owner)}\n`, 'utf8');
       await file.sync();
-    } finally {
       await file.close();
+    } catch (error) {
+      await file.close().catch(() => undefined);
+      await unlink(path).catch(() => undefined);
+      throw error;
     }
     return true;
   };

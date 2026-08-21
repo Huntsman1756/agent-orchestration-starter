@@ -122,6 +122,8 @@ test('activates one central installation in an arbitrary Git repository without 
   assert.match(codex, /runtime", "mcp-stdio", "--activation"/u);
   assert.match(codex, /agent-orchestration\.mjs/u);
   assert.equal((await activateRuntimeRepositoryV4({ repositoryRoot, policyPath, profilePath, worktreeParent, hostRoot, installationManifest: join(installation.root, 'installation-v4.json'), target: 'ANALYSIS_ONLY', activatedAt: '2026-08-10T12:01:00.000Z' })).activationHash, activation.activationHash);
+  await writeFile(join(hostRoot, 'repository-registry-v4.json'), '{broken-json\n');
+  await assert.rejects(() => activateRuntimeRepositoryV4({ repositoryRoot, policyPath, profilePath, worktreeParent, hostRoot, installationManifest: join(installation.root, 'installation-v4.json'), target: 'ANALYSIS_ONLY', activatedAt: '2026-08-10T12:02:00.000Z' }), /repository registry cannot be read/u);
   await assert.rejects(() => activateRuntimeRepositoryV4({ repositoryRoot, policyPath, profilePath, worktreeParent, hostRoot, installationManifest: join(installation.root, 'installation-v4.json'), target: 'ISOLATED_EXECUTION', activatedAt: at }), /different activation manifest/u);
 
   const { activationHash: ignored, ...activationBody } = activation;

@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { copyFile, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -125,7 +125,7 @@ async function fileHash(path: string): Promise<{ sha256: string; size: number }>
 }
 async function atomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${path}.${process.pid}.${randomBytes(12).toString('hex')}.tmp`;
   await writeFile(temporary, `${canonicalJsonV4(value)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600, flush: true });
   await rename(temporary, path).catch(async (error) => { await rm(temporary, { force: true }); throw error; });
 }
@@ -242,7 +242,7 @@ export async function installRuntimeHostV4(input: { sourceRoot: string; hostRoot
     await verifyRuntimeHostInstallationV4(loaded);
     return loaded;
   }
-  const temporary = `${installationRoot}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${installationRoot}.${process.pid}.${randomBytes(12).toString('hex')}.tmp`;
   await mkdir(dirname(temporary), { recursive: true, mode: 0o700 });
   await mkdir(temporary, { recursive: false, mode: 0o700 });
   try {
@@ -375,12 +375,27 @@ export async function activateRuntimeRepositoryV4(input: { repositoryRoot: strin
   }
   if (existing === null) await atomicJson(activationPath, activation);
   const registryPath = join(hostRoot, 'repository-registry-v4.json');
-  const registryValue: unknown = await readFile(registryPath, 'utf8').then((bytes) => JSON.parse(bytes), () => ({}));
-  if (registryValue === null || typeof registryValue !== 'object' || Array.isArray(registryValue) || Object.values(registryValue).some((value) => typeof value !== 'string' || !isAbsolute(value))) invalid('repository registry is invalid');
-  const registry = new Map(Object.entries(registryValue as Record<string, string>));
-  if (registry.has(policy.repositoryId) && registry.get(policy.repositoryId) !== activationPath) invalid('repository id is already registered to another activation');
-  registry.set(policy.repositoryId, activationPath);
-  await atomicJson(registryPath, Object.fromEntries([...registry.entries()].sort(([a],[b]) => a.localeCompare(b))));
+  const registryLockPath = `${registryPath}.lock`;
+  const registryLock = await open(registryLockPath, 'wx', 0o600).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'EEXIST') invalid('repository registry is busy');
+    throw error;
+  });
+  try {
+    let registryValue: unknown = {};
+    try {
+      registryValue = JSON.parse(await readFile(registryPath, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') invalid('repository registry cannot be read');
+    }
+    if (registryValue === null || typeof registryValue !== 'object' || Array.isArray(registryValue) || Object.values(registryValue).some((value) => typeof value !== 'string' || !isAbsolute(value))) invalid('repository registry is invalid');
+    const registry = new Map(Object.entries(registryValue as Record<string, string>));
+    if (registry.has(policy.repositoryId) && registry.get(policy.repositoryId) !== activationPath) invalid('repository id is already registered to another activation');
+    registry.set(policy.repositoryId, activationPath);
+    await atomicJson(registryPath, Object.fromEntries([...registry.entries()].sort(([a],[b]) => a.localeCompare(b))));
+  } finally {
+    await registryLock.close().catch(() => undefined);
+    await rm(registryLockPath, { force: true }).catch(() => undefined);
+  }
   await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   if (priorCodex === null) { await mkdir(dirname(codexPath), { recursive: true }); await writeFile(codexPath, codex.content, { flag: 'wx', mode: 0o600 }); }
   return activation;

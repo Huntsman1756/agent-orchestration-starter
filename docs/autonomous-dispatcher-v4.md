@@ -26,6 +26,12 @@ The dispatcher stores one canonical, hash-bound, atomically replaced and fsynced
 
 Source claims and daemon `request_id` idempotency form separate duplicate-execution barriers. A crash after claiming but before submission reloads the exact candidate; a crash after submission renews the lease and resumes the existing run. Cursor advancement happens only after the complete listed page has been handled.
 
+Loss of a source lease is terminal for that candidate revision. The dispatcher
+persists bounded failure evidence, increments the circuit breaker and never
+resumes or mutates the source after authority has been lost. Recovery requires
+a new source revision or an operator-controlled disposition; the model cannot
+reclaim its own work.
+
 A fresh state is fail-closed: it starts in `PAUSED`, and even an immediately started service loop performs no source or runtime calls. Only an explicit, durably persisted `setMode('RUNNING')` grants admission. A restart preserves an already persisted operator-selected mode so a crash does not silently abandon active leases; pause the service explicitly before planned maintenance.
 
 This is not a state migration: installations that already have a valid state file retain its recorded mode. Before upgrading an existing `RUNNING` installation that must remain inactive, persist `PAUSED` with the old or new trusted control plane before starting the service loop.
@@ -51,6 +57,7 @@ GitHub tokens, provider credentials, and production secrets stay behind `credent
 - Candidate source, repository, and all required labels must match the frozen dispatcher policy.
 - `candidate_id + revision` is the immutable source identity; changed content requires a new revision.
 - Completion requires `FINALIZED`, a verified 40-character merge commit SHA, and a post-merge `PASS` evidence hash.
+- `require_merged_publication` must be `true`; report-only and manually published pilots use the dogfood protocol rather than the autonomous dispatcher.
 - A post-merge regression reopens the source task and counts toward the circuit breaker.
 - Runtime `FAILED` or `ABORTED` states are reported once with typed evidence and remain terminal.
 - Resetting the circuit is accepted only in `PAUSED` mode. It clears the global consecutive-failure counter but neither erases task records nor resumes admission; returning to `RUNNING` is a separate explicit action.

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added
+
+- Added binding/task-trait health quarantine with hash-bound admission evidence,
+  cooldown and broker-owned canary recovery.
+- Added bounded MCP HTTP session capacity and idle expiry, macOS framework CI,
+  and an automated Linux native-package boundary check.
+
+### Fixed
+
+- Preserved shared repository locks until every active run releases ownership
+  and removed partially written orphan locks after failed acquisition.
+- Made lost dispatcher leases durably terminal, required merged publication for
+  autonomous dispatch, and replaced timestamp-only temporary names with random
+  collision-resistant identities.
+- Derived pilot wall time from contractual event chronology and counted every
+  escaped material defect instead of only affected blocks.
+- Serialized concurrent audit appends, rejected corrupt installation registries,
+  locked registry updates, and encoded generated Codex instructions safely in
+  TOML strings.
+
+### Changed
+
+- Renamed the deliberately scoped Prettier gate to
+  `format:critical:check`, removed incompatible legacy examples, and made the
+  packaged audit verifier use the built CLI.
+
 ## 0.3.1 - 2026-08-16
 
 ### Fixed

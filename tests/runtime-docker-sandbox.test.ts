@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import test, { after } from 'node:test';
 
 import {
@@ -37,7 +37,7 @@ import { RUNTIME_BROKER_VERSION_V4 } from '../src/runtime/version.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
 const trustedFixtureParent = process.platform === 'win32'
-  ? join(process.cwd(), '.tmp', 'agent-orchestration-test-fixtures')
+  ? join(process.env.PUBLIC ?? join(parse(homedir()).root, 'Users', 'Public'), 'agent-orchestration-test-fixtures')
   : join(homedir(), '.agent-orchestration-test-fixtures');
 
 async function makeTrustedFixtureRoot(prefix: string): Promise<string> {

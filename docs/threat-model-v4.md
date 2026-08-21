@@ -161,6 +161,14 @@ Credential disclosure, provider-gateway impersonation or cross-repository lease
 reuse is critical. A provider timeout, rate limit or malformed response that is
 contained and recorded as a typed failure is medium operational impact.
 
+Audit-trail redaction is a bounded, best-effort defence against known credential
+shapes, not a proof that arbitrary secret formats can never be persisted. The
+trusted host must minimize audit inputs before they reach the ledger, keep raw
+provider transcripts and credentials outside audit evidence, restrict ledger
+filesystem access, and treat discovery of an unrecognized secret shape as a
+credential incident requiring rotation. Hash chaining detects later mutation;
+it does not make sensitive plaintext safe to retain.
+
 ### Host driver, components and installation
 
 The host driver and component modules execute with the most authority. The

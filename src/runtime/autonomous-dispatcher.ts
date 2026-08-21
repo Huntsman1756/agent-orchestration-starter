@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
@@ -158,7 +159,7 @@ function validatePolicy(policy: AutonomousDispatchPolicyV4): void {
   if (!Number.isSafeInteger(policy.max_claims_per_cycle) || policy.max_claims_per_cycle < 1 || policy.max_claims_per_cycle > policy.max_active_tasks) invalid('max_claims_per_cycle is invalid');
   if (!Number.isSafeInteger(policy.lease_seconds) || policy.lease_seconds < 30 || policy.lease_seconds > 3_600) invalid('lease_seconds is invalid');
   if (!Number.isSafeInteger(policy.max_consecutive_failures) || policy.max_consecutive_failures < 1 || policy.max_consecutive_failures > 32) invalid('max_consecutive_failures is invalid');
-  if (typeof policy.require_merged_publication !== 'boolean') invalid('require_merged_publication is invalid');
+  if (policy.require_merged_publication !== true) invalid('autonomous dispatch requires merged publication');
 }
 
 function validateCandidate(candidate: AutonomousTaskCandidateV4, policy: AutonomousDispatchPolicyV4): AutonomousTaskCandidateV4 {
@@ -242,7 +243,7 @@ async function writeState(directory: string, state: DispatchStateV4): Promise<St
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const durable = envelope(state);
   const target = join(directory, STATE_FILE);
-  const temporary = join(directory, `${STATE_FILE}.${process.pid}.${Date.now()}.tmp`);
+  const temporary = join(directory, `${STATE_FILE}.${process.pid}.${randomBytes(12).toString('hex')}.tmp`);
   const handle = await open(temporary, 'wx', 0o600);
   try {
     await handle.writeFile(`${canonicalJsonV4(durable)}\n`, 'utf8');
@@ -361,7 +362,14 @@ export function createAutonomousDispatcherV4(deps: AutonomousDispatcherDependenc
             const observedAt = now();
             const expiresAt = addSeconds(observedAt, deps.policy.lease_seconds);
             const renewed = await deps.source.renew({ candidate_id: task.candidate_id, revision: task.revision, lease_id: task.lease_id, expires_at: expiresAt });
-            if (renewed !== 'RENEWED') corrupt('dispatcher lost a claimed source lease');
+            if (renewed !== 'RENEWED') {
+              const evidenceHash = hashCanonicalV4({ candidate_id: task.candidate_id, revision: task.revision, lease_id: task.lease_id, outcome: 'LOST_BEFORE_START' });
+              const failures = current.state.consecutive_failures + 1;
+              const failedTask: StoredTaskV4 = Object.freeze({ ...task, status: 'FAILED', consecutive_failures: task.consecutive_failures + 1, last_evidence_hash: evidenceHash });
+              current = await writeState(deps.state_directory, replaceTask(Object.freeze({ ...current.state, consecutive_failures: failures, circuit_open: failures >= deps.policy.max_consecutive_failures }), failedTask));
+              counters.failed += 1;
+              continue;
+            }
             const runtimeResult = loadRuntimeResultV4(await deps.runtime.start(candidate.request));
             if (runtimeResult.request_id !== task.request_id) corrupt('runtime accepted a different request');
             const runningTask: StoredTaskV4 = Object.freeze({ ...task, run_id: runtimeResult.run_id, status: 'RUNNING', lease_expires_at: expiresAt });
@@ -373,7 +381,14 @@ export function createAutonomousDispatcherV4(deps: AutonomousDispatcherDependenc
             const observedAt = now();
             const expiresAt = addSeconds(observedAt, deps.policy.lease_seconds);
             const renewed = await deps.source.renew({ candidate_id: task.candidate_id, revision: task.revision, lease_id: task.lease_id, expires_at: expiresAt });
-            if (renewed !== 'RENEWED') corrupt('dispatcher lost an active source lease');
+            if (renewed !== 'RENEWED') {
+              const evidenceHash = hashCanonicalV4({ candidate_id: task.candidate_id, revision: task.revision, run_id: task.run_id, lease_id: task.lease_id, outcome: 'LOST_WHILE_RUNNING' });
+              const failures = current.state.consecutive_failures + 1;
+              const failedTask: StoredTaskV4 = Object.freeze({ ...task, status: 'FAILED', consecutive_failures: task.consecutive_failures + 1, last_evidence_hash: evidenceHash });
+              current = await writeState(deps.state_directory, replaceTask(Object.freeze({ ...current.state, consecutive_failures: failures, circuit_open: failures >= deps.policy.max_consecutive_failures }), failedTask));
+              counters.failed += 1;
+              continue;
+            }
             const runtimeResult = loadRuntimeResultV4(await deps.runtime.resume(task.run_id));
             if (runtimeResult.run_id !== task.run_id || runtimeResult.request_id !== task.request_id) corrupt('runtime resumed a different request');
             counters.resumed += 1;
@@ -399,10 +414,9 @@ export function createAutonomousDispatcherV4(deps: AutonomousDispatcherDependenc
               counters.failed += 1;
             } else if (runtimeResult.state === 'FINALIZED') {
               const mergeCommit = runtimeResult.publication.merge_commit_sha;
-              if (deps.policy.require_merged_publication && (runtimeResult.publication.state !== 'MERGED' || mergeCommit === null || !/^[a-f0-9]{40}$/.test(mergeCommit))) {
+              if (runtimeResult.publication.state !== 'MERGED' || mergeCommit === null || !/^[a-f0-9]{40}$/.test(mergeCommit)) {
                 corrupt('finalized run lacks required merged publication evidence');
               }
-              if (mergeCommit === null || !/^[a-f0-9]{40}$/.test(mergeCommit)) corrupt('post-merge verification requires a merge commit');
               const verification = await deps.post_merge.verify({ repository_id: task.repository_id, run_id: task.run_id, merge_commit_sha: mergeCommit });
               if (!HASH.test(verification.evidence_hash)) corrupt('post-merge verification evidence is invalid');
               if (verification.outcome === 'PASS') {

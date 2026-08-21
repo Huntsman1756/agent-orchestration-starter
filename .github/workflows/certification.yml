@@ -15,6 +15,7 @@ jobs:
   platform-host:
     name: platform host (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +37,7 @@ jobs:
   docker-hostile:
     name: Docker hostile sandbox certification
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       AO_REQUIRE_CERTIFICATION: '1'
       AO_SANDBOX_REFERENCE: ${{ inputs.sandbox-image }}

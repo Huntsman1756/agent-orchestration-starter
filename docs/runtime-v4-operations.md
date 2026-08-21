@@ -7,7 +7,7 @@ Runtime V4 is a fail-closed implementation framework with a portable host bootst
 The package default API is intentionally smaller than the implementation. Use
 `agent-orchestration-starter/runtime-v4/contracts` for contract loaders,
 `runtime-v4/host` for the privileged host boundary, and
-`runtime-v4/experimental` for lower-level evolving surfaces. Release `0.2.x`
+`runtime-v4/experimental` for lower-level evolving surfaces. Release `0.3.x`
 is pre-1.0; consult the [compatibility matrix](compatibility-matrix-v4.md)
 before reusing evidence across a host, model, harness or policy change.
 

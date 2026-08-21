@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -401,7 +402,7 @@ export interface StateCacheDurabilityV4 { syncDirectory?: (directory: string) =>
 export async function writeBrokerStateCacheV4(directory: string, state: BrokerStateV4, sequence: number, durability: StateCacheDurabilityV4 = {}): Promise<void> {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const target = join(directory, STATE_CACHE_FILE_V4);
-  const temporary = join(directory, `${STATE_CACHE_FILE_V4}.${process.pid}.${Date.now()}.tmp`);
+  const temporary = join(directory, `${STATE_CACHE_FILE_V4}.${process.pid}.${randomBytes(12).toString('hex')}.tmp`);
   const cache: StateCacheV4 = { sequence, state_hash: hashCanonicalV4(state), state };
   const handle = await open(temporary, 'wx', 0o600);
   try {

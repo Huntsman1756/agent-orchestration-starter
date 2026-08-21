@@ -25,7 +25,7 @@ export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tes
     `Acceptance tests (READ-ONLY, immutable): ${acceptanceTests}`,
     `Implementation targets (READ-WRITE only): ${implementationTargets}`,
     'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
-    'SHIFT-LEFT: npm run lint and npm run format:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
+    'SHIFT-LEFT: npm run lint and npm run format:critical:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
     'If a repair packet is supplied, follow its bounded instruction without widening the implementation target list.',
     'For OpenCode configuration work, repository-root opencode.json is the only permitted config target and only when listed above; never read or edit personal, user-level, home-directory, or global OpenCode configuration.',
   ]);

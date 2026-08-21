@@ -212,7 +212,7 @@ test('derives A/B/C bindings, repair outcomes, escalation, exact duration and va
   const a = reduceHistory(frozen, historyFor(frozen, 'A_STRONG_BASELINE', ['REJECT', 'ACCEPT'], { duration_ms: 1500 }));
   const b = reduceHistory(frozen, historyFor(frozen, 'B_CHEAP_NO_EARLY_ESCALATION', ['REJECT', 'REJECT', 'ACCEPT']));
   const c = reduceHistory(frozen, historyFor(frozen, 'C_ADAPTIVE_EARLY_ESCALATION', ['REJECT', 'REJECT', 'ACCEPT']));
-  assert.deepEqual([a.execution_attempts, a.repair_rounds, a.executor_binding_initial, a.executor_binding_final, a.first_pass_accept, a.accept_after_one_repair, a.executor_time_seconds, a.review_time_seconds, a.wall_time_seconds], [2, 1, 'binding-strong', 'binding-strong', false, true, 3, 0.02, null]);
+  assert.deepEqual([a.execution_attempts, a.repair_rounds, a.executor_binding_initial, a.executor_binding_final, a.first_pass_accept, a.accept_after_one_repair, a.executor_time_seconds, a.review_time_seconds, a.wall_time_seconds], [2, 1, 'binding-strong', 'binding-strong', false, true, 3, 0.02, 10]);
   assert.deepEqual([b.execution_attempts, b.repair_rounds, b.final_accepted], [3, 1, true]);
   assert.equal(c.valid_history, true, c.invalid_reason_codes.join(', '));
   assert.deepEqual([c.execution_attempts, c.repair_rounds, c.escalated, c.escalation_reason, c.executor_binding_initial, c.executor_binding_final], [3, 1, true, 'second-review-rejected', 'binding-cheap', 'binding-strong']);

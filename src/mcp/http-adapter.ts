@@ -8,6 +8,8 @@ import { createBrokerMcpServer, type McpAdapterDependenciesV4 } from './broker-s
 
 const DEFAULT_PATH = '/mcp';
 const DEFAULT_MAX_BODY_BYTES = 4 * 1024 * 1024;
+const DEFAULT_MAX_SESSIONS = 32;
+const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1_000;
 
 export interface McpHttpAdapterOptionsV4 {
   readonly host?: string;
@@ -15,6 +17,9 @@ export interface McpHttpAdapterOptionsV4 {
   readonly path?: string;
   readonly bearerToken: string;
   readonly maxBodyBytes?: number;
+  readonly maxSessions?: number;
+  readonly sessionIdleTimeoutMs?: number;
+  readonly now?: () => number;
 }
 
 export interface McpHttpAdapterV4 {
@@ -28,6 +33,7 @@ export interface McpHttpAdapterV4 {
 interface SessionV4 {
   readonly transport: StreamableHTTPServerTransport;
   readonly server: ReturnType<typeof createBrokerMcpServer>;
+  lastAccessMs: number;
 }
 
 function invalid(message: string): never {
@@ -78,8 +84,23 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) invalid('MCP HTTP port is invalid');
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1 || maxBodyBytes > 16 * 1024 * 1024) invalid('MCP HTTP body limit is invalid');
+  const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+  const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? DEFAULT_SESSION_IDLE_TIMEOUT_MS;
+  if (!Number.isSafeInteger(maxSessions) || maxSessions < 1 || maxSessions > 1_024) invalid('MCP HTTP session limit is invalid');
+  if (!Number.isSafeInteger(sessionIdleTimeoutMs) || sessionIdleTimeoutMs < 1_000 || sessionIdleTimeoutMs > 24 * 60 * 60 * 1_000) invalid('MCP HTTP session idle timeout is invalid');
+  const now = options.now ?? Date.now;
 
   const sessions = new Map<string, SessionV4>();
+  let pendingInitializations = 0;
+  const closeSession = async (id: string, session: SessionV4): Promise<void> => {
+    if (sessions.get(id) === session) sessions.delete(id);
+    await session.transport.close().catch(() => undefined);
+    await session.server.close().catch(() => undefined);
+  };
+  const pruneIdleSessions = async (): Promise<void> => {
+    const cutoff = now() - sessionIdleTimeoutMs;
+    await Promise.all([...sessions].filter(([, session]) => session.lastAccessMs <= cutoff).map(([id, session]) => closeSession(id, session)));
+  };
   const server = createServer((request, response) => {
     void (async () => {
       const requestPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
@@ -90,32 +111,40 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
         sendJson(response, 401, { error: 'unauthorized' });
         return;
       }
+      await pruneIdleSessions();
 
       const currentSessionId = sessionId(request);
       let body: unknown;
       if (request.method === 'POST') body = await readJsonBody(request, maxBodyBytes);
       let current = currentSessionId === null ? undefined : sessions.get(currentSessionId);
       if (current === undefined && request.method === 'POST' && currentSessionId === null && isInitializeRequest(body)) {
-        let createdSessionId: string | null = null;
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (value) => { createdSessionId = value; },
-        });
-        const mcpServer = createBrokerMcpServer(deps);
-        current = { transport, server: mcpServer };
-        transport.onclose = () => {
-          if (createdSessionId !== null && sessions.get(createdSessionId)?.transport === transport) sessions.delete(createdSessionId);
-          void mcpServer.close().catch(() => undefined);
-        };
-        await mcpServer.connect(transport);
-        await transport.handleRequest(request, response, body);
-        if (createdSessionId !== null) sessions.set(createdSessionId, current);
-        return;
+        if (sessions.size + pendingInitializations >= maxSessions) { sendJson(response, 429, { error: 'MCP session capacity reached' }); return; }
+        pendingInitializations += 1;
+        try {
+          let createdSessionId: string | null = null;
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (value) => { createdSessionId = value; },
+          });
+          const mcpServer = createBrokerMcpServer(deps);
+          current = { transport, server: mcpServer, lastAccessMs: now() };
+          transport.onclose = () => {
+            if (createdSessionId !== null && sessions.get(createdSessionId)?.transport === transport) sessions.delete(createdSessionId);
+            void mcpServer.close().catch(() => undefined);
+          };
+          await mcpServer.connect(transport);
+          await transport.handleRequest(request, response, body);
+          if (createdSessionId !== null) sessions.set(createdSessionId, current);
+          return;
+        } finally {
+          pendingInitializations -= 1;
+        }
       }
       if (current === undefined) {
         sendJson(response, 400, { error: 'missing or invalid MCP session' });
         return;
       }
+      current.lastAccessMs = now();
       await current.transport.handleRequest(request, response, body);
     })().catch((error: unknown) => {
       if (!response.headersSent) sendJson(response, 400, { error: error instanceof Error ? error.message.split(':', 2)[0] : 'invalid request' });
