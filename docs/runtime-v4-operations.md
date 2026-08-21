@@ -41,6 +41,8 @@ If any item is absent, startup or execution returns a typed failure. There is no
 
 Repository policy owns allowed branches, exact validation argv, routing restrictions, source sensitivity, sandbox profiles, and approved instruction sources. Runtime profiles own replaceable harness/provider/model bindings. The repository registry binds an approved ID to a canonical root and the exact policy/profile locations. Models and providers do not appear in the stable repository policy.
 
+Writable bindings can additionally publish a qualified execution envelope. The broker resolves `MECHANICAL_ECONOMY`, `REASONING_ECONOMY` or `FRONTIER_EXECUTION` from task traits and source sensitivity, then binds adaptive limits into the work contract. See [`adaptive-execution-v4.md`](adaptive-execution-v4.md). This is routing authority owned by the broker, not a hint interpreted by the worker.
+
 Generated rules and profiles do not invoke a worker. Use the route, launch,
 native-event and provider-usage evidence described in
 [`harness-adapters-v4.md`](harness-adapters-v4.md) to distinguish real

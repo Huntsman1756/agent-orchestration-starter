@@ -56,12 +56,25 @@ test('encodes exactly economy, one repair, typed model escalation, and final rev
   const reviews = [rejection('r1'), rejection('r2'), acceptance('r3')];
   const machine = createEconomyReviewSequence({
     execute_economy: async (input) => { calls.push(`${input.role}-${input.attempt}-${input.repair_finding_hashes.length}`); return attemptResult(`${input.role}-${input.attempt}`); },
-    execute_escalation: async (input) => { calls.push(`${input.role}-${input.review_rejection_hashes.length}-${input.escalation_decision_hash.length}`); return attemptResult(input.role); },
+    execute_escalation: async (input) => { calls.push(`${input.role}-${input.failure_evidence_hashes.length}-${input.escalation_decision_hash.length}`); return attemptResult(input.role); },
     validate: async (_attempt, ordinal) => { calls.push(`validate-${ordinal}`); return true; },
     review: async (_attempt, ordinal) => { calls.push(`review-${ordinal}`); return reviews[ordinal - 1]!; },
   });
   assert.equal((await machine.run()).session_id, 'escalationExecutor');
   assert.deepEqual(calls, ['executor-1-0', 'validate-1', 'review-1', 'executor-2-1', 'validate-2', 'review-2', 'escalationExecutor-2-64', 'validate-3', 'review-3']);
+});
+
+test('repairs deterministic validation evidence before spending reviewer work', async () => {
+  const calls: string[] = [];
+  const finding = '7'.repeat(64);
+  const machine = createEconomyReviewSequence({
+    execute_economy: async (input) => { calls.push(`execute-${input.attempt}-${input.repair_finding_hashes.length}`); return attemptResult(`attempt-${input.attempt}`); },
+    execute_escalation: async () => { throw new Error('unexpected escalation'); },
+    validate: async (_attempt, ordinal) => { calls.push(`validate-${ordinal}`); return ordinal === 1 ? { passed: false, finding_hashes: [finding] } : { passed: true, finding_hashes: [] }; },
+    review: async (_attempt, ordinal) => { calls.push(`review-${ordinal}`); return acceptance('validation-repair'); },
+  });
+  assert.equal((await machine.run()).session_id, 'attempt-2');
+  assert.deepEqual(calls, ['execute-1-0', 'validate-1', 'execute-2-1', 'validate-2', 'review-3']);
 });
 
 test('permits one content-addressed context expansion in a second fresh session', async () => {

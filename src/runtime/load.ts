@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { verifyRuntimeExecutionPolicyV4 } from './adaptive-execution.js';
 
 import {
   reviewAttestationV4Schema,
@@ -35,7 +36,9 @@ export function loadRuntimeTaskRequestV4(value: unknown): RuntimeTaskRequestV4 {
 }
 
 export function loadRuntimeWorkContractV4(value: unknown): RuntimeWorkContractV4 {
-  return parseContract(runtimeWorkContractV4Schema, value) as RuntimeWorkContractV4;
+  const contract = parseContract(runtimeWorkContractV4Schema, value) as RuntimeWorkContractV4;
+  if (contract.execution_policy !== undefined) verifyRuntimeExecutionPolicyV4(contract.execution_policy);
+  return contract;
 }
 
 export function loadRuntimeRepositoryPolicyV4(value: unknown): RuntimeRepositoryPolicyV4 {

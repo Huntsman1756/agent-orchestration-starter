@@ -8,7 +8,19 @@ export type RequestedRouteV4 = 'AUTO' | 'ECONOMY' | 'FRONTIER';
 export type EffectiveRouteV4 = 'ECONOMY' | 'FRONTIER';
 export type ChangeOperationV4 = 'CREATE' | 'MODIFY' | 'DELETE';
 export type ReviewDecisionV4 = 'REQUEST_CONTEXT' | 'ACCEPT' | 'REJECT';
-export type RuntimeRoleV4 = 'orchestrator' | 'executor' | 'escalationExecutor' | 'frontierExecutor' | 'reviewer';
+export type RuntimeRoleV4 = 'orchestrator' | 'executor' | 'reasoningExecutor' | 'escalationExecutor' | 'frontierExecutor' | 'reviewer';
+export type RuntimeTaskTraitV4 =
+  | 'mechanical'
+  | 'localized'
+  | 'semantic-debugging'
+  | 'cross-file-reasoning'
+  | 'multimodal'
+  | 'long-horizon'
+  | 'architecture'
+  | 'security-sensitive'
+  | 'migration';
+export type RuntimeExecutionLaneV4 = 'MECHANICAL_ECONOMY' | 'REASONING_ECONOMY' | 'FRONTIER_EXECUTION';
+export type RuntimeRepairBaseV4 = 'LAST_ACCEPTED_TREE' | 'FAILED_CANDIDATE_TREE';
 export type PromptFormatV4 = 'plain' | 'markdown' | 'xml';
 export type ContextPlacementV4 = 'before-task' | 'after-task';
 export type RuntimeAuthenticationV4 = 'provider-api-key' | 'chatgpt-subscription';
@@ -26,6 +38,35 @@ export interface RuntimeModelGuidanceV4 {
   instructions: readonly string[];
 }
 
+export interface RuntimeBindingExecutionV4 {
+  supportedTaskTraits: readonly RuntimeTaskTraitV4[];
+  maxSteps: number;
+  maxToolUses: number;
+  maxNoMutationSteps: number;
+  timeoutSeconds: number;
+  supportsFailedCandidateRepair: boolean;
+}
+
+export interface RuntimeExecutionRequirementsV4 {
+  taskTraits: readonly RuntimeTaskTraitV4[];
+  contextBytes: number;
+  acceptanceCriteriaCount: number;
+}
+
+export interface RuntimeExecutionPolicyV4 {
+  lane: RuntimeExecutionLaneV4;
+  executorRole: 'executor' | 'reasoningExecutor' | 'frontierExecutor';
+  taskTraits: readonly RuntimeTaskTraitV4[];
+  maxSteps: number;
+  maxToolUses: number;
+  maxNoMutationSteps: number;
+  timeoutSeconds: number;
+  maxAttempts: number;
+  repairBase: RuntimeRepairBaseV4;
+  reasons: readonly string[];
+  policyHash: string;
+}
+
 export interface AllowedChangeV4 {
   path: string;
   operations: readonly ChangeOperationV4[];
@@ -40,6 +81,8 @@ export interface RuntimeTaskRequestV4 {
   task_class: string;
   requested_risk_class: string;
   requested_route: RequestedRouteV4;
+  /** Explicit planner-owned semantic requirements. Legacy requests are classified conservatively from task_class. */
+  execution_requirements?: RuntimeExecutionRequirementsV4;
   allowed_changes: readonly AllowedChangeV4[];
   /** Planner-authored acceptance tests. Executors may read them but never write them. */
   acceptance_tests: readonly string[];
@@ -66,12 +109,14 @@ export interface RuntimeBindingV4 {
   allowedSourceSensitivity: readonly SourceSensitivityV4[];
   permissions: 'read-only' | 'contract-write';
   guidance: RuntimeModelGuidanceV4;
+  /** Qualified execution envelope used for capability-based routing. */
+  execution?: RuntimeBindingExecutionV4;
 }
 
 export interface RuntimeProfileV4 {
   schemaVersion: 4;
   id: string;
-  bindings: Record<RuntimeRoleV4, RuntimeBindingV4>;
+  bindings: Record<Exclude<RuntimeRoleV4, 'reasoningExecutor'>, RuntimeBindingV4> & { reasoningExecutor?: RuntimeBindingV4 };
   runtime: { maxEconomyParallelRequests: number; maxConcurrentRunsPerRepository: number };
 }
 
@@ -103,6 +148,7 @@ export interface RuntimeWorkContractV4 extends RuntimeTaskRequestV4 {
   effective_route: EffectiveRouteV4;
   route_decision_reasons: readonly string[];
   route_decision_hash: string;
+  execution_policy?: RuntimeExecutionPolicyV4;
   effective_data_scope: DataScopeV4;
   effective_source_sensitivity: SourceSensitivityV4;
   sandbox_profile_hashes: Readonly<Record<string, string>>;

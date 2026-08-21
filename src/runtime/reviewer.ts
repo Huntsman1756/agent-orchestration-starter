@@ -113,8 +113,8 @@ export type EconomySequenceStateV4 =
 
 export interface EconomyReviewSequenceDependenciesV4 {
   readonly execute_economy: (input: { role: 'executor'; attempt: 1 | 2; repair_finding_hashes: readonly string[] }) => Promise<ExecutorAttemptResultV4>;
-  readonly execute_escalation: (input: { role: 'escalationExecutor'; review_rejection_hashes: readonly [string, string]; escalation_decision_hash: string }) => Promise<ExecutorAttemptResultV4>;
-  readonly validate: (attempt: ExecutorAttemptResultV4, ordinal: 1 | 2 | 3) => Promise<boolean>;
+  readonly execute_escalation: (input: { role: 'escalationExecutor'; failure_evidence_hashes: readonly [string, ...string[]]; escalation_decision_hash: string }) => Promise<ExecutorAttemptResultV4>;
+  readonly validate: (attempt: ExecutorAttemptResultV4, ordinal: 1 | 2 | 3) => Promise<boolean | { readonly passed: boolean; readonly finding_hashes: readonly string[] }>;
   readonly review: (attempt: ExecutorAttemptResultV4, ordinal: 1 | 2 | 3) => Promise<ReviewAttestationV4>;
   readonly on_state?: (state: EconomySequenceStateV4) => void;
 }
@@ -124,15 +124,40 @@ export interface EconomyReviewSequenceV4 { run(): Promise<ExecutorAttemptResultV
 export function createEconomyReviewSequence(deps: EconomyReviewSequenceDependenciesV4): EconomyReviewSequenceV4 {
   const state = (value: EconomySequenceStateV4): void => { deps.on_state?.(value); };
   const rejected = (message: string): never => { state('TERMINAL_REJECTED'); throw new Error(`REVIEW_REJECTED: ${message}`); };
-  const validated = async (attempt: ExecutorAttemptResultV4, ordinal: 1 | 2 | 3): Promise<void> => {
+  const validated = async (attempt: ExecutorAttemptResultV4, ordinal: 1 | 2 | 3): Promise<readonly string[]> => {
     state(`VALIDATION_${ordinal}` as EconomySequenceStateV4);
-    if (!await deps.validate(attempt, ordinal)) rejected('deterministic validation failed');
+    const result = await deps.validate(attempt, ordinal);
+    if (typeof result === 'boolean') {
+      if (!result) rejected('deterministic validation failed without repair evidence');
+      return [];
+    }
+    if (result.passed) return [];
+    if (result.finding_hashes.length === 0 || !result.finding_hashes.every((value) => /^[a-f0-9]{64}$/.test(value))) rejected('deterministic validation failed without repair evidence');
+    return Object.freeze([...result.finding_hashes]);
   };
   return Object.freeze({
     run: async (): Promise<ExecutorAttemptResultV4> => {
       state('ECONOMY_EXECUTION_1');
       let attempt = await deps.execute_economy({ role: 'executor', attempt: 1, repair_finding_hashes: [] });
-      await validated(attempt, 1);
+      const validationFindings = await validated(attempt, 1);
+      if (validationFindings.length > 0) {
+        state('ECONOMY_REPAIR');
+        attempt = await deps.execute_economy({ role: 'executor', attempt: 2, repair_finding_hashes: validationFindings });
+        const secondValidationFindings = await validated(attempt, 2);
+        if (secondValidationFindings.length > 0) {
+          const failureEvidence = [...validationFindings, ...secondValidationFindings] as [string, ...string[]];
+          const escalationDecisionHash = hashCanonicalV4({ route: 'ECONOMY_ESCALATION', executor_role: 'escalationExecutor', failure_evidence_hashes: failureEvidence });
+          state('MODEL_ESCALATION');
+          attempt = await deps.execute_escalation({ role: 'escalationExecutor', failure_evidence_hashes: failureEvidence, escalation_decision_hash: escalationDecisionHash });
+          const finalValidationFindings = await validated(attempt, 3);
+          if (finalValidationFindings.length > 0) rejected('frontier escalation failed deterministic validation');
+        }
+        state('FINAL_REVIEW');
+        const final = await deps.review(attempt, 3);
+        if (final.decision !== 'ACCEPT') rejected('repaired validation result failed independent review');
+        state('ACCEPTED');
+        return attempt;
+      }
       state('REVIEW_1');
       const first = await deps.review(attempt, 1);
       if (first.decision === 'ACCEPT') { state('ACCEPTED'); return attempt; }
@@ -143,7 +168,20 @@ export function createEconomyReviewSequence(deps: EconomyReviewSequenceDependenc
       if (findingHashes.length === 0 || !/^[a-f0-9]{64}$/.test(first.attestation_hash)) rejected('first rejection lacks persisted finding evidence');
       state('ECONOMY_REPAIR');
       attempt = await deps.execute_economy({ role: 'executor', attempt: 2, repair_finding_hashes: findingHashes });
-      await validated(attempt, 2);
+      const repairedValidationFindings = await validated(attempt, 2);
+      if (repairedValidationFindings.length > 0) {
+        const failureEvidence = [first.attestation_hash, ...repairedValidationFindings] as [string, ...string[]];
+        const escalationDecisionHash = hashCanonicalV4({ route: 'ECONOMY_ESCALATION', executor_role: 'escalationExecutor', failure_evidence_hashes: failureEvidence });
+        state('MODEL_ESCALATION');
+        attempt = await deps.execute_escalation({ role: 'escalationExecutor', failure_evidence_hashes: failureEvidence, escalation_decision_hash: escalationDecisionHash });
+        const finalValidationFindings = await validated(attempt, 3);
+        if (finalValidationFindings.length > 0) rejected('frontier escalation failed deterministic validation');
+        state('FINAL_REVIEW');
+        const final = await deps.review(attempt, 3);
+        if (final.decision !== 'ACCEPT') rejected('final escalation review rejected the result');
+        state('ACCEPTED');
+        return attempt;
+      }
       state('REVIEW_2');
       const second = await deps.review(attempt, 2);
       if (second.decision === 'ACCEPT') { state('ACCEPTED'); return attempt; }
@@ -151,10 +189,11 @@ export function createEconomyReviewSequence(deps: EconomyReviewSequenceDependenc
       if (!/^[a-f0-9]{64}$/.test(second.attestation_hash)) rejected('second rejection lacks persisted evidence');
 
       const rejectionHashes = [first.attestation_hash, second.attestation_hash] as const;
-      const escalationDecisionHash = hashCanonicalV4({ route: 'ECONOMY_ESCALATION', executor_role: 'escalationExecutor', review_rejection_hashes: rejectionHashes });
+      const escalationDecisionHash = hashCanonicalV4({ route: 'ECONOMY_ESCALATION', executor_role: 'escalationExecutor', failure_evidence_hashes: rejectionHashes });
       state('MODEL_ESCALATION');
-      attempt = await deps.execute_escalation({ role: 'escalationExecutor', review_rejection_hashes: rejectionHashes, escalation_decision_hash: escalationDecisionHash });
-      await validated(attempt, 3);
+      attempt = await deps.execute_escalation({ role: 'escalationExecutor', failure_evidence_hashes: rejectionHashes, escalation_decision_hash: escalationDecisionHash });
+      const finalValidationFindings = await validated(attempt, 3);
+      if (finalValidationFindings.length > 0) rejected('frontier escalation failed deterministic validation');
       state('FINAL_REVIEW');
       const final = await deps.review(attempt, 3);
       if (final.decision !== 'ACCEPT') rejected('final escalation review rejected the result');

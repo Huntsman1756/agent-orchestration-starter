@@ -9,6 +9,7 @@ const runIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{16,96}$/);
 const requestIdSchema = z.string().regex(/^req_[A-Za-z0-9_-]{16,96}$/);
 const sourceSensitivitySchema = z.enum(['PUBLIC', 'PRIVATE']);
 const dataScopeSchema = z.literal('SOURCE_CODE_ONLY');
+const taskTraitSchema = z.enum(['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'multimodal', 'long-horizon', 'architecture', 'security-sensitive', 'migration']);
 const modelGuidanceSchema = z.object({
   id: identifierSchema,
   revision: identifierSchema,
@@ -107,6 +108,11 @@ const taskRequestFields = {
   task_class: identifierSchema,
   requested_risk_class: identifierSchema,
   requested_route: z.enum(['AUTO', 'ECONOMY', 'FRONTIER']),
+  execution_requirements: z.object({
+    taskTraits: uniqueArray(taskTraitSchema, { min: 1, max: 9 }),
+    contextBytes: z.number().int().min(0).max(16 * 1024 * 1024),
+    acceptanceCriteriaCount: z.number().int().min(1).max(64),
+  }).strict().optional(),
   allowed_changes: z.array(allowedChangeSchema).min(1).max(256),
   acceptance_tests: uniqueArray(acceptanceTestPathSchema, { min: 1, max: 64 }),
   implementation_targets: z.array(implementationTargetSchema).min(1).max(256),
@@ -133,6 +139,14 @@ const bindingSchema = z.object({
   allowedSourceSensitivity: uniqueArray(sourceSensitivitySchema, { min: 1, max: 2 }),
   permissions: z.enum(['read-only', 'contract-write']),
   guidance: modelGuidanceSchema,
+  execution: z.object({
+    supportedTaskTraits: uniqueArray(taskTraitSchema, { min: 1, max: 9 }),
+    maxSteps: z.number().int().min(1).max(128),
+    maxToolUses: z.number().int().min(1).max(256),
+    maxNoMutationSteps: z.number().int().min(1).max(32),
+    timeoutSeconds: z.number().int().min(30).max(3_600),
+    supportsFailedCandidateRepair: z.boolean(),
+  }).strict().optional(),
 }).strict();
 
 export const runtimeProfileV4Schema = z.object({
@@ -141,6 +155,7 @@ export const runtimeProfileV4Schema = z.object({
   bindings: z.object({
     orchestrator: bindingSchema,
     executor: bindingSchema,
+    reasoningExecutor: bindingSchema.optional(),
     escalationExecutor: bindingSchema,
     frontierExecutor: bindingSchema,
     reviewer: bindingSchema,
@@ -150,9 +165,10 @@ export const runtimeProfileV4Schema = z.object({
     maxConcurrentRunsPerRepository: z.number().int().positive().max(64),
   }).strict(),
 }).strict().superRefine((value, context) => {
-  const roles = ['orchestrator', 'executor', 'escalationExecutor', 'frontierExecutor', 'reviewer'] as const;
+  const roles = ['orchestrator', 'executor', 'reasoningExecutor', 'escalationExecutor', 'frontierExecutor', 'reviewer'] as const;
   for (const role of roles) {
     const binding = value.bindings[role];
+    if (binding === undefined) continue;
     if (binding.authentication !== 'chatgpt-subscription') continue;
     if (binding.harness !== 'codex' || binding.permissions !== 'read-only' || (role !== 'orchestrator' && role !== 'reviewer')) {
       context.addIssue({ code: 'custom', path: ['bindings', role, 'authentication'], message: 'ChatGPT subscription authentication is restricted to read-only Codex orchestrator and reviewer bindings' });
@@ -206,6 +222,19 @@ export const runtimeWorkContractV4Schema = z.object({
   effective_route: z.enum(['ECONOMY', 'FRONTIER']),
   route_decision_reasons: z.array(z.string().min(1).max(2_000)).min(1).max(64),
   route_decision_hash: hashSchema,
+  execution_policy: z.object({
+    lane: z.enum(['MECHANICAL_ECONOMY', 'REASONING_ECONOMY', 'FRONTIER_EXECUTION']),
+    executorRole: z.enum(['executor', 'reasoningExecutor', 'frontierExecutor']),
+    taskTraits: uniqueArray(taskTraitSchema, { min: 1, max: 9 }),
+    maxSteps: z.number().int().min(1).max(128),
+    maxToolUses: z.number().int().min(1).max(256),
+    maxNoMutationSteps: z.number().int().min(1).max(32),
+    timeoutSeconds: z.number().int().min(30).max(3_600),
+    maxAttempts: z.number().int().min(1).max(3),
+    repairBase: z.enum(['LAST_ACCEPTED_TREE', 'FAILED_CANDIDATE_TREE']),
+    reasons: z.array(z.string().min(1).max(2_000)).min(1).max(16),
+    policyHash: hashSchema,
+  }).strict().optional(),
   effective_data_scope: dataScopeSchema,
   effective_source_sensitivity: sourceSensitivitySchema,
   sandbox_profile_hashes: z.record(identifierSchema, hashSchema).refine((value) => Object.keys(value).length > 0, 'sandbox profile hashes must not be empty'),

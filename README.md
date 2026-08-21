@@ -24,6 +24,12 @@ skill bundles are replaceable profile data. A model response is never an
 authority to widen the contract, choose a route, approve its own output or
 publish a commit.
 
+Execution is capability-adaptive: mechanical work can use the cheapest
+qualified worker, semantic/cross-file work can use a distinct economical
+reasoning worker, and unsupported or high-risk work elevates to frontier. The
+broker hashes per-run step, tool, mutation-latency, timeout, attempt and repair
+limits into the contract; see [adaptive execution](docs/adaptive-execution-v4.md).
+
 ## Status
 
 This repository is pre-1.0. Runtime V4 is a fail-closed framework with a
@@ -180,9 +186,11 @@ checklist based on real consumer integration patterns.
 
 `profiles/nan-opencode.example.yaml` keeps ChatGPT-authenticated Codex as the
 orchestrator and reviewer, with OpenCode using `qwen3.6` for the first NaN
-attempt and its bounded repair. A rejected repair resolves the distinct
-`escalationExecutor` binding to `deepseek-v4-flash`; direct `FRONTIER` work
-resolves `frontierExecutor` independently. The broker routes the
+attempt and its bounded repair. Semantic debugging and cross-file tasks use
+the separately qualified `reasoningExecutor`; rejected repairs use
+`escalationExecutor`, while direct `FRONTIER` work resolves
+`frontierExecutor` independently. The example currently binds those three
+roles to `deepseek-v4-flash`, but the roles and routing are model-neutral. The broker routes the
 OpenAI-compatible Chat Completions API through its gateway: the capsule sees
 only the non-secret `broker-gateway` value, while the real NaN key remains in
 the gateway. Economy concurrency is one to avoid multiplying usage pressure.
@@ -325,6 +333,7 @@ notes. Public issues, pull requests and examples must also follow the
 
 - [Consumer adoption and handoff](docs/consumer-adoption-v4.md)
 - [Project profile selection](docs/profile-selection-v4.md)
+- [Adaptive provider-neutral execution](docs/adaptive-execution-v4.md)
 - [Public repository hygiene](docs/public-repository-hygiene.md)
 - [Runtime operations](docs/runtime-v4-operations.md)
 - [MCP, strict SDD and context culling](docs/architecture-mcp-sdd.md)

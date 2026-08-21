@@ -39,6 +39,13 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized]
+      maxSteps: 24
+      maxToolUses: 48
+      maxNoMutationSteps: 5
+      timeoutSeconds: 240
+      supportsFailedCandidateRepair: false
     guidance:
       id: qwen3p6-nan
       revision: nan-api-2026-08-16
@@ -51,15 +58,22 @@ bindings:
       maxSteps: 32
       instructions:
         - Use direct tool calls, keep edits minimal, and stop after the contract and validation are satisfied.
-  escalationExecutor:
+  reasoningExecutor:
     harness: opencode
     provider: nan
     model: deepseek-v4-flash
     authentication: provider-api-key
-    capability: coding
+    capability: semantic-coding
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    execution: &deepseek_execution
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning]
+      maxSteps: 40
+      maxToolUses: 80
+      maxNoMutationSteps: 8
+      timeoutSeconds: 420
+      supportsFailedCandidateRepair: false
     guidance: &deepseek_guidance
       id: deepseek-v4-flash-nan
       revision: nan-api-2026-08-16
@@ -69,9 +83,20 @@ bindings:
       reasoningEffort: provider-default
       textVerbosity: low
       temperature: null
-      maxSteps: 32
+      maxSteps: 48
       instructions:
-        - Use native tool calls, follow the explicit output contract, and make only the requested code changes.
+        - Inspect the relevant code and validation evidence before editing; keep the change inside the frozen contract.
+  escalationExecutor:
+    harness: opencode
+    provider: nan
+    model: deepseek-v4-flash
+    authentication: provider-api-key
+    capability: coding
+    allowedDataScopes: [SOURCE_CODE_ONLY]
+    allowedSourceSensitivity: [PUBLIC]
+    permissions: contract-write
+    execution: *deepseek_execution
+    guidance: *deepseek_guidance
   frontierExecutor:
     harness: opencode
     provider: nan
@@ -81,6 +106,13 @@ bindings:
     allowedDataScopes: [SOURCE_CODE_ONLY]
     allowedSourceSensitivity: [PUBLIC]
     permissions: contract-write
+    execution:
+      supportedTaskTraits: [mechanical, localized, semantic-debugging, cross-file-reasoning, long-horizon, architecture, security-sensitive, migration]
+      maxSteps: 64
+      maxToolUses: 128
+      maxNoMutationSteps: 12
+      timeoutSeconds: 600
+      supportsFailedCandidateRepair: false
     guidance: *deepseek_guidance
   reviewer:
     harness: codex

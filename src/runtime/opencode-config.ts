@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { ResolvedBindingV4 } from './bindings.js';
 import type { AllowedChangeV4 } from './contracts.js';
+import type { RuntimeExecutionPolicyV4 } from './contracts.js';
 import { EconomyPolicyViolationErrorV4 } from './diff-policy.js';
 import { openCodeModelOptionsV4 } from './model-guidance.js';
 
@@ -19,6 +20,7 @@ export async function writeBrokerOpenCodeConfigV4(input: {
   readonly provider_endpoint: string;
   readonly acceptance_tests: readonly string[];
   readonly implementation_targets: readonly AllowedChangeV4[];
+  readonly execution_policy?: RuntimeExecutionPolicyV4;
 }): Promise<OpenCodeConfigResultV4> {
   if (input.binding.binding.harness !== 'opencode' || input.binding.binding.permissions !== 'contract-write') {
     throw new Error('EXECUTOR_POLICY_VIOLATION: binding cannot run the OpenCode executor');
@@ -59,12 +61,14 @@ export async function writeBrokerOpenCodeConfigV4(input: {
         mode: 'primary',
         model: `${provider}/${model}`,
         ...openCodeModelOptionsV4(input.binding.binding.guidance),
+        ...(input.execution_policy === undefined ? {} : { steps: input.execution_policy.maxSteps }),
       },
     },
     permission: {
       '*': 'deny',
       read: { '*': 'deny', 'repo/**': 'allow' },
       glob: { '*': 'deny', 'repo/**': 'allow' },
+      list: { '*': 'deny', 'repo/**': 'allow' },
       grep: 'allow',
       edit,
     },
