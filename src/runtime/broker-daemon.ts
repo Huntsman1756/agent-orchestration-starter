@@ -132,6 +132,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   let recovering: Promise<void> | null = null;
   let closed = false;
   const locks = new Map<string, RepositoryLockV4>();
+  const lockHolders = new Map<string, Set<string>>();
   const runLocks = new Map<string, RunLockV4>();
   const auditSnapshots = new Map<string, AuditTrailEntryV4>();
   let mutationTail: Promise<void> = Promise.resolve();
@@ -148,9 +149,14 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     if (closed) throw new Error('BROKER_STATE_CORRUPT: broker daemon is closed');
   };
 
-  const acquireFor = async (repositoryId: string): Promise<RepositoryLockV4> => {
+  const acquireFor = async (repositoryId: string, holderId: string): Promise<RepositoryLockV4> => {
     const current = locks.get(repositoryId);
-    if (current !== undefined) return current;
+    if (current !== undefined) {
+      const holders = lockHolders.get(repositoryId);
+      if (holders === undefined) throw new Error('BROKER_STATE_CORRUPT: repository lock holders are missing');
+      holders.add(holderId);
+      return current;
+    }
     const lock = await acquireRepositoryLockV4({
       directory: deps.stateDirectory,
       repositoryId,
@@ -158,7 +164,24 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       reclamationCoordinator: deps.reclamationCoordinator,
     });
     locks.set(repositoryId, lock);
+    lockHolders.set(repositoryId, new Set([holderId]));
     return lock;
+  };
+
+  const transferRepositoryLock = (repositoryId: string, fromHolderId: string, toHolderId: string): void => {
+    const holders = lockHolders.get(repositoryId);
+    if (holders === undefined || !holders.delete(fromHolderId)) throw new Error('BROKER_STATE_CORRUPT: repository lock holder transfer is invalid');
+    holders.add(toHolderId);
+  };
+
+  const releaseRepositoryLock = async (repositoryId: string, holderId: string): Promise<void> => {
+    const holders = lockHolders.get(repositoryId);
+    const lock = locks.get(repositoryId);
+    if (holders === undefined || lock === undefined || !holders.delete(holderId)) return;
+    if (holders.size > 0) return;
+    await lock.release();
+    lockHolders.delete(repositoryId);
+    locks.delete(repositoryId);
   };
 
   const acquireForRun = async (runId: string): Promise<RunLockV4> => {
@@ -218,7 +241,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
 
     for (const run of Object.values(state.runs)) {
       if (!terminalStates.has(run.result.state)) {
-        await acquireFor(run.contract.repository_id);
+        await acquireFor(run.contract.repository_id, `run:${run.contract.run_id}`);
         await acquireForRun(run.contract.run_id);
       }
     }
@@ -237,11 +260,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
             evidence_hashes: [hashCanonicalV4(run.external_process)],
           },
         });
-        const lock = locks.get(run.contract.repository_id);
-        if (lock !== undefined) {
-          await lock.release();
-          locks.delete(run.contract.repository_id);
-        }
+        await releaseRepositoryLock(run.contract.repository_id, `run:${runId}`);
         const runLock = runLocks.get(runId);
         if (runLock !== undefined) {
           await runLock.release();
@@ -266,11 +285,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   const releaseForRun = async (runId: string): Promise<void> => {
     const run = state?.runs[runId];
     if (run === undefined) return;
-    const repositoryLock = locks.get(run.contract.repository_id);
-    if (repositoryLock !== undefined) {
-      await repositoryLock.release();
-      locks.delete(run.contract.repository_id);
-    }
+    await releaseRepositoryLock(run.contract.repository_id, `run:${runId}`);
     const runLock = runLocks.get(runId);
     if (runLock !== undefined) {
       await runLock.release();
@@ -370,7 +385,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       }
 
       const registration = loadRepositoryRegistration(request.repository_id, deps.registry);
-      const lock = await acquireFor(registration.repository_id);
+      const admissionHolder = `admission:${request.request_id}`;
+      await acquireFor(registration.repository_id, admissionHolder);
       let runLock: RunLockV4 | null = null;
       let accepted = false;
       try {
@@ -408,6 +424,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
           result: initialResult(runId, contract),
           inspection_epoch: 1,
         });
+        transferRepositoryLock(registration.repository_id, admissionHolder, `run:${runId}`);
         accepted = true;
         return replyFor(runId);
       } finally {
@@ -416,8 +433,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
             await runLock.release();
             runLocks.delete(runLock.run_id);
           }
-          await lock.release();
-          locks.delete(registration.repository_id);
+          await releaseRepositoryLock(registration.repository_id, admissionHolder);
         }
       }
     }),
@@ -506,6 +522,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       journal = null;
       for (const lock of locks.values()) await lock.release();
       locks.clear();
+      lockHolders.clear();
       for (const lock of runLocks.values()) await lock.release();
       runLocks.clear();
     }),

@@ -196,7 +196,9 @@ checklist based on real consumer integration patterns.
 
 `profiles/nan-opencode.example.yaml` keeps ChatGPT-authenticated Codex as the
 orchestrator and reviewer, with OpenCode using `qwen3.6` for the first NaN
-attempt and its bounded repair. Semantic debugging and cross-file tasks use
+attempt and, when the contract allows another attempt, a clean retry from the
+last accepted tree. The profile deliberately does not qualify repair from a
+failed candidate tree. Semantic debugging and cross-file tasks use
 the separately qualified `reasoningExecutor`; rejected repairs use
 `escalationExecutor`, while direct `FRONTIER` work resolves
 `frontierExecutor` independently. The example currently binds those three

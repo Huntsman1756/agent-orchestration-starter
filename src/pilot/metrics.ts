@@ -412,7 +412,7 @@ function computePilotMetricsInternal(
   const byArm = Object.fromEntries(pilotArms.map(arm => {
     const values = coreByArm[arm];
     const accepted = values.filter(value => value.final_accepted).length;
-    const escapedMaterialBlocks = values.filter(value => value.final_accepted && value.post_accept_defects.some(defect => defect.material)).length;
+    const escapedMaterialDefects = checkedIntegerSum(values.map(value => value.final_accepted ? value.post_accept_defects.filter(defect => defect.material).length : 0));
     const highDefects = checkedIntegerSum(values.map(value => value.final_accepted ? value.post_accept_defects.filter(defect => defect.severity === 'high').length : 0));
     const criticalDefects = checkedIntegerSum(values.map(value => value.final_accepted ? value.post_accept_defects.filter(defect => defect.severity === 'critical').length : 0));
     const wall = resourceTotals(values).wall_time_seconds;
@@ -423,7 +423,7 @@ function computePilotMetricsInternal(
     const changedLines = checkedIntegerSum(values.map(value => value.changed_lines_production));
     return [arm, {
       final_acceptance_rate: metric(accepted, values.length),
-      escaped_material_defect_rate: metric(escapedMaterialBlocks, accepted),
+      escaped_material_defect_rate: metric(escapedMaterialDefects, accepted),
       escaped_high_defects: metric(highDefects, values.length),
       escaped_critical_defects: metric(criticalDefects, values.length),
       wall_time_per_accepted_block: metric(wall.known_sum, accepted, wall.complete === wall.total),

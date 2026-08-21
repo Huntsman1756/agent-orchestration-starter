@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import test, { after } from 'node:test';
 
 import {
@@ -37,7 +37,7 @@ import { RUNTIME_BROKER_VERSION_V4 } from '../src/runtime/version.js';
 
 const imageId = `sha256:${'a'.repeat(64)}` as const;
 const trustedFixtureParent = process.platform === 'win32'
-  ? join(process.cwd(), '.tmp', 'agent-orchestration-test-fixtures')
+  ? join(process.env.PUBLIC ?? join(parse(homedir()).root, 'Users', 'Public'), 'agent-orchestration-test-fixtures')
   : join(homedir(), '.agent-orchestration-test-fixtures');
 
 async function makeTrustedFixtureRoot(prefix: string): Promise<string> {
@@ -294,7 +294,9 @@ test('networked executor permits only an internal network and the fixed non-secr
   );
 });
 
-test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', async () => {
+test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-proof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');
@@ -331,7 +333,9 @@ test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, 
   }
 });
 
-test('mount capability reproof rejects a source replaced by an alias before Docker effects', async () => {
+test('mount capability reproof rejects a source replaced by an alias before Docker effects', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-reproof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');

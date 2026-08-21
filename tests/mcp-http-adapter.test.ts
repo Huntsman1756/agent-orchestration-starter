@@ -37,3 +37,21 @@ test('serves the broker over authenticated Streamable HTTP at /mcp', async () =>
     await adapter.close();
   }
 });
+
+test('bounds authenticated MCP sessions instead of retaining an unlimited server per client', async () => {
+  const token = 'bounded-session-token-1234';
+  const adapter = await createMcpHttpAdapter({ client: broker() }, { bearerToken: token, maxSessions: 1 });
+  const endpoint = new URL(`http://${adapter.host}:${adapter.port}${adapter.path}`);
+  const transportOne = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { authorization: `Bearer ${token}` } } });
+  const transportTwo = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { authorization: `Bearer ${token}` } } });
+  const first = new Client({ name: 'first-http-client', version: '1.0.0' });
+  const second = new Client({ name: 'second-http-client', version: '1.0.0' });
+  try {
+    await first.connect(transportOne);
+    await assert.rejects(() => second.connect(transportTwo));
+  } finally {
+    await second.close().catch(() => undefined);
+    await first.close().catch(() => undefined);
+    await adapter.close();
+  }
+});

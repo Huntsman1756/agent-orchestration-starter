@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -70,14 +70,16 @@ test('runs the profile-selected model and agent with only broker config and leas
     assert.match(result.capability_snapshot_hash, /^[a-f0-9]{64}$/);
     assert.equal(revoked, true);
     const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-opencode-capture.json'), 'utf8'));
-    assert.equal(capture.cwd, capsule);
+    assert.equal(capture.cwd, process.platform === 'darwin' ? await realpath(capsule) : capsule);
     assert.ok(capture.argv.includes('--pure'));
     assert.ok(capture.argv.includes('--auto'));
     assert.ok(capture.argv.includes('--dir=/capsule'));
     assert.ok(capture.argv.includes('--model=profile-selected-provider/economy/model-v1'));
     assert.ok(capture.argv.includes('--agent=executor'));
-    const windowsBaseline = ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR'];
-    assert.deepEqual(capture.environment_keys, ['AO_EXECUTION_ID', 'HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', ...(process.platform === 'win32' ? windowsBaseline : []), 'PROVIDER_GATEWAY_TOKEN', 'TMPDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME'].sort());
+    const platformBaseline = process.platform === 'win32'
+      ? ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR']
+      : process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : [];
+    assert.deepEqual(capture.environment_keys, ['AO_EXECUTION_ID', 'HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', ...platformBaseline, 'PROVIDER_GATEWAY_TOKEN', 'TMPDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME'].sort());
     assert.equal(capture.config.share, 'disabled');
     assert.equal(capture.config.autoupdate, false);
     assert.deepEqual(capture.config.enabled_providers, ['profile-selected-provider']);

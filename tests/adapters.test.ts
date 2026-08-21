@@ -39,6 +39,15 @@ test('compiles explicit Codex custom agents with role-specific sandboxes', () =>
   assert.match(reviewer, /sandbox_mode = "read-only"/);
 });
 
+test('encodes Codex instructions as one TOML string so policy commands cannot close a multiline delimiter', () => {
+  const policy = resolvedPolicy();
+  policy.validation.commands = ['node -e "console.log(\'\"\"\"\')"'];
+  const executor = compileHarness('codex', policy).find((entry) => entry.path === '.codex/agents/executor.toml')?.content;
+  assert.ok(executor);
+  assert.doesNotMatch(executor, /developer_instructions = """/u);
+  assert.match(executor, /\\"\\"\\"/u);
+});
+
 test('compiles a writable frontier executor for direct frontier execution', () => {
   const codex = file('codex', '.codex/agents/frontier-executor.toml');
   const openCode = file('opencode', '.opencode/agents/frontier-executor.md');

@@ -69,6 +69,20 @@ test('chains entries and reports an integrity breach after historical tampering'
   assert.match(report.error ?? '', /record hash|chain/u);
 });
 
+test('serializes concurrent append callers into one valid deterministic hash chain', async () => {
+  const stateDirectory = await directory();
+  const trailDirectory = auditTrailDirectoryV4(stateDirectory);
+  const trail = await createAuditTrailV4(trailDirectory);
+  await Promise.all(Array.from({ length: 20 }, (_, index) => trail.append(entry({ event_id: `execution-${index + 1}` }))));
+  await trail.close();
+
+  const report = await verifyAuditTrailV4(trailDirectory);
+  assert.equal(report.status, 'OK');
+  assert.equal(report.record_count, 20);
+  const records = (await readFile(join(trailDirectory, 'audit-trail.v4.ndjson'), 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line) as { sequence: number });
+  assert.deepEqual(records.map((record) => record.sequence), Array.from({ length: 20 }, (_, index) => index + 1));
+});
+
 test('CLI audit verification returns a deterministic OK report for an empty ledger', async () => {
   const stateDirectory = await directory();
   const output: string[] = [];

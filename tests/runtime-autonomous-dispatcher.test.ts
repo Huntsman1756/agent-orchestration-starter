@@ -434,6 +434,54 @@ test('a terminal runtime failure is reported once and becomes durable failed wor
   assert.equal(status.consecutive_failures, 1);
 });
 
+test('a lost active lease becomes durable failed work without resuming outside source authority', async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-lost-lease-'));
+  const policy = {
+    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
+    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 1, require_merged_publication: true as const,
+  };
+  const source = {
+    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
+    claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
+    complete: async () => {}, reopen: async () => {}, fail: async () => {},
+  };
+  const starter = createAutonomousDispatcherV4({
+    state_directory: stateDirectory, policy, source,
+    runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS' as const, evidence_hash: hash }) },
+    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+  });
+  await starter.setMode('RUNNING');
+  await starter.runCycle();
+
+  let resumed = false;
+  const recovering = createAutonomousDispatcherV4({
+    state_directory: stateDirectory, policy,
+    source: { ...source, listCandidates: async () => ({ candidates: [], next_cursor: 'cursor-2' }), renew: async () => 'LOST' as const },
+    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => { resumed = true; return result(); } },
+    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    now: () => '2026-08-10T13:03:00.000Z',
+  });
+
+  const report = await recovering.runCycle();
+  const status = await recovering.status();
+  assert.equal(resumed, false);
+  assert.equal(report.failed, 1);
+  assert.equal(report.circuit_open, true);
+  assert.equal(status.tasks[0]!.status, 'FAILED');
+  assert.match(status.tasks[0]!.last_evidence_hash!, /^[a-f0-9]{64}$/u);
+});
+
+test('rejects autonomous dispatcher configuration that permits unmerged finalization', () => {
+  assert.throws(() => createAutonomousDispatcherV4({
+    state_directory: join(tmpdir(), 'autonomous-dispatcher-unmerged-invalid'),
+    policy: {
+      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
+      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: false,
+    },
+    source: {} as never, runtime: {} as never, post_merge: {} as never,
+  }), /autonomous dispatch requires merged publication/u);
+});
+
 test('a busy source candidate advances the durable cursor without starting work', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-cursor-'));
   const dispatcher = createAutonomousDispatcherV4({

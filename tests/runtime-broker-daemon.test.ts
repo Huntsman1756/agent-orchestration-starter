@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -137,6 +137,25 @@ test('resubmission after restart returns the original run without another append
   assert.equal(replay.run_id, original.run_id);
   assert.equal(journal.records.length, 1);
   await journal.close();
+});
+
+test('keeps the shared repository lock until every active run releases its ownership', async () => {
+  let runIndex = 0;
+  const { deps, stateDirectory } = await daemonFixture({
+    generateRunId: () => `run_shared_repository_${++runIndex}`,
+  });
+  const daemon = createBrokerDaemon(deps);
+  const first = await daemon.submit(runCommand());
+  const secondRequest = { ...(validTaskRequest() as RuntimeTaskRequestV4), request_id: 'req_01HZX3YH8C7Y9QJ4J6M2G5K8N2' };
+  const second = await daemon.submit(runCommand(secondRequest, 'command-run-second'));
+  const lockPath = join(stateDirectory, 'fixture-repo.lock');
+  const failure = { code: 'VALIDATION_FAILED' as const, message: 'VALIDATION_FAILED: fixture', retryable: false, evidence_hashes: ['a'.repeat(64)] };
+
+  await daemon.recordFailure!(first.run_id, failure);
+  await access(lockPath);
+  await daemon.recordFailure!(second.run_id, failure);
+  await assert.rejects(() => access(lockPath), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  await daemon.close();
 });
 
 test('recovers a mutation fsynced to the journal before cache replacement or reply', async () => {

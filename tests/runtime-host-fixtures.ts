@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,7 +36,7 @@ export async function createRuntimeHostFixtureV4(input: {
   readonly componentModules?: Partial<Record<RuntimeHostComponentIdV4, string>>;
   readonly driverSource?: string;
 } = {}): Promise<RuntimeHostFixtureV4> {
-  const root = await mkdtemp(join(tmpdir(), 'runtime-host-driver-source-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'runtime-host-driver-source-')));
   const componentsRoot = join(root, 'components');
   await mkdir(componentsRoot, { recursive: true });
   const driver = input.driverSource ?? 'export function createRuntimeHostDriverV4(context){if(Object.keys(context.components).length!==8)throw new Error("missing components");return {daemon:async()=>{},doctor:async()=>["ready"],mcpStdio:async()=>{},status:async(id)=>({run_id:id})}}\n';

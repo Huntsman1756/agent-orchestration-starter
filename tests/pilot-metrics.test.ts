@@ -279,7 +279,7 @@ test('hashes the complete observation multiset canonically while preserving dupl
   assert.deepEqual(forward, reverse);
 });
 
-test('counts escaped material defects by accepted block and high critical defects by retained event', () => {
+test('counts every escaped material, high and critical defect retained in accepted work', () => {
   const frozen = manifest(2);
   const observations = [
     ...completeTriplet(frozen, 1, { C_ADAPTIVE_EARLY_ESCALATION: { defects: [
@@ -288,7 +288,7 @@ test('counts escaped material defects by accepted block and high critical defect
     ...completeTriplet(frozen, 2, { C_ADAPTIVE_EARLY_ESCALATION: { accepted: false } }),
   ];
   const candidate = computePilotMetrics(frozen, observations).metrics.by_arm.C_ADAPTIVE_EARLY_ESCALATION;
-  assert.deepEqual(candidate.escaped_material_defect_rate, { numerator: 1, denominator: 1, value: 1, confidence_interval: null });
+  assert.deepEqual(candidate.escaped_material_defect_rate, { numerator: 2, denominator: 1, value: 2, confidence_interval: null });
   assert.deepEqual(candidate.escaped_high_defects, { numerator: 1, denominator: 2, value: 0.5, confidence_interval: null });
   assert.deepEqual(candidate.escaped_critical_defects, { numerator: 1, denominator: 2, value: 0.5, confidence_interval: null });
 });

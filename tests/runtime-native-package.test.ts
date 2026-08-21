@@ -60,6 +60,14 @@ async function createDisposablePackageProjectForTest(container: string): Promise
   await mkdir(join(project, 'src'), { recursive: true });
   await mkdir(join(project, 'native', 'linux'), { recursive: true });
   await copyFile(join(process.cwd(), 'package.json'), join(project, 'package.json'));
+  const fixturePackagePath = join(project, 'package.json');
+  const fixturePackage = JSON.parse(await readFile(fixturePackagePath, 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  // Keep the production prepack chain, but isolate this native-package fixture
+  // from the unrelated host bundle and its complete source/dependency graph.
+  fixturePackage.scripts['build:host'] = 'node -e ""';
+  await writeFile(fixturePackagePath, `${JSON.stringify(fixturePackage, null, 2)}\n`);
   await copyFile(join(process.cwd(), 'tsconfig.json'), join(project, 'tsconfig.json'));
   await copyFile(
     join(process.cwd(), 'scripts', 'build-linux-native-helper.mjs'),

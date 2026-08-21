@@ -32,9 +32,7 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
       `model = ${tomlString(assignment.model)}`,
       `model_reasoning_effort = ${tomlString(assignment.reasoningEffort)}`,
       `sandbox_mode = ${tomlString(sandbox)}`,
-      'developer_instructions = """',
-      instructions,
-      '"""',
+      `developer_instructions = ${tomlString(instructions)}`,
       '',
     ].join('\n'),
   };

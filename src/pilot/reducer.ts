@@ -155,6 +155,10 @@ function observationFor(
   const totalUsage = usageSummary(priced, arithmeticErrors, 'total');
   const executorDurationMs = executions.length ? containedSafeSum(executions.map(event => event.payload.duration_ms), 'executor_duration', arithmeticErrors, null) : null;
   const reviewDurationMs = reviews.length ? containedSafeSum(reviews.map(event => event.payload.duration_ms), 'review_duration', arithmeticErrors, null) : null;
+  const terminalEvent = active.find(event => event.event_type === 'BLOCK_ACCEPTED' || event.event_type === 'BLOCK_FAILED' || event.event_type === 'BLOCK_BLOCKED');
+  const wallTimeSeconds = starts.length > 0 && terminalEvent !== undefined
+    ? (parseContractualUtc(terminalEvent.occurred_at) - parseContractualUtc(starts[0].occurred_at)) / 1_000
+    : null;
   if (arithmeticErrors.size > 0) { reducerError = 'SAFE_ARITHMETIC_INVALID'; invalid = true; }
   const terminal = invalid ? 'INVALID' : replay.state === 'ACCEPTED' ? 'ACCEPTED' : replay.state === 'FAILED' ? 'FAILED' : replay.state === 'BLOCKED' ? 'BLOCKED' : 'INVALID';
   const finalInvalidReasonCodes = [...new Set([...(replay.invalid_reason_codes ?? []).map(reasonCode), ...(reducerError ? [reasonCode(reducerError)] : [])])].sort(compareCodeUnits);
@@ -177,7 +181,7 @@ function observationFor(
     cost_observed: cost.value, cost_estimated: estimatedCost.value, cost_observed_completeness: cost.completeness_ratio, cost_estimated_completeness: estimatedCost.completeness_ratio,
     strong_tokens_observed: aggregate?.strong_tokens_observed ?? { input: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, output: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, cached_input: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, reasoning: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, total: { value: null, complete: 0, total: 0, completeness_ratio: 0 } },
     strong_tokens_estimated: aggregate?.strong_tokens_estimated ?? { input: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, output: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, cached_input: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, reasoning: { value: null, complete: 0, total: 0, completeness_ratio: 0 }, total: { value: null, complete: 0, total: 0, completeness_ratio: 0 } },
-    wall_time_seconds: null, executor_time_seconds: executorDurationMs === null ? null : executorDurationMs / 1000, review_time_seconds: reviewDurationMs === null ? null : reviewDurationMs / 1000,
+    wall_time_seconds: wallTimeSeconds, executor_time_seconds: executorDurationMs === null ? null : executorDurationMs / 1000, review_time_seconds: reviewDurationMs === null ? null : reviewDurationMs / 1000,
     blocked_cause: terminal === 'BLOCKED' ? blocked?.payload.cause ?? null : null, blocked_reason_code: terminal === 'BLOCKED' ? blocked?.payload.reason_code ?? null : null,
     post_acceptance_window_closed: quality.closed, accepted_at: quality.accepted_at, window_opens_at: quality.opens_at, window_closes_at: quality.closes_at,
     post_accept_defects: quality.defects, post_accept_defects_count: quality.defects.length, post_accept_max_severity: quality.defects.length ? quality.defects.map(defect => defect.severity).sort((left, right) => severityRank[right] - severityRank[left])[0] : null,

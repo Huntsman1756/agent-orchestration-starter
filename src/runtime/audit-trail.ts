@@ -340,30 +340,43 @@ async function openAuditTrail(directory: string): Promise<AuditTrailV4> {
   const eventBytes = new Map(mutableRecords.map((record) => [record.entry.event_id, canonicalJsonV4(record.entry)]));
   const file = await open(path, 'a+', 0o600);
   let closed = false;
+  let appendFailure: unknown = null;
+  let appendTail: Promise<void> = Promise.resolve();
   const records = mutableRecords as AuditTrailRecordV4[];
   return {
     get records() {
       return Object.freeze([...records]);
     },
-    append: async (input) => {
+    append: (input) => {
       if (closed) throw new Error('AUDIT_TRAIL_INTEGRITY_BREACH: audit trail is closed');
-      const entry = createAuditTrailEntryV4(input);
-      const entryBytes = canonicalJsonV4(entry);
-      const prior = eventBytes.get(entry.event_id);
-      if (prior !== undefined) {
-        if (prior !== entryBytes) invalid(`event_id ${entry.event_id} has conflicting canonical bytes`);
-        return records.find((record) => record.entry.event_id === entry.event_id)!;
-      }
-      const draft = { schema_version: 4 as const, sequence: records.length + 1, prev_hash: records.at(-1)?.record_hash ?? null, entry };
-      const record = Object.freeze({ ...draft, record_hash: hashCanonicalV4(draft) });
-      await appendAuditTrailRecordV4(file, record);
-      records.push(record);
-      eventBytes.set(entry.event_id, entryBytes);
-      return record;
+      const operation = appendTail.then(async () => {
+        if (appendFailure !== null) throw new Error('AUDIT_TRAIL_INTEGRITY_BREACH: a prior audit append failed');
+        const entry = createAuditTrailEntryV4(input);
+        const entryBytes = canonicalJsonV4(entry);
+        const prior = eventBytes.get(entry.event_id);
+        if (prior !== undefined) {
+          if (prior !== entryBytes) invalid(`event_id ${entry.event_id} has conflicting canonical bytes`);
+          return records.find((record) => record.entry.event_id === entry.event_id)!;
+        }
+        const draft = { schema_version: 4 as const, sequence: records.length + 1, prev_hash: records.at(-1)?.record_hash ?? null, entry };
+        const record = Object.freeze({ ...draft, record_hash: hashCanonicalV4(draft) });
+        await appendAuditTrailRecordV4(file, record);
+        records.push(record);
+        eventBytes.set(entry.event_id, entryBytes);
+        return record;
+      });
+      appendTail = operation.then(
+        () => undefined,
+        (error: unknown) => {
+          appendFailure = error;
+        },
+      );
+      return operation;
     },
     close: async () => {
       if (!closed) {
         closed = true;
+        await appendTail;
         await file.close();
       }
     },

@@ -12,11 +12,15 @@ jobs:
   validate:
     name: validate (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         node-version: ['20.x', '22.x', '24.x']
+        include:
+          - os: macos-latest
+            node-version: '24.x'
 
     steps:
       - name: Check out repository
@@ -33,3 +37,9 @@ jobs:
 
       - name: Validate
         run: npm run validate
+
+      - name: Validate native package boundary
+        if: matrix.os == 'ubuntu-latest' && matrix.node-version == '24.x'
+        env:
+          AO_NATIVE_PACKAGE_TEST: '1'
+        run: npx tsx --test tests/runtime-native-package.test.ts
