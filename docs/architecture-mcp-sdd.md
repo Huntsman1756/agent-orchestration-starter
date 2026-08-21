@@ -290,7 +290,9 @@ filesystem boundary.
 `profiles/runtime.chatgpt-subscription.example.yaml` documents a dated mixed
 topology in which ChatGPT subscription authentication is restricted to the
 read-only Codex orchestrator/reviewer and the Economy binding remains separate.
-`profiles/nan-opencode.example.yaml` is another dated example. These files are
+`profiles/nan-opencode.example.yaml` and
+`profiles/nan-opencode-glm-premium.example.yaml` are dated NaN examples for
+standard and premium model availability respectively. These files are
 configuration examples, not credentials or live qualification claims.
 
 MCP is generated from the selected V4 profile and activation; there is no

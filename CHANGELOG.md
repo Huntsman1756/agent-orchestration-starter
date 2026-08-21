@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added a NaN GLM 5.2 premium/OpenCode example with a distinct writable
+  frontier executor, while retaining the standard NaN example's explicit
+  same-model degradation for accounts without that tier.
 - Added a built-in, provider-neutral `runtime doctor` delegation preflight that
   exposes route collapse, exact role/model identities, qualified task traits
   and same-model frontier fallbacks without requiring a host driver.

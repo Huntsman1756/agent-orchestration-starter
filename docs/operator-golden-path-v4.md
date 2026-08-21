@@ -94,6 +94,12 @@ If `frontierExecutor` reuses the same provider/model as an economy role, the
 preflight reports `FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL`. Frontier planning
 may still improve the retry, but no stronger model executed the code. Configure
 and qualify a genuinely stronger writable binding if that distinction matters.
+For NaN, use `nan-opencode.example.yaml` when only the standard models are
+available and accept its explicit `DEGRADED` result, or start from
+`nan-opencode-glm-premium.example.yaml` when the account has GLM 5.2 premium.
+The latter is `READY` only as configuration topology; it still needs exact
+binding qualification. A writable frontier binding from another provider is
+equally valid and does not require core changes.
 
 ## What remains deployment work
 
