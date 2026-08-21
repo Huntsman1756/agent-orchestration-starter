@@ -382,6 +382,7 @@ notes. Public issues, pull requests and examples must also follow the
 
 ## Documentation map
 
+- [Documentation index and authority](docs/README.md)
 - [Consumer adoption and handoff](docs/consumer-adoption-v4.md)
 - [Project profile selection](docs/profile-selection-v4.md)
 - [Adaptive provider-neutral execution](docs/adaptive-execution-v4.md)
@@ -398,7 +399,9 @@ notes. Public issues, pull requests and examples must also follow the
 - [Optional A2A projection](docs/a2a-adapter-v1.md)
 - [Activation readiness](docs/activation-readiness-v4.md)
 - [Controlled dogfooding protocol V1](docs/dogfooding-v1.md)
-- [Architecture review](docs/research/architecture-review.md)
-- [Consolidation roadmap](docs/plans/2026-08-10-runtime-consolidation-roadmap.md)
+
+Research, dated decisions and implementation plans are intentionally
+non-normative. Use the documentation index to distinguish current contracts
+from historical rationale and experimental evidence.
 
 MIT license.

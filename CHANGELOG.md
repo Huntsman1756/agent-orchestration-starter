@@ -7,6 +7,9 @@
 - Established a repository-wide Prettier baseline and replaced the limited
   critical-file check with deterministic `format:check` and `format:write`
   commands covering every non-ignored source, test, script, profile and guide.
+- Added a documentation authority index and recorded segmented, checkpointed
+  durable evidence as an explicit pre-1.0 requirement instead of treating
+  streaming parsing as a sufficient memory-bound fix.
 - Added a NaN GLM 5.2 premium/OpenCode example with a distinct writable
   frontier executor, while retaining the standard NaN example's explicit
   same-model degradation for accounts without that tier.

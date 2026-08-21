@@ -85,3 +85,21 @@ owns all eight responsibilities.
 claim production eligibility automatically. Before a stable `1.0`, define the
 support window, schema compatibility policy, host-driver attestation format,
 revocation procedure and exact provider/harness qualification registry.
+
+### Segmented durable evidence and bounded replay
+
+The journal and audit ledger are append-only, hash-chained and currently replay
+their retained histories during recovery. Long-lived production hosts therefore
+need a coordinated segmentation, retention and checkpoint design before stable
+`1.0`; replacing only an NDJSON `readFile`/`split` parser with a streaming reader
+would not bound memory while the recovered projection still retains the complete
+history.
+
+The future design must preserve canonical hashes, chain continuity across
+segments, idempotent command recovery, audit verification, crash consistency and
+evidence retention. Checkpoints must be content-addressed and independently
+verifiable against the preceding journal and audit heads. Compaction must never
+discard evidence required by a non-terminal run, an unresolved publication, a
+configured retention window or an investigation hold. This is a storage-format
+and recovery-contract change, not a parser-only optimization, and requires
+migration fixtures plus crash/recovery tests before activation.
