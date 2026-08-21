@@ -1,13 +1,27 @@
 import { hashCanonicalV4 } from './canonical.js';
 import { createBrokerDaemon, type BrokerDaemonDependenciesV4, type BrokerDaemonV4, type BrokerReplyV4 } from './broker-daemon.js';
-import { createBrokerIpcServer, type BrokerIpcControlPlaneV4, type BrokerIpcDependenciesV4, type BrokerIpcFindingV4, type BrokerIpcServerV4 } from './broker-ipc.js';
+import {
+  createBrokerIpcServer,
+  type BrokerIpcControlPlaneV4,
+  type BrokerIpcDependenciesV4,
+  type BrokerIpcFindingV4,
+  type BrokerIpcServerV4,
+} from './broker-ipc.js';
 import type { RuntimeFailureV4 } from './failures.js';
 import { RUNTIME_FAILURE_CODES_V4 } from './failures.js';
-import { createBrokerVerdictRecord, loadBrokerReviewPacketV4, type BrokerReviewPacketV4, type BrokerVerdictInputV4 } from './review-packet.js';
+import {
+  createBrokerVerdictRecord,
+  loadBrokerReviewPacketV4,
+  type BrokerReviewPacketV4,
+  type BrokerVerdictInputV4,
+} from './review-packet.js';
 
 export interface RuntimeHostOperationsV4 {
   advance(runId: string, daemon: BrokerDaemonV4): Promise<void>;
-  prepareRepair(input: { command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] }, daemon: BrokerDaemonV4): Promise<void>;
+  prepareRepair(
+    input: { command_id: string; run_id: string; findings: readonly BrokerIpcFindingV4[] },
+    daemon: BrokerDaemonV4,
+  ): Promise<void>;
   finalize(input: { command_id: string; run_id: string }, daemon: BrokerDaemonV4): Promise<void>;
   stopExternal(runId: string, daemon: BrokerDaemonV4): Promise<void>;
   getReviewPacket?(runId: string, daemon: BrokerDaemonV4): Promise<BrokerReviewPacketV4>;
@@ -37,7 +51,10 @@ function terminal(state: string): boolean {
 
 function boundedFailure(error: unknown): RuntimeFailureV4 {
   const match = error instanceof Error ? /^([A-Z_]+):/u.exec(error.message) : null;
-  const code = match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as RuntimeFailureV4['code']) ? match[1] as RuntimeFailureV4['code'] : 'UNKNOWN_FAILURE';
+  const code =
+    match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as RuntimeFailureV4['code'])
+      ? (match[1] as RuntimeFailureV4['code'])
+      : 'UNKNOWN_FAILURE';
   return Object.freeze({
     code,
     message: `${code}: composed host operation failed`,
@@ -61,7 +78,11 @@ export function composeRuntimeHostControlV4(
   operations: RuntimeHostOperationsV4,
   onBackgroundFailure?: (runId: string, failure: RuntimeFailureV4) => void,
 ): ComposedRuntimeHostControlV4 {
-  if (typeof baseDaemon.recordAcceptedCandidate !== 'function' || typeof baseDaemon.recordFailure !== 'function' || typeof baseDaemon.recordAbort !== 'function') {
+  if (
+    typeof baseDaemon.recordAcceptedCandidate !== 'function' ||
+    typeof baseDaemon.recordFailure !== 'function' ||
+    typeof baseDaemon.recordAbort !== 'function'
+  ) {
     throw new Error('CAPABILITY_UNVERIFIED: daemon lifecycle persistence is incomplete');
   }
   const flights = new Map<string, Promise<void>>();
@@ -81,10 +102,20 @@ export function composeRuntimeHostControlV4(
           await baseDaemon.recordFailure!(runId, failure, `host-failed:${runId}:${failure.evidence_hashes[0]}`);
           onBackgroundFailure?.(runId, failure);
         } catch {
-          onBackgroundFailure?.(runId, Object.freeze({ code: 'UNKNOWN_FAILURE', message: 'UNKNOWN_FAILURE: terminal host failure could not be persisted', retryable: false, evidence_hashes: failure.evidence_hashes }));
+          onBackgroundFailure?.(
+            runId,
+            Object.freeze({
+              code: 'UNKNOWN_FAILURE',
+              message: 'UNKNOWN_FAILURE: terminal host failure could not be persisted',
+              retryable: false,
+              evidence_hashes: failure.evidence_hashes,
+            }),
+          );
         }
       })
-      .finally(() => { flights.delete(runId); });
+      .finally(() => {
+        flights.delete(runId);
+      });
     flights.set(runId, flight);
   };
 
@@ -123,22 +154,43 @@ export function composeRuntimeHostControlV4(
     getReviewPacket: async (input: { command_id: string; run_id: string }) => {
       if (operations.getReviewPacket === undefined) throw new Error('CAPABILITY_UNVERIFIED: review packet provider is unavailable');
       const result = await baseDaemon.status(input.run_id);
-      if (result.state !== 'REVIEW_ACCEPTED') throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
+      if (result.state !== 'REVIEW_ACCEPTED')
+        throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
       const packet = loadBrokerReviewPacketV4(await operations.getReviewPacket(input.run_id, baseDaemon));
-      if (packet.run_id !== result.run_id || packet.request_id !== result.request_id || packet.contract_hash !== result.contract_hash
-        || packet.base_sha !== result.base_sha || packet.diff_hash !== result.diff_hash || packet.tree_hash !== result.tree_hash) {
+      if (
+        packet.run_id !== result.run_id ||
+        packet.request_id !== result.request_id ||
+        packet.contract_hash !== result.contract_hash ||
+        packet.base_sha !== result.base_sha ||
+        packet.diff_hash !== result.diff_hash ||
+        packet.tree_hash !== result.tree_hash
+      ) {
         throw new Error('REVIEW_PACKET_INVALID: provider packet is not bound to the durable run');
       }
       return packet;
     },
-    submitVerdict: async (input: { command_id: string; run_id: string; packet_hash: string; verdict: BrokerVerdictInputV4['verdict']; reason: string }) => {
+    submitVerdict: async (input: {
+      command_id: string;
+      run_id: string;
+      packet_hash: string;
+      verdict: BrokerVerdictInputV4['verdict'];
+      reason: string;
+    }) => {
       if (flights.has(input.run_id)) throw new Error('REPOSITORY_BUSY: run pipeline is still active');
-      if (operations.getReviewPacket === undefined || baseDaemon.recordReviewVerdict === undefined) throw new Error('CAPABILITY_UNVERIFIED: durable verdict control is unavailable');
+      if (operations.getReviewPacket === undefined || baseDaemon.recordReviewVerdict === undefined)
+        throw new Error('CAPABILITY_UNVERIFIED: durable verdict control is unavailable');
       const result = await baseDaemon.status(input.run_id);
-      if (result.state !== 'REVIEW_ACCEPTED') throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
+      if (result.state !== 'REVIEW_ACCEPTED')
+        throw new Error('REVIEW_PACKET_UNAVAILABLE: deterministic validation and review are not complete');
       const packet = loadBrokerReviewPacketV4(await operations.getReviewPacket(input.run_id, baseDaemon));
-      if (packet.run_id !== result.run_id || packet.request_id !== result.request_id || packet.contract_hash !== result.contract_hash
-        || packet.base_sha !== result.base_sha || packet.diff_hash !== result.diff_hash || packet.tree_hash !== result.tree_hash) {
+      if (
+        packet.run_id !== result.run_id ||
+        packet.request_id !== result.request_id ||
+        packet.contract_hash !== result.contract_hash ||
+        packet.base_sha !== result.base_sha ||
+        packet.diff_hash !== result.diff_hash ||
+        packet.tree_hash !== result.tree_hash
+      ) {
         throw new Error('REVIEW_PACKET_INVALID: provider packet is not bound to the durable run');
       }
       const verdict = createBrokerVerdictRecord(input, packet);
@@ -166,7 +218,11 @@ export function composeRuntimeHostControlV4(
 }
 
 export async function createRuntimeHostCompositionV4(deps: RuntimeHostCompositionDependenciesV4): Promise<RuntimeHostCompositionV4> {
-  if (deps.daemon.allowInProcessCoordinatorForTests || deps.ipc.allowInProcessCoordinatorForTests || deps.ipc.allowInProcessPhysicalPathBackendForTests) {
+  if (
+    deps.daemon.allowInProcessCoordinatorForTests ||
+    deps.ipc.allowInProcessCoordinatorForTests ||
+    deps.ipc.allowInProcessPhysicalPathBackendForTests
+  ) {
     throw new Error('CAPABILITY_UNVERIFIED: test-only host authorities are forbidden in production composition');
   }
   const baseDaemon = createBrokerDaemon(deps.daemon);
@@ -174,7 +230,12 @@ export async function createRuntimeHostCompositionV4(deps: RuntimeHostCompositio
   const control = composeRuntimeHostControlV4(baseDaemon, deps.operations, deps.onBackgroundFailure);
   let ipc: BrokerIpcServerV4;
   try {
-    ipc = await createBrokerIpcServer({ ...deps.ipc, daemon: control.daemon, controlPlane: control.controlPlane, stateDirectory: deps.daemon.stateDirectory });
+    ipc = await createBrokerIpcServer({
+      ...deps.ipc,
+      daemon: control.daemon,
+      controlPlane: control.controlPlane,
+      stateDirectory: deps.daemon.stateDirectory,
+    });
   } catch (error) {
     await control.close();
     throw error;

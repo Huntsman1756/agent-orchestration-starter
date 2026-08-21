@@ -51,16 +51,16 @@ The assets that matter are:
 
 ### Actors and trust boundaries
 
-| Boundary | Trusted side | Untrusted or separately qualified side |
-| --- | --- | --- |
-| Repository intake | allowlisted task source and broker | issue text, CI output, schedules and repository content |
-| Policy/profile binding | repository policy and broker validation | model/provider identifiers, guidance text and mutable config |
-| Model execution | broker capability and sandbox | model response, tool calls, generated code and harness process |
-| Provider egress | credential gateway and provider adapter | external provider, network response and provider protocol |
-| Host authority | certified root, components and native coordinator | host-driver source until hash/certification verification |
-| IPC | authenticated broker server and native ownership proof | local client process, stale socket, malformed frame |
-| Publication | broker-owned Git adapter and repository policy | model request, generated branch content, remote responses |
-| Release supply chain | pinned CI workflow and release artifact | dependencies, package contents and workflow inputs |
+| Boundary               | Trusted side                                           | Untrusted or separately qualified side                         |
+| ---------------------- | ------------------------------------------------------ | -------------------------------------------------------------- |
+| Repository intake      | allowlisted task source and broker                     | issue text, CI output, schedules and repository content        |
+| Policy/profile binding | repository policy and broker validation                | model/provider identifiers, guidance text and mutable config   |
+| Model execution        | broker capability and sandbox                          | model response, tool calls, generated code and harness process |
+| Provider egress        | credential gateway and provider adapter                | external provider, network response and provider protocol      |
+| Host authority         | certified root, components and native coordinator      | host-driver source until hash/certification verification       |
+| IPC                    | authenticated broker server and native ownership proof | local client process, stale socket, malformed frame            |
+| Publication            | broker-owned Git adapter and repository policy         | model request, generated branch content, remote responses      |
+| Release supply chain   | pinned CI workflow and release artifact                | dependencies, package contents and workflow inputs             |
 
 The host driver is privileged code, not configuration. Its root, each
 component, each declared port, dependency certificate, native coordinator,

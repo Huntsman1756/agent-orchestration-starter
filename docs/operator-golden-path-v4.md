@@ -13,14 +13,14 @@ the evidence. Only the broker may commit or publish.
 
 The runtime profile must preserve this topology:
 
-| Role | Tier | Authority |
-|---|---|---|
-| `orchestrator` | frontier | read-only planning |
-| `executor` | economy | localized contract-write |
-| `reasoningExecutor` | economy | optional semantic/cross-file contract-write |
-| `escalationExecutor` | economy | bounded repair/escalation contract-write |
-| `frontierExecutor` | frontier | protected direct execution fallback |
-| `reviewer` | frontier | fresh read-only review |
+| Role                 | Tier     | Authority                                   |
+| -------------------- | -------- | ------------------------------------------- |
+| `orchestrator`       | frontier | read-only planning                          |
+| `executor`           | economy  | localized contract-write                    |
+| `reasoningExecutor`  | economy  | optional semantic/cross-file contract-write |
+| `escalationExecutor` | economy  | bounded repair/escalation contract-write    |
+| `frontierExecutor`   | frontier | protected direct execution fallback         |
+| `reviewer`           | frontier | fresh read-only review                      |
 
 Models and providers may change. The role, authority and evidence rules do not.
 A `tier` value is a deployment claim that requires qualification; changing a

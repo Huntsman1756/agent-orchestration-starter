@@ -64,11 +64,17 @@ function sourceManifest(): Record<string, unknown> {
 test('loads one immutable, separately qualified binding for every trusted host component', () => {
   const loaded = loadRuntimeHostComponentSourceManifestV4(sourceManifest());
 
-  assert.deepEqual(loaded.components.map((component) => component.id), RUNTIME_HOST_COMPONENT_IDS_V4);
+  assert.deepEqual(
+    loaded.components.map((component) => component.id),
+    RUNTIME_HOST_COMPONENT_IDS_V4,
+  );
   assert.equal(loaded.components[0]?.modulePath, 'components/credential_gateway.mjs');
   assert.equal(loaded.components[1]?.id, 'task_source');
   assert.equal(loaded.components[1]?.dependencies[0]?.id, 'credential_gateway');
-  assert.deepEqual(runtimeHostComponentPortMembersV4('credential_gateway').map((member) => member.name), ['leaseProvider', 'leaseGitHub', 'revoke']);
+  assert.deepEqual(
+    runtimeHostComponentPortMembersV4('credential_gateway').map((member) => member.name),
+    ['leaseProvider', 'leaseGitHub', 'revoke'],
+  );
   assert.equal(loaded.compositionCertificationHash, sourceManifest().compositionCertificationHash);
   assert.equal(Object.isFrozen(loaded.components), true);
   assert.equal(Object.isFrozen(loaded.components[0]?.dependencies), true);
@@ -78,11 +84,36 @@ test('loads one immutable, separately qualified binding for every trusted host c
 test('rejects incomplete, mutable, ambiguous or interface-drifting component declarations', () => {
   const cases = [
     { ...sourceManifest(), components: (sourceManifest().components as unknown[]).slice(1) },
-    { ...sourceManifest(), components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) => index === 1 ? { ...item, id: 'credential_gateway' } : item) },
-    { ...sourceManifest(), components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) => index === 0 ? { ...item, implementationRevision: 'main' } : item) },
-    { ...sourceManifest(), components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) => index === 0 ? { ...item, interfaceHash: hash(999) } : item) },
-    { ...sourceManifest(), components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) => index === 0 ? { ...item, modulePath: '../outside.mjs' } : item) },
-    { ...sourceManifest(), components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) => index === 1 ? { ...item, dependencies: [] } : item) },
+    {
+      ...sourceManifest(),
+      components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) =>
+        index === 1 ? { ...item, id: 'credential_gateway' } : item,
+      ),
+    },
+    {
+      ...sourceManifest(),
+      components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) =>
+        index === 0 ? { ...item, implementationRevision: 'main' } : item,
+      ),
+    },
+    {
+      ...sourceManifest(),
+      components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) =>
+        index === 0 ? { ...item, interfaceHash: hash(999) } : item,
+      ),
+    },
+    {
+      ...sourceManifest(),
+      components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) =>
+        index === 0 ? { ...item, modulePath: '../outside.mjs' } : item,
+      ),
+    },
+    {
+      ...sourceManifest(),
+      components: (sourceManifest().components as Record<string, unknown>[]).map((item, index) =>
+        index === 1 ? { ...item, dependencies: [] } : item,
+      ),
+    },
   ];
 
   for (const value of cases) {
@@ -112,10 +143,13 @@ test('rejects a component update until every dependent certification and the agg
   };
   const partiallyRecertified = {
     ...source,
-    components: components.map((component) => component.id === 'credential_gateway' ? changedGateway : component),
+    components: components.map((component) => (component.id === 'credential_gateway' ? changedGateway : component)),
   };
 
-  assert.throws(() => loadRuntimeHostComponentSourceManifestV4(partiallyRecertified), /dependencies drifted|composition certification drifted/u);
+  assert.throws(
+    () => loadRuntimeHostComponentSourceManifestV4(partiallyRecertified),
+    /dependencies drifted|composition certification drifted/u,
+  );
 });
 
 test('publishes a strict source-manifest schema for independently certified components', async () => {
@@ -140,6 +174,13 @@ test('GitHub adapters receive only a bounded internal gateway lease, never the r
 
   const validated = validateRuntimeGitHubCredentialLeaseV4(lease, '2026-08-10T12:00:00.000Z');
   assert.equal(Object.isFrozen(validated.environment), true);
-  assert.throws(() => validateRuntimeGitHubCredentialLeaseV4({ ...lease, environment: { GH_TOKEN: 'real-secret' } } as never, '2026-08-10T12:00:00.000Z'), /AUTHENTICATION_FAILED/u);
-  assert.throws(() => validateRuntimeGitHubCredentialLeaseV4({ ...lease, expires_at: '2026-08-10T11:59:00.000Z' }, '2026-08-10T12:00:00.000Z'), /AUTHENTICATION_FAILED/u);
+  assert.throws(
+    () =>
+      validateRuntimeGitHubCredentialLeaseV4({ ...lease, environment: { GH_TOKEN: 'real-secret' } } as never, '2026-08-10T12:00:00.000Z'),
+    /AUTHENTICATION_FAILED/u,
+  );
+  assert.throws(
+    () => validateRuntimeGitHubCredentialLeaseV4({ ...lease, expires_at: '2026-08-10T11:59:00.000Z' }, '2026-08-10T12:00:00.000Z'),
+    /AUTHENTICATION_FAILED/u,
+  );
 });

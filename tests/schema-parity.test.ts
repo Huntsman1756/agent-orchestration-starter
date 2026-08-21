@@ -70,6 +70,9 @@ test('public routing-gate schema rejects the baseline route as a candidate', asy
   };
 
   assert.equal(validate(gate), false);
-  assert.equal(validate.errors?.some((error: ErrorObject) => error.keyword === 'additionalProperties'), false);
+  assert.equal(
+    validate.errors?.some((error: ErrorObject) => error.keyword === 'additionalProperties'),
+    false,
+  );
   assert.ok(validate.errors?.some((error: ErrorObject) => error.keyword === 'not'));
 });

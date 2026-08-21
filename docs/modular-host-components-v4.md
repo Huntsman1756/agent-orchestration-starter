@@ -8,16 +8,16 @@ This repository defines and enforces the contracts, installation format, depende
 
 ## Fixed components and narrow ports
 
-| Component ID | Exact public port | Certified dependencies | Responsibility |
-| --- | --- | --- | --- |
-| `credential_gateway` | `leaseProvider`, `leaseGitHub`, `revoke` | none | Keep real provider and GitHub credentials behind broker-owned internal gateways |
-| `task_source` | `listCandidates`, `loadCandidate`, `claim`, `renew`, `complete`, `reopen`, `fail` | `credential_gateway` | GitHub/CI/scheduled intake, immutable revisions, leases and source-state mutations |
-| `issue_planner` | `plan` | `task_source` | Convert an authorized candidate into a bounded `RuntimeTaskRequestV4` |
-| `practice_pack_resolver` | `resolve` | `issue_planner` | Resolve allowlisted stack evidence and immutable practice/instruction packs |
-| `sandbox_coordinator` | `id`, `probe`, `run`, `terminate` | `credential_gateway` | Certified process/container isolation and native coordination |
-| `capability_issuer` | `issue` | `practice_pack_resolver`, `credential_gateway`, `sandbox_coordinator` | Issue evidence for the exact model/harness/parser/tool/policy binding |
-| `github_publisher` | `pushExact`, `findPullRequest`, `createPullRequest`, `waitForRequiredChecks`, `mergePullRequest` | `credential_gateway` | Broker-owned exact-SHA push, PR, checks and merge |
-| `post_merge_verifier` | `verify` | `credential_gateway`, `github_publisher`, `sandbox_coordinator` | Verify the exact merged commit before completing or reopening a source task |
+| Component ID             | Exact public port                                                                                | Certified dependencies                                                | Responsibility                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `credential_gateway`     | `leaseProvider`, `leaseGitHub`, `revoke`                                                         | none                                                                  | Keep real provider and GitHub credentials behind broker-owned internal gateways    |
+| `task_source`            | `listCandidates`, `loadCandidate`, `claim`, `renew`, `complete`, `reopen`, `fail`                | `credential_gateway`                                                  | GitHub/CI/scheduled intake, immutable revisions, leases and source-state mutations |
+| `issue_planner`          | `plan`                                                                                           | `task_source`                                                         | Convert an authorized candidate into a bounded `RuntimeTaskRequestV4`              |
+| `practice_pack_resolver` | `resolve`                                                                                        | `issue_planner`                                                       | Resolve allowlisted stack evidence and immutable practice/instruction packs        |
+| `sandbox_coordinator`    | `id`, `probe`, `run`, `terminate`                                                                | `credential_gateway`                                                  | Certified process/container isolation and native coordination                      |
+| `capability_issuer`      | `issue`                                                                                          | `practice_pack_resolver`, `credential_gateway`, `sandbox_coordinator` | Issue evidence for the exact model/harness/parser/tool/policy binding              |
+| `github_publisher`       | `pushExact`, `findPullRequest`, `createPullRequest`, `waitForRequiredChecks`, `mergePullRequest` | `credential_gateway`                                                  | Broker-owned exact-SHA push, PR, checks and merge                                  |
+| `post_merge_verifier`    | `verify`                                                                                         | `credential_gateway`, `github_publisher`, `sandbox_coordinator`       | Verify the exact merged commit before completing or reopening a source task        |
 
 Task intake and GitHub publication are deliberately separate. Read/list/lease authority does not imply push/merge authority. Both request a purpose- and operation-bounded GitHub gateway lease; the returned component-visible token is the fixed non-secret broker token, not the real GitHub credential. Provider/model leases use a separate method and endpoint. Likewise, the practice-pack resolver cannot issue a model capability, and the capability issuer cannot create new credentials or bypass the sandbox.
 
@@ -94,17 +94,17 @@ Language-level module separation is not an operating-system security boundary. C
 
 ## Recertification matrix
 
-| Change | Minimum required action |
-| --- | --- |
-| Component bytes, immutable revision or port contract | Requalify that component, every dependent component and the complete composition |
-| `credential_gateway` | Requalify every component and the complete composition because task intake, execution and publication all depend on it directly or transitively |
-| `task_source` | Requalify task source, issue planner, practice-pack resolver, capability issuer and composition |
-| Practice packs or resolver behavior | Requalify resolver, capability issuer, affected model/harness bindings and composition |
-| Provider/model/profile only, with unchanged compatible host code | Keep stable repository policy; reactivate the repository and issue fresh exact binding capability evidence; retain the installation |
-| Harness/parser/tool/protocol or host adapter bytes/configuration | Requalify affected components and dependents, renew aggregate composition evidence, create a new installation and reactivate |
-| Root composition code | Requalify the full composition even when all component files are unchanged |
-| Repository policy or authority target | Reactivate that repository and requalify every exact policy-bound capability; do not mutate the central installation |
-| OS, architecture, Docker engine, native helper or credential mechanism | Treat it as a different host and run target-specific certification |
+| Change                                                                 | Minimum required action                                                                                                                         |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Component bytes, immutable revision or port contract                   | Requalify that component, every dependent component and the complete composition                                                                |
+| `credential_gateway`                                                   | Requalify every component and the complete composition because task intake, execution and publication all depend on it directly or transitively |
+| `task_source`                                                          | Requalify task source, issue planner, practice-pack resolver, capability issuer and composition                                                 |
+| Practice packs or resolver behavior                                    | Requalify resolver, capability issuer, affected model/harness bindings and composition                                                          |
+| Provider/model/profile only, with unchanged compatible host code       | Keep stable repository policy; reactivate the repository and issue fresh exact binding capability evidence; retain the installation             |
+| Harness/parser/tool/protocol or host adapter bytes/configuration       | Requalify affected components and dependents, renew aggregate composition evidence, create a new installation and reactivate                    |
+| Root composition code                                                  | Requalify the full composition even when all component files are unchanged                                                                      |
+| Repository policy or authority target                                  | Reactivate that repository and requalify every exact policy-bound capability; do not mutate the central installation                            |
+| OS, architecture, Docker engine, native helper or credential mechanism | Treat it as a different host and run target-specific certification                                                                              |
 
 The dependency graph is a minimum recertification graph, not permission inheritance. A host operator may require broader recertification.
 

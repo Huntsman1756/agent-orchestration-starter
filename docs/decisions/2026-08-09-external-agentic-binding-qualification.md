@@ -23,11 +23,11 @@ patch but cannot reliably execute tools may be considered for
 The following external bindings were exercised through the real OpenCode
 tool path and did not meet the clean-run gate:
 
-| Binding | Result | Interpretation |
-| --- | --- | --- |
-| MiMo-V2.5 | NOT QUALIFIED | Tool execution was not reliable on the real repository path. |
-| GLM-4.7 | NOT QUALIFIED | It reached the tools in some runs, but the clean consecutive-run gate was not met; textual tool output and shell-contract failures remained. |
-| GLM-4.6-Derestricted-v5 | NOT QUALIFIED | A later tool-call failure produced textual markup instead of an executed call. |
+| Binding                 | Result        | Interpretation                                                                                                                               |
+| ----------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| MiMo-V2.5               | NOT QUALIFIED | Tool execution was not reliable on the real repository path.                                                                                 |
+| GLM-4.7                 | NOT QUALIFIED | It reached the tools in some runs, but the clean consecutive-run gate was not met; textual tool output and shell-contract failures remained. |
+| GLM-4.6-Derestricted-v5 | NOT QUALIFIED | A later tool-call failure produced textual markup instead of an executed call.                                                               |
 
 These runs are `PRE_PILOT_BINDING_QUALIFICATION` only. They are excluded from
 all A/B/C routing-pilot denominators and cannot promote a route. Their token

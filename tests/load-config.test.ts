@@ -14,7 +14,9 @@ async function yamlFile(name: string, contents: string): Promise<string> {
 }
 
 test('rejects a concrete model in the stable role policy', async () => {
-  const path = await yamlFile('orchestration.yaml', `
+  const path = await yamlFile(
+    'orchestration.yaml',
+    `
 version: 1
 roles:
   orchestrator:
@@ -36,13 +38,16 @@ routing:
   strategies: [economy_only, orchestrated, frontier_execution]
 isolation:
   required: hard
-`);
+`,
+  );
 
   await assert.rejects(loadPolicy(path), /model|unrecognized/i);
 });
 
 test('rejects a profile without an explicit executor assignment', async () => {
-  const path = await yamlFile('profile.yaml', `
+  const path = await yamlFile(
+    'profile.yaml',
+    `
 version: 1
 id: incomplete
 assignments:
@@ -58,13 +63,16 @@ assignments:
     tier: frontier
     reasoningEffort: high
     capabilities: [review]
-`);
+`,
+  );
 
   await assert.rejects(loadProfile(path), /executor/i);
 });
 
 test('loads a provider-agnostic policy and explicit profile', async () => {
-  const policyPath = await yamlFile('orchestration.yaml', `
+  const policyPath = await yamlFile(
+    'orchestration.yaml',
+    `
 version: 1
 roles:
   orchestrator:
@@ -85,15 +93,19 @@ routing:
   strategies: [economy_only, orchestrated, frontier_execution]
 isolation:
   required: hard
-`);
-  const profilePath = await yamlFile('profile.yaml', `
+`,
+  );
+  const profilePath = await yamlFile(
+    'profile.yaml',
+    `
 version: 1
 id: example
 assignments:
   orchestrator: { provider: vendor-a, model: frontier-a, tier: frontier, reasoningEffort: high, capabilities: [planning, delegation] }
   executor: { provider: vendor-b, model: economy-b, tier: economy, reasoningEffort: low, capabilities: [coding] }
   reviewer: { provider: vendor-a, model: frontier-a, tier: frontier, reasoningEffort: high, capabilities: [review] }
-`);
+`,
+  );
 
   const policy = await loadPolicy(policyPath);
   const profile = await loadProfile(profilePath);
@@ -105,7 +117,9 @@ assignments:
 });
 
 test('loads qualification metadata without introducing provider names into policy', async () => {
-  const path = await yamlFile('profile.yaml', `
+  const path = await yamlFile(
+    'profile.yaml',
+    `
 version: 1
 id: qualified-example
 assignments:
@@ -123,7 +137,8 @@ assignments:
       requiredCleanRuns: 3
       evidenceHash: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   reviewer: { provider: vendor-a, model: frontier-review, tier: frontier, reasoningEffort: high, capabilities: [review] }
-`);
+`,
+  );
 
   const profile = await loadProfile(path);
   assert.equal(profile.assignments.executor.qualification?.requiredCleanRuns, 3);

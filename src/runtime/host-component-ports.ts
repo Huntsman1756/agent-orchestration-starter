@@ -37,7 +37,8 @@ export interface RuntimeCapabilityIssuerPortV4 {
 }
 
 export type RuntimeGitHubCredentialPurposeV4 = 'TASK_INTAKE' | 'PUBLICATION' | 'POST_MERGE_VERIFICATION';
-export type RuntimeGitHubCredentialOperationV4 = 'ISSUES_READ' | 'ISSUES_WRITE' | 'CONTENTS_READ' | 'CONTENTS_WRITE' | 'PULL_REQUESTS_WRITE' | 'CHECKS_READ';
+export type RuntimeGitHubCredentialOperationV4 =
+  'ISSUES_READ' | 'ISSUES_WRITE' | 'CONTENTS_READ' | 'CONTENTS_WRITE' | 'PULL_REQUESTS_WRITE' | 'CHECKS_READ';
 
 export interface RuntimeGitHubCredentialLeaseV4 {
   readonly lease_id: string;
@@ -60,25 +61,40 @@ export interface RuntimeCredentialGatewayPortV4 {
   revoke(leaseId: string): Promise<void>;
 }
 
-function authenticationFailed(message: string): never { throw new Error(`AUTHENTICATION_FAILED: ${message}`); }
+function authenticationFailed(message: string): never {
+  throw new Error(`AUTHENTICATION_FAILED: ${message}`);
+}
 
 export function validateRuntimeGitHubCredentialLeaseV4(lease: RuntimeGitHubCredentialLeaseV4, now: string): RuntimeGitHubCredentialLeaseV4 {
   if (lease === null || typeof lease !== 'object' || Array.isArray(lease)) authenticationFailed('GitHub credential lease is invalid');
   const candidate = lease as unknown as Record<string, unknown>;
   const expected = ['lease_id', 'repository_id', 'remote', 'environment', 'gateway_endpoint', 'internal_network', 'expires_at'];
-  if (Object.keys(candidate).sort().join(',') !== expected.sort().join(',')) authenticationFailed('GitHub credential lease has unknown or missing fields');
-  if (typeof lease.lease_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/u.test(lease.lease_id)
-    || typeof lease.repository_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(lease.repository_id)
-    || typeof lease.remote !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(lease.remote)
-    || lease.gateway_endpoint !== 'http://github-gateway:8081'
-    || typeof lease.internal_network !== 'string' || !/^ao-int-github-[a-z0-9-]{4,80}$/u.test(lease.internal_network)
-    || typeof lease.expires_at !== 'string' || !Number.isFinite(Date.parse(lease.expires_at))
-    || !Number.isFinite(Date.parse(now)) || Date.parse(lease.expires_at) <= Date.parse(now)) {
+  if (Object.keys(candidate).sort().join(',') !== expected.sort().join(','))
+    authenticationFailed('GitHub credential lease has unknown or missing fields');
+  if (
+    typeof lease.lease_id !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,128}$/u.test(lease.lease_id) ||
+    typeof lease.repository_id !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(lease.repository_id) ||
+    typeof lease.remote !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(lease.remote) ||
+    lease.gateway_endpoint !== 'http://github-gateway:8081' ||
+    typeof lease.internal_network !== 'string' ||
+    !/^ao-int-github-[a-z0-9-]{4,80}$/u.test(lease.internal_network) ||
+    typeof lease.expires_at !== 'string' ||
+    !Number.isFinite(Date.parse(lease.expires_at)) ||
+    !Number.isFinite(Date.parse(now)) ||
+    Date.parse(lease.expires_at) <= Date.parse(now)
+  ) {
     authenticationFailed('GitHub credential lease is invalid or expired');
   }
-  if (lease.environment === null || typeof lease.environment !== 'object' || Array.isArray(lease.environment)
-    || Object.keys(lease.environment).join(',') !== 'GITHUB_GATEWAY_TOKEN'
-    || lease.environment.GITHUB_GATEWAY_TOKEN !== 'broker-gateway') {
+  if (
+    lease.environment === null ||
+    typeof lease.environment !== 'object' ||
+    Array.isArray(lease.environment) ||
+    Object.keys(lease.environment).join(',') !== 'GITHUB_GATEWAY_TOKEN' ||
+    lease.environment.GITHUB_GATEWAY_TOKEN !== 'broker-gateway'
+  ) {
     authenticationFailed('GitHub credential lease must expose only the broker gateway token');
   }
   return Object.freeze({
@@ -105,16 +121,26 @@ export interface RuntimeHostComponentSetV4 {
 
 export type RuntimeHostComponentPortV4 = RuntimeHostComponentSetV4[RuntimeHostComponentIdV4];
 
-function unavailable(message: string): never { throw new Error(`CAPABILITY_UNVERIFIED: ${message}`); }
+function unavailable(message: string): never {
+  throw new Error(`CAPABILITY_UNVERIFIED: ${message}`);
+}
 
 export function validateRuntimeHostComponentPortV4(id: RuntimeHostComponentIdV4, value: unknown): RuntimeHostComponentPortV4 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) unavailable(`host component ${id} returned an invalid port`);
   const candidate = value as Record<string, unknown>;
   const members = runtimeHostComponentPortMembersV4(id);
-  if (Object.keys(candidate).sort().join(',') !== members.map((member) => member.name).sort().join(',')) unavailable(`host component ${id} exposed an invalid port surface`);
+  if (
+    Object.keys(candidate).sort().join(',') !==
+    members
+      .map((member) => member.name)
+      .sort()
+      .join(',')
+  )
+    unavailable(`host component ${id} exposed an invalid port surface`);
   for (const member of members) {
     if (typeof candidate[member.name] !== member.kind) unavailable(`host component ${id} exposed an invalid ${member.name} member`);
-    if (member.kind === 'string' && String(candidate[member.name]).length === 0) unavailable(`host component ${id} exposed an empty ${member.name} member`);
+    if (member.kind === 'string' && String(candidate[member.name]).length === 0)
+      unavailable(`host component ${id} exposed an empty ${member.name} member`);
   }
   return Object.freeze(candidate) as unknown as RuntimeHostComponentPortV4;
 }

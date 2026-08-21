@@ -39,9 +39,7 @@ export function dockerLauncherIdentityHashV4(identity: DockerLauncherIdentityV4)
 }
 
 function fixedDockerEndpoint(): string {
-  return process.platform === 'win32'
-    ? 'npipe:////./pipe/docker_engine'
-    : 'unix:///var/run/docker.sock';
+  return process.platform === 'win32' ? 'npipe:////./pipe/docker_engine' : 'unix:///var/run/docker.sock';
 }
 
 async function assertIsolatedConfigAbsent(path: string): Promise<void> {
@@ -111,10 +109,10 @@ export async function registerOrReproveDockerLauncherV4(
   brokerStateDirectory?: string,
 ): Promise<DockerLauncherIdentityV4> {
   const existing = registered.get(executable);
-  const dockerConfigDirectory = existing?.docker_config_directory
-    ?? (brokerStateDirectory === undefined ? unavailable() : join(brokerStateDirectory, 'docker-cli-v4-empty'));
-  if (brokerStateDirectory !== undefined
-    && dockerConfigDirectory !== join(brokerStateDirectory, 'docker-cli-v4-empty')) unavailable();
+  const dockerConfigDirectory =
+    existing?.docker_config_directory ??
+    (brokerStateDirectory === undefined ? unavailable() : join(brokerStateDirectory, 'docker-cli-v4-empty'));
+  if (brokerStateDirectory !== undefined && dockerConfigDirectory !== join(brokerStateDirectory, 'docker-cli-v4-empty')) unavailable();
   const observed = await inspect(executable, dockerConfigDirectory, signal);
   if (existing !== undefined && dockerLauncherIdentityHashV4(existing) !== dockerLauncherIdentityHashV4(observed)) unavailable();
   if (existing === undefined) registered.set(executable, observed);
@@ -125,7 +123,7 @@ export async function dockerCliEnvironmentV4(executable: string, signal?: AbortS
   const identity = await registerOrReproveDockerLauncherV4(executable, signal);
   const allowed = ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP'];
   return {
-    ...Object.fromEntries(allowed.flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+    ...Object.fromEntries(allowed.flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]]))),
     DOCKER_HOST: identity.endpoint_host,
     DOCKER_CONFIG: identity.docker_config_directory,
   };

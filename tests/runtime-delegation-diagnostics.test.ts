@@ -32,7 +32,10 @@ test('does not mistake a larger budget on the same model for a stronger fallback
 });
 
 test('makes private-source route collapse visible without weakening policy', () => {
-  const policy = { ...validRepositoryPolicy(), sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PRIVATE' } } as RuntimeRepositoryPolicyV4;
+  const policy = {
+    ...validRepositoryPolicy(),
+    sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PRIVATE' },
+  } as RuntimeRepositoryPolicyV4;
   const base = validRuntimeProfile() as RuntimeProfileV4;
   const profile = {
     ...base,
@@ -72,8 +75,14 @@ test('dated NaN profiles distinguish supervised reuse from a separate premium fr
   const premium = diagnoseRuntimeDelegationV4(policy, loadRuntimeProfileV4(parse(premiumSource)));
 
   assert.equal(standard.status, 'DEGRADED');
-  assert.equal(standard.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'), true);
+  assert.equal(
+    standard.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'),
+    true,
+  );
   assert.equal(premium.status, 'READY');
   assert.equal(premium.roles.find((role) => role.role === 'frontierExecutor')?.model, 'glm5.2');
-  assert.equal(premium.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'), false);
+  assert.equal(
+    premium.findings.some((finding) => finding.code === 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL'),
+    false,
+  );
 });

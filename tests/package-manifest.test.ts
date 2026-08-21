@@ -12,8 +12,12 @@ interface PackageManifest {
   scripts?: Record<string, string>;
 }
 
-interface PackedFile { path: string }
-interface PackResult { files?: PackedFile[] }
+interface PackedFile {
+  path: string;
+}
+interface PackResult {
+  files?: PackedFile[];
+}
 
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,9 +45,10 @@ function localMarkdownTarget(raw: string): string | null {
 
 async function readPackFileList(): Promise<Set<string>> {
   const command = process.platform === 'win32' ? 'cmd.exe' : 'npm';
-  const args = process.platform === 'win32'
-    ? ['/d', '/s', '/c', 'npm pack --dry-run --json --ignore-scripts']
-    : ['pack', '--dry-run', '--json', '--ignore-scripts'];
+  const args =
+    process.platform === 'win32'
+      ? ['/d', '/s', '/c', 'npm pack --dry-run --json --ignore-scripts']
+      : ['pack', '--dry-run', '--json', '--ignore-scripts'];
   const result = await execFileAsync(command, args, { cwd: root, maxBuffer: 4 * 1024 * 1024 });
   const parsed = JSON.parse(result.stdout) as PackResult[];
   assert.equal(parsed.length, 1, 'npm pack must return exactly one package result');
@@ -72,7 +77,10 @@ test('npm package contains every local README/documentation link', async () => {
     for (const link of links) {
       const target = resolve(dirname(document), link);
       const relativeTarget = relative(root, target).replaceAll('\\', '/');
-      assert.ok(!relativeTarget.startsWith('../') && relativeTarget !== '..', `${relative(document, root)} links outside package root: ${link}`);
+      assert.ok(
+        !relativeTarget.startsWith('../') && relativeTarget !== '..',
+        `${relative(document, root)} links outside package root: ${link}`,
+      );
       assert.equal((await stat(target)).isFile(), true, `${relative(document, root)} links to a non-file: ${link}`);
       assert.ok(packed.has(relativeTarget), `${relative(document, root)} links to an unpacked file: ${relativeTarget}`);
     }

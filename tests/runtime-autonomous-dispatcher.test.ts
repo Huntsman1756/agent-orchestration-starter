@@ -62,7 +62,14 @@ function result(state = 'EXECUTION_STARTED'): RuntimeResultV4 {
     changed_files: [],
     review_attestation_hash: null,
     commit_sha: null,
-    publication: { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
+    publication: {
+      state: 'NOT_STARTED',
+      remote: null,
+      base_branch: null,
+      pull_request: null,
+      pull_request_url: null,
+      merge_commit_sha: null,
+    },
     failure: null,
     artifact_manifest_hash: hash,
   };
@@ -74,8 +81,12 @@ function mergedResult(): RuntimeResultV4 {
     head_sha: 'd'.repeat(40),
     commit_sha: 'd'.repeat(40),
     publication: {
-      state: 'MERGED', remote: 'origin', base_branch: 'main', pull_request: 31,
-      pull_request_url: 'https://github.com/example/fixture/pull/31', merge_commit_sha: 'c'.repeat(40),
+      state: 'MERGED',
+      remote: 'origin',
+      base_branch: 'main',
+      pull_request: 31,
+      pull_request_url: 'https://github.com/example/fixture/pull/31',
+      merge_commit_sha: 'c'.repeat(40),
     },
   };
 }
@@ -83,7 +94,12 @@ function mergedResult(): RuntimeResultV4 {
 function failedResult(): RuntimeResultV4 {
   return {
     ...result('FAILED'),
-    failure: { code: 'VALIDATION_FAILED', message: 'VALIDATION_FAILED: deterministic validation failed', retryable: false, evidence_hashes: [hash] },
+    failure: {
+      code: 'VALIDATION_FAILED',
+      message: 'VALIDATION_FAILED: deterministic validation failed',
+      retryable: false,
+      evidence_hashes: [hash],
+    },
   };
 }
 
@@ -104,20 +120,58 @@ test('a fresh dispatcher starts paused and performs no external calls before exp
   const dispatcher = createAutonomousDispatcherV4({
     state_directory: stateDirectory,
     policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+      allowed_sources: ['GITHUB_ISSUE'],
+      allowed_repository_ids: ['fixture-repo'],
+      required_labels: ['agent-ready'],
+      max_active_tasks: 1,
+      max_claims_per_cycle: 1,
+      lease_seconds: 300,
+      max_consecutive_failures: 3,
+      require_merged_publication: true,
     },
     source: {
-      listCandidates: async () => { calls.push('list'); return { candidates: [], next_cursor: null }; },
-      loadCandidate: async () => { calls.push('load'); return null; }, claim: async () => { calls.push('claim'); return 'BUSY'; },
-      renew: async () => { calls.push('renew'); return 'LOST'; }, complete: async () => { calls.push('complete'); },
-      reopen: async () => { calls.push('reopen'); }, fail: async () => { calls.push('fail'); },
+      listCandidates: async () => {
+        calls.push('list');
+        return { candidates: [], next_cursor: null };
+      },
+      loadCandidate: async () => {
+        calls.push('load');
+        return null;
+      },
+      claim: async () => {
+        calls.push('claim');
+        return 'BUSY';
+      },
+      renew: async () => {
+        calls.push('renew');
+        return 'LOST';
+      },
+      complete: async () => {
+        calls.push('complete');
+      },
+      reopen: async () => {
+        calls.push('reopen');
+      },
+      fail: async () => {
+        calls.push('fail');
+      },
     },
     runtime: {
-      start: async () => { calls.push('start'); return result(); },
-      resume: async () => { calls.push('resume'); return result(); },
+      start: async () => {
+        calls.push('start');
+        return result();
+      },
+      resume: async () => {
+        calls.push('resume');
+        return result();
+      },
     },
-    post_merge: { verify: async () => { calls.push('verify'); return { outcome: 'PASS', evidence_hash: hash }; } },
+    post_merge: {
+      verify: async () => {
+        calls.push('verify');
+        return { outcome: 'PASS', evidence_hash: hash };
+      },
+    },
   });
 
   assert.equal((await dispatcher.status()).mode, 'PAUSED');
@@ -145,17 +199,35 @@ test('one cycle claims and submits exactly one authorized task', async () => {
     source: {
       listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
       loadCandidate: async () => candidate(),
-      claim: async (input) => { calls.push(`claim:${input.candidate_id}`); return 'CLAIMED'; },
+      claim: async (input) => {
+        calls.push(`claim:${input.candidate_id}`);
+        return 'CLAIMED';
+      },
       renew: async () => 'RENEWED',
-      complete: async () => { throw new Error('not expected'); },
-      reopen: async () => { throw new Error('not expected'); },
-      fail: async () => { throw new Error('not expected'); },
+      complete: async () => {
+        throw new Error('not expected');
+      },
+      reopen: async () => {
+        throw new Error('not expected');
+      },
+      fail: async () => {
+        throw new Error('not expected');
+      },
     },
     runtime: {
-      start: async (value) => { calls.push(`start:${value.request_id}`); return result(); },
-      resume: async () => { throw new Error('not expected'); },
+      start: async (value) => {
+        calls.push(`start:${value.request_id}`);
+        return result();
+      },
+      resume: async () => {
+        throw new Error('not expected');
+      },
     },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
     now: () => '2026-08-10T13:00:00.000Z',
     lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
@@ -178,17 +250,19 @@ test('one cycle claims and submits exactly one authorized task', async () => {
     state_hash: report.state_hash,
   });
   assert.match(report.state_hash, /^[a-f0-9]{64}$/u);
-  assert.deepEqual(status.tasks, [{
-    candidate_id: candidate().candidate_id,
-    revision: hash,
-    repository_id: 'fixture-repo',
-    request_id: requestId,
-    run_id: runId,
-    status: 'RUNNING',
-    consecutive_failures: 0,
-    lease_expires_at: '2026-08-10T13:05:00.000Z',
-    last_evidence_hash: null,
-  }]);
+  assert.deepEqual(status.tasks, [
+    {
+      candidate_id: candidate().candidate_id,
+      revision: hash,
+      repository_id: 'fixture-repo',
+      request_id: requestId,
+      run_id: runId,
+      status: 'RUNNING',
+      consecutive_failures: 0,
+      lease_expires_at: '2026-08-10T13:05:00.000Z',
+      last_evidence_hash: null,
+    },
+  ]);
 });
 
 test('a new dispatcher process renews and resumes durable work without resubmitting it', async () => {
@@ -209,11 +283,29 @@ test('a new dispatcher process renews and resumes durable work without resubmitt
     source: {
       listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
       loadCandidate: async () => candidate(),
-      claim: async () => 'CLAIMED', renew: async () => 'RENEWED',
-      complete: async () => { throw new Error('not expected'); }, reopen: async () => { throw new Error('not expected'); }, fail: async () => { throw new Error('not expected'); },
+      claim: async () => 'CLAIMED',
+      renew: async () => 'RENEWED',
+      complete: async () => {
+        throw new Error('not expected');
+      },
+      reopen: async () => {
+        throw new Error('not expected');
+      },
+      fail: async () => {
+        throw new Error('not expected');
+      },
     },
-    runtime: { start: async () => result(), resume: async () => { throw new Error('not expected'); } },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    runtime: {
+      start: async () => result(),
+      resume: async () => {
+        throw new Error('not expected');
+      },
+    },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
     now: () => '2026-08-10T13:00:00.000Z',
     lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
@@ -225,17 +317,43 @@ test('a new dispatcher process renews and resumes durable work without resubmitt
     state_directory: stateDirectory,
     policy,
     source: {
-      listCandidates: async () => { throw new Error('must not scan while capacity is occupied'); },
-      loadCandidate: async () => { throw new Error('must not reload running work'); },
-      claim: async () => { throw new Error('must not reclaim durable work'); },
-      renew: async (input) => { calls.push(`renew:${input.candidate_id}`); return 'RENEWED'; },
-      complete: async () => { throw new Error('not expected'); }, reopen: async () => { throw new Error('not expected'); }, fail: async () => { throw new Error('not expected'); },
+      listCandidates: async () => {
+        throw new Error('must not scan while capacity is occupied');
+      },
+      loadCandidate: async () => {
+        throw new Error('must not reload running work');
+      },
+      claim: async () => {
+        throw new Error('must not reclaim durable work');
+      },
+      renew: async (input) => {
+        calls.push(`renew:${input.candidate_id}`);
+        return 'RENEWED';
+      },
+      complete: async () => {
+        throw new Error('not expected');
+      },
+      reopen: async () => {
+        throw new Error('not expected');
+      },
+      fail: async () => {
+        throw new Error('not expected');
+      },
     },
     runtime: {
-      start: async () => { throw new Error('must not resubmit durable work'); },
-      resume: async (id) => { calls.push(`resume:${id}`); return result(); },
+      start: async () => {
+        throw new Error('must not resubmit durable work');
+      },
+      resume: async (id) => {
+        calls.push(`resume:${id}`);
+        return result();
+      },
     },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
     now: () => '2026-08-10T13:01:00.000Z',
     lease_id: () => 'lease_unused0000000000000000',
   });
@@ -253,19 +371,36 @@ test('a new dispatcher process renews and resumes durable work without resubmitt
 test('a crash after claim reloads the exact candidate and reuses its idempotent request', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-claimed-'));
   const policy = {
-    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+    allowed_sources: ['GITHUB_ISSUE' as const],
+    allowed_repository_ids: ['fixture-repo'],
+    required_labels: ['agent-ready'],
+    max_active_tasks: 1,
+    max_claims_per_cycle: 1,
+    lease_seconds: 300,
+    max_consecutive_failures: 3,
+    require_merged_publication: true,
   };
   const interrupted = createAutonomousDispatcherV4({
     state_directory: stateDirectory,
     policy,
     source: {
-      listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
-      claim: async () => 'CLAIMED', renew: async () => 'RENEWED', complete: async () => {}, reopen: async () => {}, fail: async () => {},
+      listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
+      loadCandidate: async () => candidate(),
+      claim: async () => 'CLAIMED',
+      renew: async () => 'RENEWED',
+      complete: async () => {},
+      reopen: async () => {},
+      fail: async () => {},
     },
-    runtime: { start: async () => { throw new Error('PROVIDER_UNAVAILABLE: simulated crash'); }, resume: async () => result() },
+    runtime: {
+      start: async () => {
+        throw new Error('PROVIDER_UNAVAILABLE: simulated crash');
+      },
+      resume: async () => result(),
+    },
     post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
   await interrupted.setMode('RUNNING');
   await assert.rejects(interrupted.runCycle(), /simulated crash/u);
@@ -276,17 +411,36 @@ test('a crash after claim reloads the exact candidate and reuses its idempotent 
     state_directory: stateDirectory,
     policy,
     source: {
-      listCandidates: async () => { throw new Error('must not scan'); },
-      loadCandidate: async (input) => { calls.push(`load:${input.candidate_id}`); return candidate(); },
-      claim: async () => { throw new Error('must not reclaim'); },
-      renew: async () => { calls.push('renew'); return 'RENEWED'; }, complete: async () => {}, reopen: async () => {}, fail: async () => {},
+      listCandidates: async () => {
+        throw new Error('must not scan');
+      },
+      loadCandidate: async (input) => {
+        calls.push(`load:${input.candidate_id}`);
+        return candidate();
+      },
+      claim: async () => {
+        throw new Error('must not reclaim');
+      },
+      renew: async () => {
+        calls.push('renew');
+        return 'RENEWED';
+      },
+      complete: async () => {},
+      reopen: async () => {},
+      fail: async () => {},
     },
     runtime: {
-      start: async (value) => { calls.push(`start:${value.request_id}`); return result(); },
-      resume: async () => { throw new Error('must not resume before run_id exists'); },
+      start: async (value) => {
+        calls.push(`start:${value.request_id}`);
+        return result();
+      },
+      resume: async () => {
+        throw new Error('must not resume before run_id exists');
+      },
     },
     post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:01:00.000Z', lease_id: () => 'lease_unused0000000000000000',
+    now: () => '2026-08-10T13:01:00.000Z',
+    lease_id: () => 'lease_unused0000000000000000',
   });
 
   const report = await recovered.runCycle();
@@ -299,37 +453,68 @@ test('a crash after claim reloads the exact candidate and reuses its idempotent 
 test('a merged run closes its source task only after exact post-merge verification passes', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-merged-'));
   const policy = {
-    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+    allowed_sources: ['GITHUB_ISSUE' as const],
+    allowed_repository_ids: ['fixture-repo'],
+    required_labels: ['agent-ready'],
+    max_active_tasks: 1,
+    max_claims_per_cycle: 1,
+    lease_seconds: 300,
+    max_consecutive_failures: 3,
+    require_merged_publication: true,
   };
   const source = {
-    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
-    claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
-    complete: async () => {}, reopen: async () => {}, fail: async () => {},
+    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
+    loadCandidate: async () => candidate(),
+    claim: async () => 'CLAIMED' as const,
+    renew: async () => 'RENEWED' as const,
+    complete: async () => {},
+    reopen: async () => {},
+    fail: async () => {},
   };
   const starter = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy, source,
+    state_directory: stateDirectory,
+    policy,
+    source,
     runtime: { start: async () => result(), resume: async () => result() },
     post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
   await starter.setMode('RUNNING');
   await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy,
+    state_directory: stateDirectory,
+    policy,
     source: {
       ...source,
       listCandidates: async () => ({ candidates: [], next_cursor: 'cursor-2' }),
-      renew: async () => { calls.push('renew'); return 'RENEWED'; },
-      complete: async (input) => { calls.push(`complete:${input.merge_commit_sha}:${input.evidence_hash}`); },
+      renew: async () => {
+        calls.push('renew');
+        return 'RENEWED';
+      },
+      complete: async (input) => {
+        calls.push(`complete:${input.merge_commit_sha}:${input.evidence_hash}`);
+      },
     },
-    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => { calls.push(`resume:${runId}`); return mergedResult(); } },
+    runtime: {
+      start: async () => {
+        throw new Error('not expected');
+      },
+      resume: async () => {
+        calls.push(`resume:${runId}`);
+        return mergedResult();
+      },
+    },
     post_merge: {
-      verify: async (input) => { calls.push(`verify:${input.merge_commit_sha}`); return { outcome: 'PASS', evidence_hash: hash }; },
+      verify: async (input) => {
+        calls.push(`verify:${input.merge_commit_sha}`);
+        return { outcome: 'PASS', evidence_hash: hash };
+      },
     },
-    now: () => '2026-08-10T13:02:00.000Z', lease_id: () => 'lease_unused0000000000000000',
+    now: () => '2026-08-10T13:02:00.000Z',
+    lease_id: () => 'lease_unused0000000000000000',
   });
 
   const report = await finisher.runCycle();
@@ -344,33 +529,58 @@ test('a merged run closes its source task only after exact post-merge verificati
 test('a post-merge regression reopens the task and trips the configured circuit breaker', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-regression-'));
   const policy = {
-    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 1, require_merged_publication: true,
+    allowed_sources: ['GITHUB_ISSUE' as const],
+    allowed_repository_ids: ['fixture-repo'],
+    required_labels: ['agent-ready'],
+    max_active_tasks: 1,
+    max_claims_per_cycle: 1,
+    lease_seconds: 300,
+    max_consecutive_failures: 1,
+    require_merged_publication: true,
   };
   const source = {
-    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
-    claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
-    complete: async () => {}, reopen: async () => {}, fail: async () => {},
+    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
+    loadCandidate: async () => candidate(),
+    claim: async () => 'CLAIMED' as const,
+    renew: async () => 'RENEWED' as const,
+    complete: async () => {},
+    reopen: async () => {},
+    fail: async () => {},
   };
   const starter = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy, source,
-    runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    state_directory: stateDirectory,
+    policy,
+    source,
+    runtime: { start: async () => result(), resume: async () => result() },
+    post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
   await starter.setMode('RUNNING');
   await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy,
+    state_directory: stateDirectory,
+    policy,
     source: {
       ...source,
-      listCandidates: async () => { throw new Error('circuit must prevent new scans'); },
-      reopen: async (input) => { calls.push(`reopen:${input.finding_id}:${input.evidence_hash}`); },
+      listCandidates: async () => {
+        throw new Error('circuit must prevent new scans');
+      },
+      reopen: async (input) => {
+        calls.push(`reopen:${input.finding_id}:${input.evidence_hash}`);
+      },
     },
-    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => mergedResult() },
+    runtime: {
+      start: async () => {
+        throw new Error('not expected');
+      },
+      resume: async () => mergedResult(),
+    },
     post_merge: { verify: async () => ({ outcome: 'FAIL', finding_id: 'main-smoke-regression', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:02:00.000Z', lease_id: () => 'lease_unused0000000000000000',
+    now: () => '2026-08-10T13:02:00.000Z',
+    lease_id: () => 'lease_unused0000000000000000',
   });
 
   const report = await finisher.runCycle();
@@ -395,33 +605,60 @@ test('a post-merge regression reopens the task and trips the configured circuit 
 test('a terminal runtime failure is reported once and becomes durable failed work', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-failed-'));
   const policy = {
-    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+    allowed_sources: ['GITHUB_ISSUE' as const],
+    allowed_repository_ids: ['fixture-repo'],
+    required_labels: ['agent-ready'],
+    max_active_tasks: 1,
+    max_claims_per_cycle: 1,
+    lease_seconds: 300,
+    max_consecutive_failures: 3,
+    require_merged_publication: true,
   };
   const source = {
-    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
-    claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
-    complete: async () => {}, reopen: async () => {}, fail: async () => {},
+    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
+    loadCandidate: async () => candidate(),
+    claim: async () => 'CLAIMED' as const,
+    renew: async () => 'RENEWED' as const,
+    complete: async () => {},
+    reopen: async () => {},
+    fail: async () => {},
   };
   const starter = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy, source,
-    runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    state_directory: stateDirectory,
+    policy,
+    source,
+    runtime: { start: async () => result(), resume: async () => result() },
+    post_merge: { verify: async () => ({ outcome: 'PASS', evidence_hash: hash }) },
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
   await starter.setMode('RUNNING');
   await starter.runCycle();
 
   const calls: string[] = [];
   const finisher = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy,
+    state_directory: stateDirectory,
+    policy,
     source: {
       ...source,
       listCandidates: async () => ({ candidates: [], next_cursor: 'cursor-2' }),
-      fail: async (input) => { calls.push(`fail:${input.run_id}:${input.failure_code}:${input.evidence_hashes.join(',')}`); },
+      fail: async (input) => {
+        calls.push(`fail:${input.run_id}:${input.failure_code}:${input.evidence_hashes.join(',')}`);
+      },
     },
-    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => failedResult() },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
-    now: () => '2026-08-10T13:03:00.000Z', lease_id: () => 'lease_unused0000000000000000',
+    runtime: {
+      start: async () => {
+        throw new Error('not expected');
+      },
+      resume: async () => failedResult(),
+    },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
+    now: () => '2026-08-10T13:03:00.000Z',
+    lease_id: () => 'lease_unused0000000000000000',
   });
 
   const report = await finisher.runCycle();
@@ -437,28 +674,55 @@ test('a terminal runtime failure is reported once and becomes durable failed wor
 test('a lost active lease becomes durable failed work without resuming outside source authority', async () => {
   const stateDirectory = await mkdtemp(join(tmpdir(), 'autonomous-dispatcher-lost-lease-'));
   const policy = {
-    allowed_sources: ['GITHUB_ISSUE' as const], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-    max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 1, require_merged_publication: true as const,
+    allowed_sources: ['GITHUB_ISSUE' as const],
+    allowed_repository_ids: ['fixture-repo'],
+    required_labels: ['agent-ready'],
+    max_active_tasks: 1,
+    max_claims_per_cycle: 1,
+    lease_seconds: 300,
+    max_consecutive_failures: 1,
+    require_merged_publication: true as const,
   };
   const source = {
-    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }), loadCandidate: async () => candidate(),
-    claim: async () => 'CLAIMED' as const, renew: async () => 'RENEWED' as const,
-    complete: async () => {}, reopen: async () => {}, fail: async () => {},
+    listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-1' }),
+    loadCandidate: async () => candidate(),
+    claim: async () => 'CLAIMED' as const,
+    renew: async () => 'RENEWED' as const,
+    complete: async () => {},
+    reopen: async () => {},
+    fail: async () => {},
   };
   const starter = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy, source,
-    runtime: { start: async () => result(), resume: async () => result() }, post_merge: { verify: async () => ({ outcome: 'PASS' as const, evidence_hash: hash }) },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    state_directory: stateDirectory,
+    policy,
+    source,
+    runtime: { start: async () => result(), resume: async () => result() },
+    post_merge: { verify: async () => ({ outcome: 'PASS' as const, evidence_hash: hash }) },
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
   await starter.setMode('RUNNING');
   await starter.runCycle();
 
   let resumed = false;
   const recovering = createAutonomousDispatcherV4({
-    state_directory: stateDirectory, policy,
+    state_directory: stateDirectory,
+    policy,
     source: { ...source, listCandidates: async () => ({ candidates: [], next_cursor: 'cursor-2' }), renew: async () => 'LOST' as const },
-    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => { resumed = true; return result(); } },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    runtime: {
+      start: async () => {
+        throw new Error('not expected');
+      },
+      resume: async () => {
+        resumed = true;
+        return result();
+      },
+    },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
     now: () => '2026-08-10T13:03:00.000Z',
   });
 
@@ -472,14 +736,26 @@ test('a lost active lease becomes durable failed work without resuming outside s
 });
 
 test('rejects autonomous dispatcher configuration that permits unmerged finalization', () => {
-  assert.throws(() => createAutonomousDispatcherV4({
-    state_directory: join(tmpdir(), 'autonomous-dispatcher-unmerged-invalid'),
-    policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: false,
-    },
-    source: {} as never, runtime: {} as never, post_merge: {} as never,
-  }), /autonomous dispatch requires merged publication/u);
+  assert.throws(
+    () =>
+      createAutonomousDispatcherV4({
+        state_directory: join(tmpdir(), 'autonomous-dispatcher-unmerged-invalid'),
+        policy: {
+          allowed_sources: ['GITHUB_ISSUE'],
+          allowed_repository_ids: ['fixture-repo'],
+          required_labels: ['agent-ready'],
+          max_active_tasks: 1,
+          max_claims_per_cycle: 1,
+          lease_seconds: 300,
+          max_consecutive_failures: 3,
+          require_merged_publication: false,
+        },
+        source: {} as never,
+        runtime: {} as never,
+        post_merge: {} as never,
+      }),
+    /autonomous dispatch requires merged publication/u,
+  );
 });
 
 test('a busy source candidate advances the durable cursor without starting work', async () => {
@@ -487,16 +763,39 @@ test('a busy source candidate advances the durable cursor without starting work'
   const dispatcher = createAutonomousDispatcherV4({
     state_directory: stateDirectory,
     policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+      allowed_sources: ['GITHUB_ISSUE'],
+      allowed_repository_ids: ['fixture-repo'],
+      required_labels: ['agent-ready'],
+      max_active_tasks: 1,
+      max_claims_per_cycle: 1,
+      lease_seconds: 300,
+      max_consecutive_failures: 3,
+      require_merged_publication: true,
     },
     source: {
-      listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-after-busy' }), loadCandidate: async () => candidate(),
-      claim: async () => 'BUSY', renew: async () => 'LOST', complete: async () => {}, reopen: async () => {}, fail: async () => {},
+      listCandidates: async () => ({ candidates: [candidate()], next_cursor: 'cursor-after-busy' }),
+      loadCandidate: async () => candidate(),
+      claim: async () => 'BUSY',
+      renew: async () => 'LOST',
+      complete: async () => {},
+      reopen: async () => {},
+      fail: async () => {},
     },
-    runtime: { start: async () => { throw new Error('must not start busy work'); }, resume: async () => { throw new Error('not expected'); } },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    runtime: {
+      start: async () => {
+        throw new Error('must not start busy work');
+      },
+      resume: async () => {
+        throw new Error('not expected');
+      },
+    },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
 
   await dispatcher.setMode('RUNNING');
@@ -512,19 +811,50 @@ test('durable pause and drain modes control admissions without abandoning active
   const dispatcher = createAutonomousDispatcherV4({
     state_directory: stateDirectory,
     policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+      allowed_sources: ['GITHUB_ISSUE'],
+      allowed_repository_ids: ['fixture-repo'],
+      required_labels: ['agent-ready'],
+      max_active_tasks: 1,
+      max_claims_per_cycle: 1,
+      lease_seconds: 300,
+      max_consecutive_failures: 3,
+      require_merged_publication: true,
     },
     source: {
-      listCandidates: async () => { calls.push('list'); return { candidates: [candidate()], next_cursor: 'cursor-1' }; }, loadCandidate: async () => candidate(),
-      claim: async () => { calls.push('claim'); return 'CLAIMED'; }, renew: async () => { calls.push('renew'); return 'RENEWED'; },
-      complete: async () => {}, reopen: async () => {}, fail: async () => {},
+      listCandidates: async () => {
+        calls.push('list');
+        return { candidates: [candidate()], next_cursor: 'cursor-1' };
+      },
+      loadCandidate: async () => candidate(),
+      claim: async () => {
+        calls.push('claim');
+        return 'CLAIMED';
+      },
+      renew: async () => {
+        calls.push('renew');
+        return 'RENEWED';
+      },
+      complete: async () => {},
+      reopen: async () => {},
+      fail: async () => {},
     },
     runtime: {
-      start: async () => { calls.push('start'); return result(); }, resume: async () => { calls.push('resume'); return result(); },
+      start: async () => {
+        calls.push('start');
+        return result();
+      },
+      resume: async () => {
+        calls.push('resume');
+        return result();
+      },
     },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
-    now: () => '2026-08-10T13:00:00.000Z', lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
+    now: () => '2026-08-10T13:00:00.000Z',
+    lease_id: () => 'lease_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
   });
 
   await dispatcher.setMode('PAUSED');
@@ -548,15 +878,37 @@ test('the service loop runs serial cycles until its abort signal is observed', a
   const dispatcher = createAutonomousDispatcherV4({
     state_directory: stateDirectory,
     policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
+      allowed_sources: ['GITHUB_ISSUE'],
+      allowed_repository_ids: ['fixture-repo'],
+      required_labels: ['agent-ready'],
+      max_active_tasks: 1,
+      max_claims_per_cycle: 1,
+      lease_seconds: 300,
+      max_consecutive_failures: 3,
+      require_merged_publication: true,
     },
     source: {
-      listCandidates: async () => ({ candidates: [], next_cursor: null }), loadCandidate: async () => null,
-      claim: async () => 'BUSY', renew: async () => 'LOST', complete: async () => {}, reopen: async () => {}, fail: async () => {},
+      listCandidates: async () => ({ candidates: [], next_cursor: null }),
+      loadCandidate: async () => null,
+      claim: async () => 'BUSY',
+      renew: async () => 'LOST',
+      complete: async () => {},
+      reopen: async () => {},
+      fail: async () => {},
     },
-    runtime: { start: async () => { throw new Error('not expected'); }, resume: async () => { throw new Error('not expected'); } },
-    post_merge: { verify: async () => { throw new Error('not expected'); } },
+    runtime: {
+      start: async () => {
+        throw new Error('not expected');
+      },
+      resume: async () => {
+        throw new Error('not expected');
+      },
+    },
+    post_merge: {
+      verify: async () => {
+        throw new Error('not expected');
+      },
+    },
   });
   await dispatcher.setMode('PAUSED');
   const controller = new AbortController();
@@ -567,7 +919,9 @@ test('the service loop runs serial cycles until its abort signal is observed', a
     dispatcher,
     interval_ms: 100,
     signal: controller.signal,
-    sleep: async () => { sleeps += 1; },
+    sleep: async () => {
+      sleeps += 1;
+    },
     on_cycle: async () => {
       cycles += 1;
       if (cycles === 2) controller.abort();
@@ -579,14 +933,24 @@ test('the service loop runs serial cycles until its abort signal is observed', a
 });
 
 test('dispatcher state must live in an explicit absolute broker-owned directory', () => {
-  assert.throws(() => createAutonomousDispatcherV4({
-    state_directory: 'relative-state',
-    policy: {
-      allowed_sources: ['GITHUB_ISSUE'], allowed_repository_ids: ['fixture-repo'], required_labels: ['agent-ready'],
-      max_active_tasks: 1, max_claims_per_cycle: 1, lease_seconds: 300, max_consecutive_failures: 3, require_merged_publication: true,
-    },
-    source: {} as never,
-    runtime: {} as never,
-    post_merge: {} as never,
-  }), /INVALID_CONTRACT: state_directory must be absolute/);
+  assert.throws(
+    () =>
+      createAutonomousDispatcherV4({
+        state_directory: 'relative-state',
+        policy: {
+          allowed_sources: ['GITHUB_ISSUE'],
+          allowed_repository_ids: ['fixture-repo'],
+          required_labels: ['agent-ready'],
+          max_active_tasks: 1,
+          max_claims_per_cycle: 1,
+          lease_seconds: 300,
+          max_consecutive_failures: 3,
+          require_merged_publication: true,
+        },
+        source: {} as never,
+        runtime: {} as never,
+        post_merge: {} as never,
+      }),
+    /INVALID_CONTRACT: state_directory must be absolute/,
+  );
 });

@@ -12,17 +12,12 @@ export interface RequestRegistrationV4 {
 }
 
 function immutableIndex(index: RequestIndexV4): RequestIndexV4 {
-  return Object.freeze(Object.fromEntries(
-    Object.entries(index).map(([requestId, identity]) => [requestId, Object.freeze({ ...identity })]),
-  ));
+  return Object.freeze(
+    Object.fromEntries(Object.entries(index).map(([requestId, identity]) => [requestId, Object.freeze({ ...identity })])),
+  );
 }
 
-export function registerRequestV4(
-  index: RequestIndexV4,
-  requestId: string,
-  requestHash: string,
-  runId: string,
-): RequestRegistrationV4 {
+export function registerRequestV4(index: RequestIndexV4, requestId: string, requestHash: string, runId: string): RequestRegistrationV4 {
   const existing = index[requestId];
   if (existing !== undefined) {
     if (existing.request_hash !== requestHash) {
@@ -34,9 +29,7 @@ export function registerRequestV4(
   return Object.freeze({ index: next, run_id: runId, created: true });
 }
 
-export function replayRequestIndexV4(
-  records: readonly ({ request_id: string } & RequestIdentityV4)[],
-): RequestIndexV4 {
+export function replayRequestIndexV4(records: readonly ({ request_id: string } & RequestIdentityV4)[]): RequestIndexV4 {
   let index: RequestIndexV4 = Object.freeze({});
   for (const record of records) {
     const existing = index[record.request_id];

@@ -17,7 +17,10 @@ export function strictSddPlannerInstructionsV4(): readonly string[] {
   ]);
 }
 
-export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tests: readonly string[]; readonly implementation_targets: readonly { readonly path: string; readonly operations: readonly string[] }[] }): readonly string[] {
+export function strictSddExecutorInstructionsV4(input: {
+  readonly acceptance_tests: readonly string[];
+  readonly implementation_targets: readonly { readonly path: string; readonly operations: readonly string[] }[];
+}): readonly string[] {
   const acceptanceTests = input.acceptance_tests.join(', ');
   const implementationTargets = input.implementation_targets.map((change) => `${change.path} [${change.operations.join(', ')}]`).join(', ');
   return Object.freeze([
@@ -25,7 +28,7 @@ export function strictSddExecutorInstructionsV4(input: { readonly acceptance_tes
     `Acceptance tests (READ-ONLY, immutable): ${acceptanceTests}`,
     `Implementation targets (READ-WRITE only): ${implementationTargets}`,
     'You are PROHIBITED from editing the supplied acceptance-test files. Your only objective is to modify implementation files so npm test passes.',
-    'SHIFT-LEFT: npm run lint and npm run format:critical:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
+    'SHIFT-LEFT: npm run lint and npm run format:check are networkless deterministic gates. Repair every reported static quality or security finding before claiming completion.',
     'If a repair packet is supplied, follow its bounded instruction without widening the implementation target list.',
     'For OpenCode configuration work, repository-root opencode.json is the only permitted config target and only when listed above; never read or edit personal, user-level, home-directory, or global OpenCode configuration.',
   ]);
@@ -76,16 +79,26 @@ export function codexModelConfigArgvV4(guidance: RuntimeModelGuidanceV4): readon
 
 export function codexBrokerProviderConfigArgvV4(providerEndpoint: string): readonly string[] {
   let endpoint: URL;
-  try { endpoint = new URL(providerEndpoint); } catch { throw new Error('CAPABILITY_UNVERIFIED: Codex provider gateway endpoint is invalid'); }
+  try {
+    endpoint = new URL(providerEndpoint);
+  } catch {
+    throw new Error('CAPABILITY_UNVERIFIED: Codex provider gateway endpoint is invalid');
+  }
   if (endpoint.toString() !== 'http://provider-gateway:8080/v1') {
     throw new Error('CAPABILITY_UNVERIFIED: Codex provider gateway endpoint is invalid');
   }
   return Object.freeze([
-    '-c', 'model_provider="broker_gateway"',
-    '-c', 'model_providers.broker_gateway.name="Broker Gateway"',
-    '-c', `model_providers.broker_gateway.base_url=${JSON.stringify(endpoint.toString().replace(/\/$/u, ''))}`,
-    '-c', 'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
-    '-c', 'model_providers.broker_gateway.wire_api="responses"',
-    '-c', 'model_providers.broker_gateway.requires_openai_auth=false',
+    '-c',
+    'model_provider="broker_gateway"',
+    '-c',
+    'model_providers.broker_gateway.name="Broker Gateway"',
+    '-c',
+    `model_providers.broker_gateway.base_url=${JSON.stringify(endpoint.toString().replace(/\/$/u, ''))}`,
+    '-c',
+    'model_providers.broker_gateway.env_key="PROVIDER_GATEWAY_TOKEN"',
+    '-c',
+    'model_providers.broker_gateway.wire_api="responses"',
+    '-c',
+    'model_providers.broker_gateway.requires_openai_auth=false',
   ]);
 }

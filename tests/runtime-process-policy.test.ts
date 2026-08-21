@@ -7,12 +7,30 @@ import { assertResolvedValidationV4, resolveValidation } from '../src/runtime/pr
 
 function policy(): RuntimeRepositoryPolicyV4 {
   return {
-    schemaVersion: 4, repositoryId: 'fixture-repo', base: { allowedBranches: ['main'] }, worktrees: { parentRef: 'managed' },
+    schemaVersion: 4,
+    repositoryId: 'fixture-repo',
+    base: { allowedBranches: ['main'] },
+    worktrees: { parentRef: 'managed' },
     routing: { frontierOnly: { riskClasses: ['security'], taskClasses: [], paths: [], sourceSensitivity: ['PRIVATE'] } },
-    validation: { test: { argv: ['npm', 'test', '--', '--runInBand'], workingDirectory: '.', timeoutSeconds: 120, sandboxProfile: 'VALIDATION_UNTRUSTED' } },
+    validation: {
+      test: {
+        argv: ['npm', 'test', '--', '--runInBand'],
+        workingDirectory: '.',
+        timeoutSeconds: 120,
+        sandboxProfile: 'VALIDATION_UNTRUSTED',
+      },
+    },
     sourcePolicy: { dataScope: 'SOURCE_CODE_ONLY', sourceSensitivity: 'PUBLIC' },
-    sandbox: { requiredBackend: 'docker', requiredProfiles: ['VALIDATION_UNTRUSTED'] }, instructions: { approvedSources: ['AGENTS.md'] },
-    publication: { enabled: true, remote: 'origin', baseBranch: 'main', mergeMethod: 'squash', requireRequiredChecks: true, timeoutSeconds: 900 },
+    sandbox: { requiredBackend: 'docker', requiredProfiles: ['VALIDATION_UNTRUSTED'] },
+    instructions: { approvedSources: ['AGENTS.md'] },
+    publication: {
+      enabled: true,
+      remote: 'origin',
+      baseBranch: 'main',
+      mergeMethod: 'squash',
+      requireRequiredChecks: true,
+      timeoutSeconds: 900,
+    },
   };
 }
 
@@ -31,10 +49,18 @@ test('resolves the exact owner-policy command, cwd, timeout, profile, and policy
 test('rejects unknown IDs, shell syntax, install/lifecycle commands, unsafe cwd, and timeout expansion', () => {
   assert.throws(() => resolveValidation(freezeRepositoryPolicy(policy()), 'missing'), /VALIDATION_FAILED/);
   for (const mutation of [
-    (value: RuntimeRepositoryPolicyV4) => { value.validation.test!.argv = ['npm', 'test && curl bad']; },
-    (value: RuntimeRepositoryPolicyV4) => { value.validation.test!.argv = ['npm', 'install']; },
-    (value: RuntimeRepositoryPolicyV4) => { value.validation.test!.workingDirectory = '../outside'; },
-    (value: RuntimeRepositoryPolicyV4) => { value.validation.test!.timeoutSeconds = 4000; },
+    (value: RuntimeRepositoryPolicyV4) => {
+      value.validation.test!.argv = ['npm', 'test && curl bad'];
+    },
+    (value: RuntimeRepositoryPolicyV4) => {
+      value.validation.test!.argv = ['npm', 'install'];
+    },
+    (value: RuntimeRepositoryPolicyV4) => {
+      value.validation.test!.workingDirectory = '../outside';
+    },
+    (value: RuntimeRepositoryPolicyV4) => {
+      value.validation.test!.timeoutSeconds = 4000;
+    },
   ]) {
     const value = structuredClone(policy()) as RuntimeRepositoryPolicyV4;
     mutation(value);

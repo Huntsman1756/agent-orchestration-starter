@@ -53,7 +53,10 @@ function orchestrationInstructions(policy: ResolvedPolicy): GeneratedFile {
 
 function desiredFiles(policy: ResolvedPolicy, harnesses: Harness[], acceptDegradedIsolation: Harness[] = []): GeneratedFile[] {
   const byPath = new Map<string, GeneratedFile>();
-  for (const generated of [orchestrationInstructions(policy), ...harnesses.flatMap((harness) => compileHarness(harness, policy, { acceptDegradedIsolation }))]) {
+  for (const generated of [
+    orchestrationInstructions(policy),
+    ...harnesses.flatMap((harness) => compileHarness(harness, policy, { acceptDegradedIsolation })),
+  ]) {
     const prior = byPath.get(generated.path);
     if (prior && prior.content !== generated.content) throw new Error(`Conflicting generated content for ${generated.path}`);
     byPath.set(generated.path, generated);

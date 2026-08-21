@@ -26,8 +26,17 @@ export async function writeBrokerOpenCodeConfigV4(input: {
     throw new Error('EXECUTOR_POLICY_VIOLATION: binding cannot run the OpenCode executor');
   }
   let endpoint: URL;
-  try { endpoint = new URL(input.provider_endpoint); } catch { throw new Error('EXECUTOR_POLICY_VIOLATION: provider gateway endpoint is invalid'); }
-  if (endpoint.toString() !== 'http://provider-gateway:8080/v1' || endpoint.username !== '' || endpoint.password !== '' || endpoint.hash !== '') {
+  try {
+    endpoint = new URL(input.provider_endpoint);
+  } catch {
+    throw new Error('EXECUTOR_POLICY_VIOLATION: provider gateway endpoint is invalid');
+  }
+  if (
+    endpoint.toString() !== 'http://provider-gateway:8080/v1' ||
+    endpoint.username !== '' ||
+    endpoint.password !== '' ||
+    endpoint.hash !== ''
+  ) {
     throw new Error('EXECUTOR_POLICY_VIOLATION: provider gateway endpoint is not the broker-owned internal origin');
   }
   const edit: Record<string, 'allow' | 'deny'> = { '*': 'deny' };
@@ -80,7 +89,7 @@ export async function writeBrokerOpenCodeConfigV4(input: {
   try {
     await writeFile(hostPath, serialized, { flag: 'wx', mode: 0o600 });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || await readFile(hostPath, 'utf8').catch(() => '') !== serialized) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || (await readFile(hostPath, 'utf8').catch(() => '')) !== serialized) {
       throw new Error('EXECUTOR_POLICY_VIOLATION: broker OpenCode config path is not immutable');
     }
   }

@@ -67,10 +67,17 @@ const hostCheckCodes: readonly RuntimeHostCheckCodeV4[] = [
 ];
 const executionChecks = hostCheckCodes.filter((code) => !['GITHUB_PUBLICATION_LEASE', 'V3_TELEMETRY_ADAPTER'].includes(code));
 
-function roleCoverage(profile: RuntimeProfileV4, roles: readonly RuntimeRoleV4[], sensitivity: SourceSensitivityV4, permission: 'read-only' | 'contract-write', tier?: 'frontier' | 'economy'): RuntimeRouteCoverageReasonV4 {
+function roleCoverage(
+  profile: RuntimeProfileV4,
+  roles: readonly RuntimeRoleV4[],
+  sensitivity: SourceSensitivityV4,
+  permission: 'read-only' | 'contract-write',
+  tier?: 'frontier' | 'economy',
+): RuntimeRouteCoverageReasonV4 {
   if (roles.some((role) => profile.bindings[role]?.permissions !== permission)) return 'PERMISSION_MISMATCH';
   if (tier !== undefined && roles.some((role) => profile.bindings[role]?.tier !== tier)) return 'TIER_MISMATCH';
-  if (roles.some((role) => !profile.bindings[role]?.allowedSourceSensitivity.includes(sensitivity))) return 'SOURCE_SENSITIVITY_UNSUPPORTED';
+  if (roles.some((role) => !profile.bindings[role]?.allowedSourceSensitivity.includes(sensitivity)))
+    return 'SOURCE_SENSITIVITY_UNSUPPORTED';
   return 'SUPPORTED';
 }
 
@@ -87,15 +94,23 @@ export function analyzeRuntimeRouteCoverageV4(profileInput: RuntimeProfileV4, se
   });
 }
 
-function check(code: RuntimeReadinessCheckV4['code'], status: RuntimeReadinessCheckStatusV4, evidenceHash: string | null = null): RuntimeReadinessCheckV4 {
+function check(
+  code: RuntimeReadinessCheckV4['code'],
+  status: RuntimeReadinessCheckStatusV4,
+  evidenceHash: string | null = null,
+): RuntimeReadinessCheckV4 {
   return Object.freeze({ code, status, evidenceHash });
 }
 
 function loadEvidence(values: readonly RuntimeHostEvidenceV4[]): ReadonlyMap<RuntimeHostCheckCodeV4, RuntimeHostEvidenceV4> {
   const evidence = new Map<RuntimeHostCheckCodeV4, RuntimeHostEvidenceV4>();
   for (const supplied of values) {
-    if (!hostCheckCodes.includes(supplied.code) || evidence.has(supplied.code)) throw new Error('INVALID_CONTRACT: host readiness evidence is unknown or duplicated');
-    const valid = supplied.status === 'VERIFIED' ? hashPattern.test(supplied.evidenceHash ?? '') : supplied.status === 'UNAVAILABLE' && supplied.evidenceHash === null;
+    if (!hostCheckCodes.includes(supplied.code) || evidence.has(supplied.code))
+      throw new Error('INVALID_CONTRACT: host readiness evidence is unknown or duplicated');
+    const valid =
+      supplied.status === 'VERIFIED'
+        ? hashPattern.test(supplied.evidenceHash ?? '')
+        : supplied.status === 'UNAVAILABLE' && supplied.evidenceHash === null;
     if (!valid) throw new Error('INVALID_CONTRACT: host readiness evidence status and hash disagree');
     evidence.set(supplied.code, Object.freeze({ ...supplied }));
   }
@@ -103,22 +118,25 @@ function loadEvidence(values: readonly RuntimeHostEvidenceV4[]): ReadonlyMap<Run
 }
 
 export function assessRuntimeActivationV4(input: AssessRuntimeActivationInputV4): RuntimeActivationReadinessReportV4 {
-  if (!['ANALYSIS_ONLY', 'ISOLATED_EXECUTION', 'AUTONOMOUS_PUBLICATION'].includes(input.target)) throw new Error('INVALID_CONTRACT: activation target is invalid');
+  if (!['ANALYSIS_ONLY', 'ISOLATED_EXECUTION', 'AUTONOMOUS_PUBLICATION'].includes(input.target))
+    throw new Error('INVALID_CONTRACT: activation target is invalid');
   const policy = loadRuntimeRepositoryPolicyV4(structuredClone(input.policy));
   const profile = loadRuntimeProfileV4(structuredClone(input.profile));
   const assessed = new Date(input.assessedAt);
-  if (!Number.isFinite(assessed.getTime()) || assessed.toISOString() !== input.assessedAt) throw new Error('INVALID_CONTRACT: readiness assessment timestamp is invalid');
+  if (!Number.isFinite(assessed.getTime()) || assessed.toISOString() !== input.assessedAt)
+    throw new Error('INVALID_CONTRACT: readiness assessment timestamp is invalid');
   const evidence = loadEvidence(input.hostEvidence);
   const routeCoverage = analyzeRuntimeRouteCoverageV4(profile, policy.sourcePolicy.sourceSensitivity);
   const executionTarget = input.target !== 'ANALYSIS_ONLY';
   const checks: RuntimeReadinessCheckV4[] = [];
 
-  const topologyValid = profile.bindings.orchestrator.tier === 'frontier'
-    && profile.bindings.reviewer.tier === 'frontier'
-    && profile.bindings.executor.tier === 'economy'
-    && profile.bindings.escalationExecutor.tier === 'economy'
-    && profile.bindings.frontierExecutor.tier === 'frontier'
-    && (profile.bindings.reasoningExecutor === undefined || profile.bindings.reasoningExecutor.tier === 'economy');
+  const topologyValid =
+    profile.bindings.orchestrator.tier === 'frontier' &&
+    profile.bindings.reviewer.tier === 'frontier' &&
+    profile.bindings.executor.tier === 'economy' &&
+    profile.bindings.escalationExecutor.tier === 'economy' &&
+    profile.bindings.frontierExecutor.tier === 'frontier' &&
+    (profile.bindings.reasoningExecutor === undefined || profile.bindings.reasoningExecutor.tier === 'economy');
   checks.push(check('DELEGATION_TOPOLOGY', topologyValid ? 'PASS' : executionTarget ? 'BLOCKED' : 'WARNING'));
   const coreReason = roleCoverage(profile, ['orchestrator', 'reviewer'], policy.sourcePolicy.sourceSensitivity, 'read-only', 'frontier');
   checks.push(check('CORE_ROLE_COVERAGE', coreReason === 'SUPPORTED' ? 'PASS' : executionTarget ? 'BLOCKED' : 'WARNING'));
@@ -133,9 +151,17 @@ export function assessRuntimeActivationV4(input: AssessRuntimeActivationInputV4)
   }
   const publicationEvidence = evidence.get('GITHUB_PUBLICATION_LEASE');
   const publicationRequired = input.target === 'AUTONOMOUS_PUBLICATION';
-  checks.push(check('GITHUB_PUBLICATION_LEASE', publicationEvidence?.status === 'VERIFIED' ? 'PASS' : publicationRequired ? 'BLOCKED' : 'WARNING', publicationEvidence?.evidenceHash ?? null));
+  checks.push(
+    check(
+      'GITHUB_PUBLICATION_LEASE',
+      publicationEvidence?.status === 'VERIFIED' ? 'PASS' : publicationRequired ? 'BLOCKED' : 'WARNING',
+      publicationEvidence?.evidenceHash ?? null,
+    ),
+  );
   const telemetryEvidence = evidence.get('V3_TELEMETRY_ADAPTER');
-  checks.push(check('V3_TELEMETRY_ADAPTER', telemetryEvidence?.status === 'VERIFIED' ? 'PASS' : 'WARNING', telemetryEvidence?.evidenceHash ?? null));
+  checks.push(
+    check('V3_TELEMETRY_ADAPTER', telemetryEvidence?.status === 'VERIFIED' ? 'PASS' : 'WARNING', telemetryEvidence?.evidenceHash ?? null),
+  );
 
   const draft = {
     schemaVersion: 4 as const,

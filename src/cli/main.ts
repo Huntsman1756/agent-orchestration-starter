@@ -14,16 +14,16 @@ import { evaluateRouting } from '../routing/evaluate.js';
 import { loadBenchmarkObservations, loadRoutingGatePolicy } from '../routing/load.js';
 import { canonicalize } from '../pilot/canonical-json.js';
 import { evaluatePilot, type PilotEvaluationContextV3 } from '../pilot/evaluate.js';
-import {
-  loadPilotEvaluationReportV3,
-  loadPilotEventV3,
-  loadPilotManifestV3,
-  loadPilotRoutingGateV3,
-} from '../pilot/load.js';
+import { loadPilotEvaluationReportV3, loadPilotEventV3, loadPilotManifestV3, loadPilotRoutingGateV3 } from '../pilot/load.js';
 import { verifyManifest } from '../pilot/manifest.js';
 import { reduceEvents } from '../pilot/reducer.js';
 import type { PilotEventV3 } from '../pilot/contracts.js';
-import { activateRuntimeRepositoryV4, installRuntimeHostV4, verifyRuntimeHostInstallationV4, loadRuntimeHostInstallationV4 } from '../runtime/host-installation.js';
+import {
+  activateRuntimeRepositoryV4,
+  installRuntimeHostV4,
+  verifyRuntimeHostInstallationV4,
+  loadRuntimeHostInstallationV4,
+} from '../runtime/host-installation.js';
 import { loadRuntimeHostDriverV4 } from '../runtime/host-driver.js';
 import { verifyDelegationProvenanceV4 } from '../runtime/delegation-provenance.js';
 import { auditTrailDirectoryV4, verifyAuditTrailV4 } from '../runtime/audit-trail.js';
@@ -51,7 +51,8 @@ function exactOptions(argv: string[], allowed: readonly string[], required: read
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
-    if (!allowed.includes(name) || value === undefined || value.startsWith('--') || values.has(name)) throw new Error('INVALID_CONTRACT: runtime options are unknown, duplicated, or missing values');
+    if (!allowed.includes(name) || value === undefined || value.startsWith('--') || values.has(name))
+      throw new Error('INVALID_CONTRACT: runtime options are unknown, duplicated, or missing values');
     values.set(name, value);
   }
   if (required.some((name) => !values.has(name))) throw new Error(`INVALID_CONTRACT: required runtime options are missing`);
@@ -60,7 +61,10 @@ function exactOptions(argv: string[], allowed: readonly string[], required: read
 
 function harnesses(argv: string[]): Harness[] {
   const value = option(argv, '--harnesses') ?? 'codex,opencode,hermes';
-  const parsed = value.split(',').map((item) => item.trim()).filter(Boolean);
+  const parsed = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
   for (const item of parsed) {
     if (!['codex', 'opencode', 'hermes'].includes(item)) throw new Error(`Unsupported harness: ${item}`);
   }
@@ -70,7 +74,10 @@ function harnesses(argv: string[]): Harness[] {
 function acceptedDegradedIsolation(argv: string[]): Harness[] {
   const value = option(argv, '--accept-degraded-isolation');
   if (!value) return [];
-  const parsed = value.split(',').map((item) => item.trim()).filter(Boolean);
+  const parsed = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
   for (const item of parsed) {
     if (!['codex', 'opencode', 'hermes'].includes(item)) throw new Error(`Unsupported isolation acceptance: ${item}`);
   }
@@ -97,9 +104,7 @@ function pilotInputError(message: string): Error {
   return new Error(`PILOT_V3_INPUT_ERROR: ${message}`);
 }
 
-const pilotV3Options = new Set([
-  '--manifest', '--events', '--gate', '--evaluation-id', '--evaluation-version', '--prior-report',
-]);
+const pilotV3Options = new Set(['--manifest', '--events', '--gate', '--evaluation-id', '--evaluation-version', '--prior-report']);
 
 function parsePilotV3Options(argv: string[]): ReadonlyMap<string, string> {
   const parsed = new Map<string, string>();
@@ -132,7 +137,10 @@ async function readPilotEvents(path: string): Promise<PilotEventV3[]> {
   } catch {
     throw pilotInputError('events JSONL could not be read');
   }
-  const lines = text.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  const lines = text
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (lines.length === 0) throw pilotInputError('events JSONL is empty');
   return lines.map((line, index) => {
     try {
@@ -204,8 +212,18 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
     if (command === 'runtime') {
       const subcommand = argv[1];
       if (subcommand === 'install') {
-        const values = exactOptions(argv.slice(2), ['--source-root','--host-root','--host-driver','--host-components','--installed-at'], ['--source-root','--host-root']);
-        const manifest = await installRuntimeHostV4({ sourceRoot: values.get('--source-root')!, hostRoot: values.get('--host-root')!, hostDriver: values.get('--host-driver'), hostComponentsManifest: values.get('--host-components'), installedAt: values.get('--installed-at') ?? new Date().toISOString() });
+        const values = exactOptions(
+          argv.slice(2),
+          ['--source-root', '--host-root', '--host-driver', '--host-components', '--installed-at'],
+          ['--source-root', '--host-root'],
+        );
+        const manifest = await installRuntimeHostV4({
+          sourceRoot: values.get('--source-root')!,
+          hostRoot: values.get('--host-root')!,
+          hostDriver: values.get('--host-driver'),
+          hostComponentsManifest: values.get('--host-components'),
+          installedAt: values.get('--installed-at') ?? new Date().toISOString(),
+        });
         stdout(JSON.stringify(manifest));
         return 0;
       }
@@ -216,25 +234,49 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         return 0;
       }
       if (subcommand === 'activate') {
-        const allowed = ['--repository-root','--policy','--profile','--worktree-parent','--installation-manifest','--host-root','--target','--activated-at'];
-        const values = exactOptions(argv.slice(2), allowed, allowed.filter((name) => name !== '--activated-at'));
+        const allowed = [
+          '--repository-root',
+          '--policy',
+          '--profile',
+          '--worktree-parent',
+          '--installation-manifest',
+          '--host-root',
+          '--target',
+          '--activated-at',
+        ];
+        const values = exactOptions(
+          argv.slice(2),
+          allowed,
+          allowed.filter((name) => name !== '--activated-at'),
+        );
         const activation = await activateRuntimeRepositoryV4({
-          repositoryRoot: values.get('--repository-root')!, policyPath: values.get('--policy')!, profilePath: values.get('--profile')!,
-          worktreeParent: values.get('--worktree-parent')!, installationManifest: values.get('--installation-manifest')!, hostRoot: values.get('--host-root')!,
-          target: values.get('--target')! as 'ANALYSIS_ONLY'|'ISOLATED_EXECUTION'|'AUTONOMOUS_PUBLICATION', activatedAt: values.get('--activated-at') ?? new Date().toISOString(),
+          repositoryRoot: values.get('--repository-root')!,
+          policyPath: values.get('--policy')!,
+          profilePath: values.get('--profile')!,
+          worktreeParent: values.get('--worktree-parent')!,
+          installationManifest: values.get('--installation-manifest')!,
+          hostRoot: values.get('--host-root')!,
+          target: values.get('--target')! as 'ANALYSIS_ONLY' | 'ISOLATED_EXECUTION' | 'AUTONOMOUS_PUBLICATION',
+          activatedAt: values.get('--activated-at') ?? new Date().toISOString(),
         });
         stdout(JSON.stringify(activation));
         return 0;
       }
       if (subcommand === 'daemon') {
-        if (argv.length === 2 && io.runtimeDaemon !== undefined) { await io.runtimeDaemon(); return 0; }
+        if (argv.length === 2 && io.runtimeDaemon !== undefined) {
+          await io.runtimeDaemon();
+          return 0;
+        }
         if (argv.length === 2) throw new Error('CAPABILITY_UNVERIFIED: runtime daemon composition is unavailable');
         const values = exactOptions(argv.slice(2), ['--activation'], ['--activation']);
         await (await loadRuntimeHostDriverV4(values.get('--activation')!)).daemon();
         return 0;
       }
       if (subcommand === 'mcp-stdio') {
-        if (argv.length === 2 && io.runtimeMcpStdio !== undefined) { await io.runtimeMcpStdio(); return 0; }
+        if (argv.length === 2 && io.runtimeMcpStdio !== undefined) {
+          await io.runtimeMcpStdio();
+          return 0;
+        }
         if (argv.length === 2) throw new Error('CAPABILITY_UNVERIFIED: authenticated MCP composition is unavailable');
         const values = exactOptions(argv.slice(2), ['--activation'], ['--activation']);
         await (await loadRuntimeHostDriverV4(values.get('--activation')!)).mcpStdio();
@@ -248,7 +290,8 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         }
         const repositoryPolicy = option(argv, '--repository-policy');
         const profile = option(argv, '--profile');
-        if (repositoryPolicy === undefined || profile === undefined || argv.length !== 6) throw new Error('INVALID_CONTRACT: runtime doctor requires exact --repository-policy and --profile options');
+        if (repositoryPolicy === undefined || profile === undefined || argv.length !== 6)
+          throw new Error('INVALID_CONTRACT: runtime doctor requires exact --repository-policy and --profile options');
         if (io.runtimeDoctor !== undefined) {
           for (const line of await io.runtimeDoctor({ repository_policy: repositoryPolicy, profile })) stdout(line);
           return 0;
@@ -261,23 +304,39 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       }
       if (subcommand === 'status') {
         const runId = option(argv, '--run-id');
-        if (runId === undefined || !/^run_[A-Za-z0-9_-]{16,96}$/.test(runId)) throw new Error('INVALID_CONTRACT: runtime status requires one exact --run-id');
+        if (runId === undefined || !/^run_[A-Za-z0-9_-]{16,96}$/.test(runId))
+          throw new Error('INVALID_CONTRACT: runtime status requires one exact --run-id');
         if (argv.length === 4 && io.runtimeStatus !== undefined) stdout(JSON.stringify(await io.runtimeStatus(runId)));
         else {
-          const values = exactOptions(argv.slice(2), ['--run-id','--activation'], ['--run-id','--activation']);
+          const values = exactOptions(argv.slice(2), ['--run-id', '--activation'], ['--run-id', '--activation']);
           stdout(JSON.stringify(await (await loadRuntimeHostDriverV4(values.get('--activation')!)).status(runId)));
         }
         return 0;
       }
       if (subcommand === 'verify-delegation') {
-        const values = exactOptions(argv.slice(2), ['--evidence','--public-key','--commit-sha','--git-tree-sha','--policy-hash','--profile-hash'], ['--evidence','--public-key','--commit-sha','--git-tree-sha','--policy-hash','--profile-hash']);
-        const evidence = verifyDelegationProvenanceV4(JSON.parse(await readFile(values.get('--evidence')!, 'utf8')), {
-          commit_sha: values.get('--commit-sha')!,
-          git_tree_sha: values.get('--git-tree-sha')!,
-          policy_hash: values.get('--policy-hash')!,
-          profile_hash: values.get('--profile-hash')!,
-        }, await readFile(values.get('--public-key')!, 'utf8'));
-        stdout(JSON.stringify({ verified: true, run_id: evidence.run_id, disposition: evidence.disposition, provenance_hash: evidence.provenance_hash }));
+        const values = exactOptions(
+          argv.slice(2),
+          ['--evidence', '--public-key', '--commit-sha', '--git-tree-sha', '--policy-hash', '--profile-hash'],
+          ['--evidence', '--public-key', '--commit-sha', '--git-tree-sha', '--policy-hash', '--profile-hash'],
+        );
+        const evidence = verifyDelegationProvenanceV4(
+          JSON.parse(await readFile(values.get('--evidence')!, 'utf8')),
+          {
+            commit_sha: values.get('--commit-sha')!,
+            git_tree_sha: values.get('--git-tree-sha')!,
+            policy_hash: values.get('--policy-hash')!,
+            profile_hash: values.get('--profile-hash')!,
+          },
+          await readFile(values.get('--public-key')!, 'utf8'),
+        );
+        stdout(
+          JSON.stringify({
+            verified: true,
+            run_id: evidence.run_id,
+            disposition: evidence.disposition,
+            provenance_hash: evidence.provenance_hash,
+          }),
+        );
         return 0;
       }
       if (subcommand === 'audit-verify') {
@@ -287,15 +346,24 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
         return report.status === 'OK' ? 0 : 1;
       }
       if (subcommand === 'worktree-gc') {
-        const values = exactOptions(argv.slice(2), ['--repository-root','--worktree-parent','--mode','--expected-report-hash'], ['--repository-root','--worktree-parent','--mode']);
+        const values = exactOptions(
+          argv.slice(2),
+          ['--repository-root', '--worktree-parent', '--mode', '--expected-report-hash'],
+          ['--repository-root', '--worktree-parent', '--mode'],
+        );
         const mode = values.get('--mode');
         if (mode !== 'REPORT' && mode !== 'APPLY') throw new Error('INVALID_CONTRACT: worktree-gc mode must be REPORT or APPLY');
         const expectedReportHash = values.get('--expected-report-hash');
-        if ((mode === 'APPLY') !== (expectedReportHash !== undefined)) throw new Error('INVALID_CONTRACT: APPLY requires one expected report hash and REPORT forbids it');
-        const manager = createWorktreeManagerV4({ repository_root: values.get('--repository-root')!, worktree_parent: values.get('--worktree-parent')! });
-        const report = mode === 'REPORT'
-          ? await manager.reconcile({ mode: 'REPORT' })
-          : await manager.reconcile({ mode: 'APPLY', expected_report_hash: expectedReportHash! });
+        if ((mode === 'APPLY') !== (expectedReportHash !== undefined))
+          throw new Error('INVALID_CONTRACT: APPLY requires one expected report hash and REPORT forbids it');
+        const manager = createWorktreeManagerV4({
+          repository_root: values.get('--repository-root')!,
+          worktree_parent: values.get('--worktree-parent')!,
+        });
+        const report =
+          mode === 'REPORT'
+            ? await manager.reconcile({ mode: 'REPORT' })
+            : await manager.reconcile({ mode: 'APPLY', expected_report_hash: expectedReportHash! });
         stdout(JSON.stringify(report));
         return 0;
       }
@@ -311,10 +379,7 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       if (!observationsPath || !routingPolicyPath) {
         throw new Error('--observations and --routing-policy are required');
       }
-      const report = evaluateRouting(
-        await loadBenchmarkObservations(observationsPath),
-        await loadRoutingGatePolicy(routingPolicyPath),
-      );
+      const report = evaluateRouting(await loadBenchmarkObservations(observationsPath), await loadRoutingGatePolicy(routingPolicyPath));
       stdout(JSON.stringify(report, null, 2));
       return 0;
     }
@@ -349,8 +414,15 @@ export async function runCli(argv: string[], io: CliIo = {}): Promise<number> {
       return report.issues.length === 0 ? 0 : 1;
     }
     const dryRun = argv.includes('--dry-run');
-    const forcePaths = argv.flatMap((value, index) => value === '--force' && argv[index + 1] ? [argv[index + 1]] : []);
-    const report = await renderProject({ targetDir, policy, harnesses: selectedHarnesses, dryRun, forcePaths, acceptDegradedIsolation: isolationAcceptance });
+    const forcePaths = argv.flatMap((value, index) => (value === '--force' && argv[index + 1] ? [argv[index + 1]] : []));
+    const report = await renderProject({
+      targetDir,
+      policy,
+      harnesses: selectedHarnesses,
+      dryRun,
+      forcePaths,
+      acceptDegradedIsolation: isolationAcceptance,
+    });
     for (const path of report.created) stdout(`${dryRun ? 'would create' : 'created'}: ${path}`);
     for (const path of report.updated) stdout(`${dryRun ? 'would update' : 'updated'}: ${path}`);
     for (const conflict of report.conflicts) stdout(`${conflict.reason}: ${conflict.path}`);

@@ -23,9 +23,11 @@ function contains(parent: string, candidate: string): boolean {
 }
 
 export async function buildExecutorCapsuleV4(input: ExecutorCapsuleInputV4): Promise<ExecutorCapsuleV4> {
-  if (!/^run_[A-Za-z0-9_-]{1,92}$/.test(input.run_id)
-    || !/^[a-f0-9]{40}$/.test(input.base_sha)
-    || !/^[a-f0-9]{64}$/.test(input.instruction_manifest_hash)) {
+  if (
+    !/^run_[A-Za-z0-9_-]{1,92}$/.test(input.run_id) ||
+    !/^[a-f0-9]{40}$/.test(input.base_sha) ||
+    !/^[a-f0-9]{64}$/.test(input.instruction_manifest_hash)
+  ) {
     throw new Error('BROKER_STATE_CORRUPT: capsule identity is invalid');
   }
   await mkdir(input.capsule_parent, { recursive: true, mode: 0o700 });

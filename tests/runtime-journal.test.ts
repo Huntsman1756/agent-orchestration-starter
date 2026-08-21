@@ -14,7 +14,16 @@ import { validRuntimeResult, validWorkContract } from './runtime-contracts.test.
 
 function accepted(commandId: string, runId = 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1'): Extract<BrokerCommandV4, { type: 'RUN_ACCEPTED' }> {
   const contract = { ...validWorkContract(), run_id: runId } as RuntimeWorkContractV4;
-  const result = { ...validRuntimeResult(), run_id: runId, state: 'READY_FOR_EXECUTOR', attempts: [], validation_results: [], head_sha: null, review_attestation_hash: null, commit_sha: null } as RuntimeResultV4;
+  const result = {
+    ...validRuntimeResult(),
+    run_id: runId,
+    state: 'READY_FOR_EXECUTOR',
+    attempts: [],
+    validation_results: [],
+    head_sha: null,
+    review_attestation_hash: null,
+    commit_sha: null,
+  } as RuntimeResultV4;
   return {
     type: 'RUN_ACCEPTED',
     command_id: commandId,
@@ -41,7 +50,10 @@ test('reopens two fsynced commands in their original order', async () => {
 
   const recovered = await reopenJournalV4(directory);
 
-  assert.deepEqual(recovered.records.map((record) => record.command), [commandA, commandB]);
+  assert.deepEqual(
+    recovered.records.map((record) => record.command),
+    [commandA, commandB],
+  );
   await recovered.close();
 });
 
@@ -56,18 +68,41 @@ test('rejects a partial trailing record instead of repairing it', async () => {
 });
 
 for (const [name, mutate] of [
-  ['wrong sequence', (record: Record<string, unknown>) => { record.sequence = 9; }],
-  ['broken previous hash', (record: Record<string, unknown>) => { record.previous_hash = 'f'.repeat(64); }],
-  ['wrong record hash', (record: Record<string, unknown>) => { record.record_hash = 'e'.repeat(64); }],
+  [
+    'wrong sequence',
+    (record: Record<string, unknown>) => {
+      record.sequence = 9;
+    },
+  ],
+  [
+    'broken previous hash',
+    (record: Record<string, unknown>) => {
+      record.previous_hash = 'f'.repeat(64);
+    },
+  ],
+  [
+    'wrong record hash',
+    (record: Record<string, unknown>) => {
+      record.record_hash = 'e'.repeat(64);
+    },
+  ],
 ] as const) {
   test(`rejects ${name} as broker-state corruption`, async () => {
     const directory = await fixtureDirectory();
     const journal = await createJournalV4(directory);
     await journal.append(accepted('command-a'));
-    await journal.append({ type: 'PATHS_REINSPECTED', command_id: 'command-b', run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1', inspection_epoch: 2 });
+    await journal.append({
+      type: 'PATHS_REINSPECTED',
+      command_id: 'command-b',
+      run_id: 'run_01HZX3YH8C7Y9QJ4J6M2G5K8N1',
+      inspection_epoch: 2,
+    });
     await journal.close();
     const path = join(directory, 'journal.v4.ndjson');
-    const lines = (await readFile(path, 'utf8')).trimEnd().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    const lines = (await readFile(path, 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
     mutate(lines[1]);
     await writeFile(path, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
 
@@ -102,10 +137,7 @@ test('rejects a correctly hashed but unknown journal command', async () => {
     command: { type: 'RUN_SHELL', command_id: 'unknown-command', argv: ['whoami'] },
     recorded_at: '2026-08-08T12:00:00.000Z',
   };
-  await writeFile(
-    join(directory, 'journal.v4.ndjson'),
-    `${canonicalJsonV4({ ...draft, record_hash: hashCanonicalV4(draft) })}\n`,
-  );
+  await writeFile(join(directory, 'journal.v4.ndjson'), `${canonicalJsonV4({ ...draft, record_hash: hashCanonicalV4(draft) })}\n`);
 
   await assert.rejects(() => reopenJournalV4(directory), /BROKER_STATE_CORRUPT/);
 });
@@ -132,12 +164,17 @@ test('loops over short writes before fsyncing a journal record', async () => {
   let synced = false;
   const file = {
     write: async (data: string | Uint8Array, offset = 0, length?: number) => {
-      const source = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data).subarray(offset, length === undefined ? undefined : offset + length);
+      const source =
+        typeof data === 'string'
+          ? Buffer.from(data, 'utf8')
+          : Buffer.from(data).subarray(offset, length === undefined ? undefined : offset + length);
       const chunk = source.subarray(0, Math.max(1, Math.floor(source.length / 2)));
       written = Buffer.concat([written, chunk]);
       return { bytesWritten: chunk.length, buffer: data };
     },
-    sync: async () => { synced = true; },
+    sync: async () => {
+      synced = true;
+    },
   } as unknown as FileHandle;
 
   await appendJournalRecord(file, record);

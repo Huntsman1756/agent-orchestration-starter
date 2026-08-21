@@ -14,17 +14,27 @@ import { enforceDiffPolicy } from './diff-policy.js';
 import { loadRuntimeWorkContractV4 } from './load.js';
 import type { ExecutorAttemptResultV4 } from './opencode-runner.js';
 import type { ProcessSandboxBackendV4 } from './process-sandbox.js';
-import { codexBrokerProviderConfigArgvV4, codexModelConfigArgvV4, renderModelPromptV4, strictSddExecutorInstructionsV4 } from './model-guidance.js';
+import {
+  codexBrokerProviderConfigArgvV4,
+  codexModelConfigArgvV4,
+  renderModelPromptV4,
+  strictSddExecutorInstructionsV4,
+} from './model-guidance.js';
 import { build_capability_snapshot, type CapabilitySnapshotV4 } from '../routing/capability-snapshot.js';
 
-const frontierExecutorResultSchema = z.object({
-  schema_version: z.literal(4),
-  status: z.literal('COMPLETED'),
-  summary: z.string().min(1).max(2_000),
-  changed_paths: z.array(normalizedRepositoryRelativePathV4Schema).max(256).superRefine((paths, context) => {
-    if (new Set(paths).size !== paths.length) context.addIssue({ code: 'custom', message: 'duplicate paths are not allowed' });
-  }),
-}).strict();
+const frontierExecutorResultSchema = z
+  .object({
+    schema_version: z.literal(4),
+    status: z.literal('COMPLETED'),
+    summary: z.string().min(1).max(2_000),
+    changed_paths: z
+      .array(normalizedRepositoryRelativePathV4Schema)
+      .max(256)
+      .superRefine((paths, context) => {
+        if (new Set(paths).size !== paths.length) context.addIssue({ code: 'custom', message: 'duplicate paths are not allowed' });
+      }),
+  })
+  .strict();
 
 export interface FrontierExecutorResultV4 {
   readonly schema_version: 4;
@@ -48,7 +58,9 @@ export interface CodexExecutionResultV4 extends ExecutorAttemptResultV4 {
   readonly structured_output: FrontierExecutorResultV4;
 }
 
-export interface CodexRunnerV4 { execute(input: CodexExecutionInputV4): Promise<CodexExecutionResultV4>; }
+export interface CodexRunnerV4 {
+  execute(input: CodexExecutionInputV4): Promise<CodexExecutionResultV4>;
+}
 export interface CodexRunnerDependenciesV4 {
   readonly sandbox: ProcessSandboxBackendV4;
   readonly credentials: CredentialAdapterV4;
@@ -56,11 +68,17 @@ export interface CodexRunnerDependenciesV4 {
   readonly capability_identity_for: (binding: ResolvedBindingV4) => CapabilityIdentityV4;
   readonly now?: () => string;
   readonly enforce_diff?: typeof enforceDiffPolicy;
-  readonly on_audit_evidence?: (input: AuditTrailEvidenceV4 & { readonly run_id: string; readonly story_id: string }) => Promise<void> | void;
+  readonly on_audit_evidence?: (
+    input: AuditTrailEvidenceV4 & { readonly run_id: string; readonly story_id: string },
+  ) => Promise<void> | void;
 }
 
-function invalid(message: string): never { throw new Error(`EXECUTOR_INVALID_OUTPUT: ${message}`); }
-function validHash(value: string): boolean { return /^[a-f0-9]{64}$/.test(value); }
+function invalid(message: string): never {
+  throw new Error(`EXECUTOR_INVALID_OUTPUT: ${message}`);
+}
+function validHash(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
+}
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
@@ -73,16 +91,26 @@ export function loadFrontierExecutorResultV4(value: unknown): FrontierExecutorRe
   try {
     const parsed = frontierExecutorResultSchema.parse(value);
     return Object.freeze({ ...parsed, changed_paths: Object.freeze([...parsed.changed_paths]) });
-  } catch { return invalid('frontier result does not match its schema'); }
+  } catch {
+    return invalid('frontier result does not match its schema');
+  }
 }
 
-function parseCodexJsonl(stdout: string): { session_id: string; events: readonly Readonly<Record<string, unknown>>[]; output: FrontierExecutorResultV4 } {
+function parseCodexJsonl(stdout: string): {
+  session_id: string;
+  events: readonly Readonly<Record<string, unknown>>[];
+  output: FrontierExecutorResultV4;
+} {
   if (Buffer.byteLength(stdout, 'utf8') > 4 * 1024 * 1024) invalid('JSONL exceeds byte policy');
   const lines = stdout.split('\n').filter((line) => line.length > 0);
   if (lines.length < 3 || lines.length > 2_048) invalid('JSONL event count is outside policy');
   const events: Readonly<Record<string, unknown>>[] = lines.map((line) => {
     let value: unknown;
-    try { value = JSON.parse(line); } catch { return invalid('non-JSON event'); }
+    try {
+      value = JSON.parse(line);
+    } catch {
+      return invalid('non-JSON event');
+    }
     if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('event is not an object');
     return deepFreeze(structuredClone(value as Record<string, unknown>));
   });
@@ -91,17 +119,33 @@ function parseCodexJsonl(stdout: string): { session_id: string; events: readonly
   const threads = events.filter((event) => event.type === 'thread.started');
   const completed = events.filter((event) => event.type === 'turn.completed');
   const sessionId = threads[0]?.thread_id;
-  if (threads.length !== 1 || threads[0] !== events[0] || typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)
-    || completed.length !== 1 || completed[0] !== events.at(-1)) invalid('Codex terminal sequence is malformed');
+  if (
+    threads.length !== 1 ||
+    threads[0] !== events[0] ||
+    typeof sessionId !== 'string' ||
+    !/^[A-Za-z0-9_-]{1,128}$/.test(sessionId) ||
+    completed.length !== 1 ||
+    completed[0] !== events.at(-1)
+  )
+    invalid('Codex terminal sequence is malformed');
   const messages = events.filter((event) => {
     const item = event.item;
-    return event.type === 'item.completed' && item !== null && typeof item === 'object' && !Array.isArray(item)
-      && (item as Record<string, unknown>).type === 'agent_message';
+    return (
+      event.type === 'item.completed' &&
+      item !== null &&
+      typeof item === 'object' &&
+      !Array.isArray(item) &&
+      (item as Record<string, unknown>).type === 'agent_message'
+    );
   });
   const finalItem = messages.at(-1)?.item as Record<string, unknown> | undefined;
   if (typeof finalItem?.text !== 'string' || finalItem.text.length > 64 * 1024) invalid('final agent message is missing or unbounded');
   let output: unknown;
-  try { output = JSON.parse(finalItem.text); } catch { return invalid('final agent message is not JSON'); }
+  try {
+    output = JSON.parse(finalItem.text);
+  } catch {
+    return invalid('final agent message is not JSON');
+  }
   return { session_id: sessionId, events: Object.freeze(events), output: loadFrontierExecutorResultV4(output) };
 }
 
@@ -119,7 +163,12 @@ async function installResultSchema(capsuleRoot: string): Promise<void> {
   }
 }
 
-function promptFor(binding: ResolvedBindingV4, contract: RuntimeWorkContractV4, instructionManifestHash: string, capabilitySnapshot: CapabilitySnapshotV4): string {
+function promptFor(
+  binding: ResolvedBindingV4,
+  contract: RuntimeWorkContractV4,
+  instructionManifestHash: string,
+  capabilitySnapshot: CapabilitySnapshotV4,
+): string {
   return renderModelPromptV4({
     guidance: binding.binding.guidance,
     stableInstructions: [
@@ -143,29 +192,53 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
   }
   return Object.freeze({
     execute: async (input: CodexExecutionInputV4): Promise<CodexExecutionResultV4> => {
-      const expectedKeys = ['binding', 'capability', 'capsule_root', 'contract', 'execution_id', 'expected_sandbox_policy_hash', 'instruction_manifest_hash', 'worktree_root'];
+      const expectedKeys = [
+        'binding',
+        'capability',
+        'capsule_root',
+        'contract',
+        'execution_id',
+        'expected_sandbox_policy_hash',
+        'instruction_manifest_hash',
+        'worktree_root',
+      ];
       const suppliedKeys = Object.keys(input).sort();
       if (suppliedKeys.length !== expectedKeys.length || suppliedKeys.some((key, index) => key !== expectedKeys[index])) {
         throw new Error('EXECUTOR_POLICY_VIOLATION: caller supplied harness execution fields');
       }
       const binding = deepFreeze(structuredClone(input.binding));
       const contract = deepFreeze(loadRuntimeWorkContractV4(structuredClone(input.contract)));
-      const { capsule_root: capsuleRoot, worktree_root: worktreeRoot, execution_id: executionId,
-        instruction_manifest_hash: instructionManifestHash, expected_sandbox_policy_hash: expectedSandboxPolicyHash } = input;
+      const {
+        capsule_root: capsuleRoot,
+        worktree_root: worktreeRoot,
+        execution_id: executionId,
+        instruction_manifest_hash: instructionManifestHash,
+        expected_sandbox_policy_hash: expectedSandboxPolicyHash,
+      } = input;
       const now = (deps.now ?? (() => new Date().toISOString()))();
       assertFreshCapability(input.capability, deps.capability_identity_for(binding), now);
       if (binding.role !== 'frontierExecutor' || binding.binding.harness !== 'codex' || binding.binding.permissions !== 'contract-write') {
         throw new Error('EXECUTOR_POLICY_VIOLATION: binding is not a writable Codex frontier executor');
       }
-      if (contract.effective_route !== 'FRONTIER' || !validHash(instructionManifestHash)
-        || !validHash(expectedSandboxPolicyHash)) throw new Error('EXECUTOR_POLICY_VIOLATION: frontier authority is invalid');
+      if (contract.effective_route !== 'FRONTIER' || !validHash(instructionManifestHash) || !validHash(expectedSandboxPolicyHash))
+        throw new Error('EXECUTOR_POLICY_VIOLATION: frontier authority is invalid');
       const probe = await deps.sandbox.probe('FRONTIER_NETWORKED');
-      if (probe.status !== 'SUPPORTED' || probe.policy_hash !== expectedSandboxPolicyHash || Date.parse(probe.expires_at) <= Date.parse(now)) {
+      if (
+        probe.status !== 'SUPPORTED' ||
+        probe.policy_hash !== expectedSandboxPolicyHash ||
+        Date.parse(probe.expires_at) <= Date.parse(now)
+      ) {
         throw new Error('PROCESS_SANDBOX_UNAVAILABLE: frontier sandbox is not freshly certified');
       }
       const capabilitySnapshot = await build_capability_snapshot(contract, { repository_root: worktreeRoot });
       const lease = validateCredentialLeaseV4(await deps.credentials.lease(binding), now);
-      const diffInput = { repository_root: worktreeRoot, base_sha: contract.base_sha, allowed_changes: contract.implementation_targets, max_files_changed: contract.max_files_changed, max_changed_lines: contract.max_changed_lines };
+      const diffInput = {
+        repository_root: worktreeRoot,
+        base_sha: contract.base_sha,
+        allowed_changes: contract.implementation_targets,
+        max_files_changed: contract.max_files_changed,
+        max_changed_lines: contract.max_changed_lines,
+      };
       const prompt = promptFor(binding, contract, instructionManifestHash, capabilitySnapshot);
       try {
         await installResultSchema(capsuleRoot);
@@ -174,7 +247,25 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
           run = await deps.sandbox.run({
             execution_id: executionId,
             profile: 'FRONTIER_NETWORKED',
-            argv: [...deps.harness_argv, 'exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'workspace-write', '--output-schema', '/capsule/config/frontier-executor-result-v4.schema.json', '--json', '--cd', '/capsule', '--model', binding.binding.model, ...codexBrokerProviderConfigArgvV4(lease.provider_endpoint), ...codexModelConfigArgvV4(binding.binding.guidance), prompt],
+            argv: [
+              ...deps.harness_argv,
+              'exec',
+              '--ephemeral',
+              '--ignore-user-config',
+              '--ignore-rules',
+              '--sandbox',
+              'workspace-write',
+              '--output-schema',
+              '/capsule/config/frontier-executor-result-v4.schema.json',
+              '--json',
+              '--cd',
+              '/capsule',
+              '--model',
+              binding.binding.model,
+              ...codexBrokerProviderConfigArgvV4(lease.provider_endpoint),
+              ...codexModelConfigArgvV4(binding.binding.guidance),
+              prompt,
+            ],
             working_directory: '/capsule',
             environment: Object.freeze({ ...lease.environment, HOME: '/capsule/home', TMPDIR: '/capsule/tmp', NO_COLOR: '1' }),
             mounts: [
@@ -190,7 +281,8 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
           throw error;
         }
         const diff = await (deps.enforce_diff ?? enforceDiffPolicy)(diffInput);
-        if (run.exit_code !== 0 || run.timed_out || run.stdout_truncated || run.stderr_truncated) invalid('Codex execution failed or exceeded bounds');
+        if (run.exit_code !== 0 || run.timed_out || run.stdout_truncated || run.stderr_truncated)
+          invalid('Codex execution failed or exceeded bounds');
         const parsed = parseCodexJsonl(run.stdout);
         const declared = [...parsed.output.changed_paths].sort();
         const observed = diff.changes.map((change) => change.path).sort();
@@ -206,7 +298,13 @@ export function createCodexRunner(deps: CodexRunnerDependenciesV4): CodexRunnerV
           diff,
           status: 'EXECUTION_COMPLETED',
         });
-        return Object.freeze({ session_id: parsed.session_id, events: parsed.events, structured_output: parsed.output, diff, capability_snapshot_hash: capabilitySnapshot.snapshot_hash });
+        return Object.freeze({
+          session_id: parsed.session_id,
+          events: parsed.events,
+          structured_output: parsed.output,
+          diff,
+          capability_snapshot_hash: capabilitySnapshot.snapshot_hash,
+        });
       } finally {
         await deps.credentials.revoke(lease.lease_id);
       }

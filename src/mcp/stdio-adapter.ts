@@ -21,7 +21,9 @@ export function createMcpStdioAdapter(deps: McpAdapterDependenciesV4): McpServer
 export async function runMcpStdioAdapter(deps: McpAdapterDependenciesV4): Promise<void> {
   const server = createMcpStdioAdapter(deps);
   const transport = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 1024 * 1024 });
-  transport.onclose = () => { void deps.client.close(); };
+  transport.onclose = () => {
+    void deps.client.close();
+  };
   await server.connect(transport);
 }
 

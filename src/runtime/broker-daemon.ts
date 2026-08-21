@@ -3,11 +3,25 @@ import { randomBytes } from 'node:crypto';
 import { canonicalJsonV4, hashCanonicalV4 } from './canonical.js';
 import type { RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeResultV4 } from './contracts.js';
 import { RUNTIME_FAILURE_CODES_V4, type RuntimeFailureV4 } from './failures.js';
-import { auditTrailDirectoryV4, createAuditTrailV4, type AuditTrailEntryV4, type AuditTrailEvidenceV4, type AuditTrailV4 } from './audit-trail.js';
+import {
+  auditTrailDirectoryV4,
+  createAuditTrailV4,
+  type AuditTrailEntryV4,
+  type AuditTrailEvidenceV4,
+  type AuditTrailV4,
+} from './audit-trail.js';
 import { createJournalV4, type JournalV4 } from './journal.js';
 import { loadRuntimeTaskRequestV4 } from './load.js';
 import { inspectAllowedChanges, type InspectedChangeV4, type PathInspectionInputV4 } from './path-policy.js';
-import { acquireRepositoryLockV4, acquireRunLockV4, type LockOwnerStatusV4, type ReclamationCoordinatorV4, type RepositoryLockOwnerV4, type RepositoryLockV4, type RunLockV4 } from './repository-lock.js';
+import {
+  acquireRepositoryLockV4,
+  acquireRunLockV4,
+  type LockOwnerStatusV4,
+  type ReclamationCoordinatorV4,
+  type RepositoryLockOwnerV4,
+  type RepositoryLockV4,
+  type RunLockV4,
+} from './repository-lock.js';
 import { freezeRepositoryPolicy, type FrozenRepositoryPolicyV4 } from './repository-policy.js';
 import { loadRepositoryRegistration, type RegisteredRepositoryV4, type RepositoryRegistryV4 } from './repository-registry.js';
 import { deriveWorkContract } from './routing.js';
@@ -44,7 +58,12 @@ export interface BrokerDaemonV4 {
   recordFailure?(runId: string, failure: RuntimeFailureV4, commandId?: string): Promise<void>;
   recordAbort?(runId: string, commandId?: string): Promise<void>;
   recordCommitCreated?(event: Extract<BrokerCommandV4, { type: 'COMMIT_CREATED' }>): Promise<void>;
-  recordPublication?(event: Extract<BrokerCommandV4, { type: 'BRANCH_PUSHED' | 'PULL_REQUEST_RECORDED' | 'REQUIRED_CHECKS_PASSED' | 'RUN_MERGED' | 'PUBLICATION_SKIPPED' }>): Promise<void>;
+  recordPublication?(
+    event: Extract<
+      BrokerCommandV4,
+      { type: 'BRANCH_PUSHED' | 'PULL_REQUEST_RECORDED' | 'REQUIRED_CHECKS_PASSED' | 'RUN_MERGED' | 'PUBLICATION_SKIPPED' }
+    >,
+  ): Promise<void>;
 }
 
 export interface BrokerDaemonDependenciesV4 {
@@ -80,7 +99,7 @@ function commandId(prefix: string): string {
 function normalizePublicError(error: unknown): Error {
   if (error instanceof Error) {
     const match = /^([A-Z_]+):\s*(.*)$/s.exec(error.message);
-    if (match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as typeof RUNTIME_FAILURE_CODES_V4[number])) {
+    if (match !== null && RUNTIME_FAILURE_CODES_V4.includes(match[1] as (typeof RUNTIME_FAILURE_CODES_V4)[number])) {
       return new Error(`${match[1]}: broker operation failed`);
     }
   }
@@ -114,16 +133,25 @@ function initialResult(runId: string, contract: ReturnType<typeof deriveWorkCont
     changed_files: [],
     review_attestation_hash: null,
     commit_sha: null,
-    publication: { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
+    publication: {
+      state: 'NOT_STARTED',
+      remote: null,
+      base_branch: null,
+      pull_request: null,
+      pull_request_url: null,
+      merge_commit_sha: null,
+    },
     failure: null,
     artifact_manifest_hash: hashCanonicalV4({ run_id: runId, artifacts: [] }),
   };
 }
 
 export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaemonV4 {
-  if (deps.reclamationCoordinator === undefined
-    || (deps.reclamationCoordinator.certification.kind !== 'native-cross-process' && !deps.allowInProcessCoordinatorForTests)
-    || deps.reclamationCoordinator.certification.identity.length === 0) {
+  if (
+    deps.reclamationCoordinator === undefined ||
+    (deps.reclamationCoordinator.certification.kind !== 'native-cross-process' && !deps.allowInProcessCoordinatorForTests) ||
+    deps.reclamationCoordinator.certification.identity.length === 0
+  ) {
     throw new Error('BROKER_STATE_CORRUPT: certified native reclamation coordinator is required');
   }
   let state: BrokerStateV4 | null = null;
@@ -140,9 +168,17 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   const serialize = async <T>(operation: () => Promise<T>): Promise<T> => {
     const prior = mutationTail;
     let release!: () => void;
-    mutationTail = new Promise<void>((resolve) => { release = resolve; });
+    mutationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await prior;
-    try { return await operation(); } catch (error) { throw normalizePublicError(error); } finally { release(); }
+    try {
+      return await operation();
+    } catch (error) {
+      throw normalizePublicError(error);
+    } finally {
+      release();
+    }
   };
 
   const requireOpen = (): void => {
@@ -170,7 +206,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
 
   const transferRepositoryLock = (repositoryId: string, fromHolderId: string, toHolderId: string): void => {
     const holders = lockHolders.get(repositoryId);
-    if (holders === undefined || !holders.delete(fromHolderId)) throw new Error('BROKER_STATE_CORRUPT: repository lock holder transfer is invalid');
+    if (holders === undefined || !holders.delete(fromHolderId))
+      throw new Error('BROKER_STATE_CORRUPT: repository lock holder transfer is invalid');
     holders.add(toHolderId);
   };
 
@@ -187,7 +224,12 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
   const acquireForRun = async (runId: string): Promise<RunLockV4> => {
     const current = runLocks.get(runId);
     if (current !== undefined) return current;
-    const lock = await acquireRunLockV4({ directory: deps.stateDirectory, runId, ownerStatus: deps.lockOwnerStatus, reclamationCoordinator: deps.reclamationCoordinator });
+    const lock = await acquireRunLockV4({
+      directory: deps.stateDirectory,
+      runId,
+      ownerStatus: deps.lockOwnerStatus,
+      reclamationCoordinator: deps.reclamationCoordinator,
+    });
     runLocks.set(runId, lock);
     return lock;
   };
@@ -196,7 +238,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     if (state === null || journal === null || auditTrail === null) throw new Error('BROKER_STATE_CORRUPT: daemon was not recovered');
     const prior = journal.records.find((record) => record.command.command_id === command.command_id);
     if (prior !== undefined) {
-      if (canonicalJsonV4(prior.command) !== canonicalJsonV4(command)) throw new Error(`BROKER_STATE_CORRUPT: command_id ${command.command_id} has conflicting canonical bytes`);
+      if (canonicalJsonV4(prior.command) !== canonicalJsonV4(command))
+        throw new Error(`BROKER_STATE_CORRUPT: command_id ${command.command_id} has conflicting canonical bytes`);
       return;
     }
     const next = reduceBrokerStateV4(state, command);
@@ -230,7 +273,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     journal = await createJournalV4(deps.stateDirectory);
     auditTrail = await createAuditTrailV4(deps.auditTrailDirectory ?? auditTrailDirectoryV4(deps.stateDirectory));
     for (const record of auditTrail.records) {
-      if (state.runs[record.entry.run_id] === undefined) throw new Error(`BROKER_STATE_CORRUPT: audit entry references unknown run ${record.entry.run_id}`);
+      if (state.runs[record.entry.run_id] === undefined)
+        throw new Error(`BROKER_STATE_CORRUPT: audit entry references unknown run ${record.entry.run_id}`);
       auditSnapshots.set(record.entry.run_id, record.entry);
     }
     let replayed = initialBrokerStateV4();
@@ -247,7 +291,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
     }
     for (const [runId, run] of Object.entries(state.runs)) {
       if (run.external_process === null || terminalStates.has(run.result.state)) continue;
-      const reconciliation = await deps.reconcileExternalProcess?.(runId, run.external_process).catch(() => 'unknown' as const) ?? 'unknown';
+      const reconciliation =
+        (await deps.reconcileExternalProcess?.(runId, run.external_process).catch(() => 'unknown' as const)) ?? 'unknown';
       if (reconciliation !== 'running') {
         await persist({
           type: 'RUN_FAILED',
@@ -272,7 +317,9 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
 
   const ensureRecovered = async (): Promise<void> => {
     if (state !== null && journal !== null && auditTrail !== null) return;
-    recovering ??= doRecover().finally(() => { recovering = null; });
+    recovering ??= doRecover().finally(() => {
+      recovering = null;
+    });
     await recovering;
   };
 
@@ -331,7 +378,7 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       story_id: previous?.story_id ?? run.contract.task_id,
       run_id: runId,
       started_at: previous?.started_at ?? recordedAt,
-      finished_at: terminal ? recordedAt : previous?.finished_at ?? null,
+      finished_at: terminal ? recordedAt : (previous?.finished_at ?? null),
       contract_hash: run.contract.contract_hash,
       capability_snapshot_hash: run.review_verdict?.capability_snapshot_hash ?? previous?.capability_snapshot_hash ?? null,
       prompt: previous?.prompt ?? '',
@@ -341,17 +388,22 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       status: auditStatusFor(command, run.result),
     });
     const current = auditSnapshots.get(runId);
-    const currentRecord = current === undefined ? undefined : auditTrail.records.find((record) => record.entry.event_id === current.event_id);
-    if (currentRecord === undefined || existing === undefined || existing.sequence >= currentRecord.sequence) auditSnapshots.set(runId, entry.entry);
+    const currentRecord =
+      current === undefined ? undefined : auditTrail.records.find((record) => record.entry.event_id === current.event_id);
+    if (currentRecord === undefined || existing === undefined || existing.sequence >= currentRecord.sequence)
+      auditSnapshots.set(runId, entry.entry);
   };
 
   const recordAuditEvidence = async (runId: string, evidence: AuditTrailEvidenceV4): Promise<void> => {
     if (state === null || auditTrail === null) throw new Error('BROKER_STATE_CORRUPT: audit trail was not recovered');
     const run = state.runs[runId];
     if (run === undefined) throw new Error(`INVALID_CONTRACT: unknown run_id ${runId}`);
-    if (evidence.contract_hash !== undefined && evidence.contract_hash !== run.contract.contract_hash) throw new Error('AUDIT_TRAIL_INTEGRITY_BREACH: evidence contract hash does not match the durable run');
+    if (evidence.contract_hash !== undefined && evidence.contract_hash !== run.contract.contract_hash)
+      throw new Error('AUDIT_TRAIL_INTEGRITY_BREACH: evidence contract hash does not match the durable run');
     const previous = auditSnapshots.get(runId);
-    const event_id = evidence.event_id ?? `audit:${runId}:${hashCanonicalV4({ prompt: evidence.prompt ?? '', raw_completion: evidence.raw_completion ?? '', diff: evidence.diff ?? '', status: evidence.status ?? null })}`;
+    const event_id =
+      evidence.event_id ??
+      `audit:${runId}:${hashCanonicalV4({ prompt: evidence.prompt ?? '', raw_completion: evidence.raw_completion ?? '', diff: evidence.diff ?? '', status: evidence.status ?? null })}`;
     const entry = await auditTrail.append({
       event_id,
       event_type: evidence.event_type ?? 'AUDIT_EVIDENCE_RECORDED',
@@ -360,7 +412,8 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
       started_at: evidence.started_at ?? previous?.started_at,
       finished_at: evidence.finished_at ?? previous?.finished_at ?? null,
       contract_hash: evidence.contract_hash ?? run.contract.contract_hash,
-      capability_snapshot_hash: evidence.capability_snapshot_hash ?? previous?.capability_snapshot_hash ?? run.review_verdict?.capability_snapshot_hash ?? null,
+      capability_snapshot_hash:
+        evidence.capability_snapshot_hash ?? previous?.capability_snapshot_hash ?? run.review_verdict?.capability_snapshot_hash ?? null,
       prompt: evidence.prompt ?? previous?.prompt ?? '',
       raw_completion: evidence.raw_completion ?? previous?.raw_completion ?? '',
       diff: evidence.diff ?? previous?.diff ?? '',
@@ -372,159 +425,194 @@ export function createBrokerDaemon(deps: BrokerDaemonDependenciesV4): BrokerDaem
 
   return {
     recover: () => serialize(ensureRecovered),
-    submit: (callerCommand) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      if (callerCommand.type !== 'RUN_CODING_TASK') throw new Error(`INVALID_CONTRACT: unsupported submitted command ${callerCommand.type}`);
-      const request = loadRuntimeTaskRequestV4(callerCommand.request);
-      const requestHash = hashCanonicalV4(request);
-      const existing = state?.requests[request.request_id];
-      if (existing !== undefined) {
-        if (existing.request_hash !== requestHash) throw new Error(`INVALID_CONTRACT: request_id ${request.request_id} was already used for different canonical bytes`);
-        return replyFor(existing.run_id);
-      }
+    submit: (callerCommand) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        if (callerCommand.type !== 'RUN_CODING_TASK')
+          throw new Error(`INVALID_CONTRACT: unsupported submitted command ${callerCommand.type}`);
+        const request = loadRuntimeTaskRequestV4(callerCommand.request);
+        const requestHash = hashCanonicalV4(request);
+        const existing = state?.requests[request.request_id];
+        if (existing !== undefined) {
+          if (existing.request_hash !== requestHash)
+            throw new Error(`INVALID_CONTRACT: request_id ${request.request_id} was already used for different canonical bytes`);
+          return replyFor(existing.run_id);
+        }
 
-      const registration = loadRepositoryRegistration(request.repository_id, deps.registry);
-      const admissionHolder = `admission:${request.request_id}`;
-      await acquireFor(registration.repository_id, admissionHolder);
-      let runLock: RunLockV4 | null = null;
-      let accepted = false;
-      try {
-        const [policyValue, profile, bindingHealth] = await Promise.all([
-          deps.loadPolicy(registration),
-          deps.loadProfile(registration),
-          deps.loadBindingHealth?.(registration) ?? Promise.resolve([]),
-        ]);
-        const policy = asFrozenPolicy(policyValue);
-        const baseSha = await deps.resolveBaseSha(registration, policy);
+        const registration = loadRepositoryRegistration(request.repository_id, deps.registry);
+        const admissionHolder = `admission:${request.request_id}`;
+        await acquireFor(registration.repository_id, admissionHolder);
+        let runLock: RunLockV4 | null = null;
+        let accepted = false;
+        try {
+          const [policyValue, profile, bindingHealth] = await Promise.all([
+            deps.loadPolicy(registration),
+            deps.loadProfile(registration),
+            deps.loadBindingHealth?.(registration) ?? Promise.resolve([]),
+          ]);
+          const policy = asFrozenPolicy(policyValue);
+          const baseSha = await deps.resolveBaseSha(registration, policy);
+          await (deps.inspectChanges ?? inspectAllowedChanges)({
+            repositoryRoot: registration.canonical_root,
+            changes: request.implementation_targets,
+            platform: process.platform,
+          });
+          const runId = (deps.generateRunId ?? defaultRunId)();
+          if (!/^run_[A-Za-z0-9_-]{16,96}$/.test(runId) || state?.runs[runId] !== undefined)
+            throw new Error('BROKER_STATE_CORRUPT: generated run_id is invalid or duplicated');
+          runLock = await acquireForRun(runId);
+          const contract = deriveWorkContract({
+            request,
+            run_id: runId,
+            registration,
+            policy,
+            profile,
+            base_sha: baseSha,
+            sandbox_profiles: deps.sandboxProfiles,
+            binding_health: bindingHealth,
+          });
+          await persist({
+            type: 'RUN_ACCEPTED',
+            command_id: callerCommand.command_id,
+            request_hash: requestHash,
+            run_id: runId,
+            contract,
+            result: initialResult(runId, contract),
+            inspection_epoch: 1,
+          });
+          transferRepositoryLock(registration.repository_id, admissionHolder, `run:${runId}`);
+          accepted = true;
+          return replyFor(runId);
+        } finally {
+          if (!accepted) {
+            if (runLock !== null) {
+              await runLock.release();
+              runLocks.delete(runLock.run_id);
+            }
+            await releaseRepositoryLock(registration.repository_id, admissionHolder);
+          }
+        }
+      }),
+    status: (runId) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        return resultFor(runId);
+      }),
+    recordAttempt: (runId, attempt) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist({ type: 'ATTEMPT_RECORDED', command_id: commandId('attempt'), run_id: runId, attempt });
+      }),
+    recordAuditEvidence: (runId, evidence) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await recordAuditEvidence(runId, evidence);
+      }),
+    reinspect: (runId) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        const run = state?.runs[runId];
+        if (run === undefined) throw new Error(`INVALID_CONTRACT: unknown run_id ${runId}`);
+        const registration = loadRepositoryRegistration(run.contract.repository_id, deps.registry);
         await (deps.inspectChanges ?? inspectAllowedChanges)({
           repositoryRoot: registration.canonical_root,
-          changes: request.implementation_targets,
+          changes: run.contract.implementation_targets,
           platform: process.platform,
         });
-        const runId = (deps.generateRunId ?? defaultRunId)();
-        if (!/^run_[A-Za-z0-9_-]{16,96}$/.test(runId) || state?.runs[runId] !== undefined) throw new Error('BROKER_STATE_CORRUPT: generated run_id is invalid or duplicated');
-        runLock = await acquireForRun(runId);
-        const contract = deriveWorkContract({
-          request,
-          run_id: runId,
-          registration,
-          policy,
-          profile,
-          base_sha: baseSha,
-          sandbox_profiles: deps.sandboxProfiles,
-          binding_health: bindingHealth,
-        });
         await persist({
-          type: 'RUN_ACCEPTED',
-          command_id: callerCommand.command_id,
-          request_hash: requestHash,
+          type: 'PATHS_REINSPECTED',
+          command_id: commandId('reinspect'),
           run_id: runId,
-          contract,
-          result: initialResult(runId, contract),
-          inspection_epoch: 1,
+          inspection_epoch: run.inspection_epoch + 1,
         });
-        transferRepositoryLock(registration.repository_id, admissionHolder, `run:${runId}`);
-        accepted = true;
-        return replyFor(runId);
-      } finally {
-        if (!accepted) {
-          if (runLock !== null) {
-            await runLock.release();
-            runLocks.delete(runLock.run_id);
-          }
-          await releaseRepositoryLock(registration.repository_id, admissionHolder);
-        }
-      }
-    }),
-    status: (runId) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      return resultFor(runId);
-    }),
-    recordAttempt: (runId, attempt) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist({ type: 'ATTEMPT_RECORDED', command_id: commandId('attempt'), run_id: runId, attempt });
-    }),
-    recordAuditEvidence: (runId, evidence) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await recordAuditEvidence(runId, evidence);
-    }),
-    reinspect: (runId) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      const run = state?.runs[runId];
-      if (run === undefined) throw new Error(`INVALID_CONTRACT: unknown run_id ${runId}`);
-      const registration = loadRepositoryRegistration(run.contract.repository_id, deps.registry);
-      await (deps.inspectChanges ?? inspectAllowedChanges)({ repositoryRoot: registration.canonical_root, changes: run.contract.implementation_targets, platform: process.platform });
-      await persist({ type: 'PATHS_REINSPECTED', command_id: commandId('reinspect'), run_id: runId, inspection_epoch: run.inspection_epoch + 1 });
-    }),
-    recordExternalProcessStarted: (runId, process) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist({ type: 'EXTERNAL_PROCESS_STARTED', command_id: commandId('external-started'), run_id: runId, process });
-    }),
-    recordAcceptedCandidate: (event) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist(event);
-    }),
-    recordReviewVerdict: (runId, verdict) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist({
-        type: 'REVIEW_VERDICT_RECORDED',
-        command_id: `review-verdict:${runId}:${verdict.verdict_hash.slice(0, 32)}`,
-        run_id: runId,
-        review_packet_hash: verdict.review_packet_hash,
-        contract_hash: verdict.contract_hash,
-        diff_hash: verdict.diff_hash,
-        tree_hash: verdict.tree_hash,
-        capability_snapshot_hash: verdict.capability_snapshot_hash,
-        verdict: verdict.verdict,
-        reason: verdict.reason,
-        verdict_hash: verdict.verdict_hash,
-      });
-    }),
-    recordFailure: (runId, failure, suppliedCommandId) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist({ type: 'RUN_FAILED', command_id: suppliedCommandId ?? `run-failed:${runId}:${hashCanonicalV4(failure)}`, run_id: runId, failure });
-      await releaseForRun(runId);
-    }),
-    recordAbort: (runId, suppliedCommandId) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      const failure: RuntimeFailureV4 = { code: 'ABORTED', message: 'ABORTED: run was aborted by authenticated control', retryable: false, evidence_hashes: [] };
-      await persist({ type: 'RUN_ABORTED', command_id: suppliedCommandId ?? `run-aborted:${runId}`, run_id: runId, failure });
-      await releaseForRun(runId);
-    }),
-    recordCommitCreated: (event) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist(event);
-    }),
-    recordPublication: (event) => serialize(async () => {
-      requireOpen();
-      await ensureRecovered();
-      await persist(event);
-      if (event.type === 'RUN_MERGED' || event.type === 'PUBLICATION_SKIPPED') await releaseForRun(event.run_id);
-    }),
-    close: () => serialize(async () => {
-      if (closed) return;
-      if (recovering !== null) await recovering;
-      closed = true;
-      await auditTrail?.close();
-      auditTrail = null;
-      await journal?.close();
-      journal = null;
-      for (const lock of locks.values()) await lock.release();
-      locks.clear();
-      lockHolders.clear();
-      for (const lock of runLocks.values()) await lock.release();
-      runLocks.clear();
-    }),
+      }),
+    recordExternalProcessStarted: (runId, process) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist({ type: 'EXTERNAL_PROCESS_STARTED', command_id: commandId('external-started'), run_id: runId, process });
+      }),
+    recordAcceptedCandidate: (event) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist(event);
+      }),
+    recordReviewVerdict: (runId, verdict) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist({
+          type: 'REVIEW_VERDICT_RECORDED',
+          command_id: `review-verdict:${runId}:${verdict.verdict_hash.slice(0, 32)}`,
+          run_id: runId,
+          review_packet_hash: verdict.review_packet_hash,
+          contract_hash: verdict.contract_hash,
+          diff_hash: verdict.diff_hash,
+          tree_hash: verdict.tree_hash,
+          capability_snapshot_hash: verdict.capability_snapshot_hash,
+          verdict: verdict.verdict,
+          reason: verdict.reason,
+          verdict_hash: verdict.verdict_hash,
+        });
+      }),
+    recordFailure: (runId, failure, suppliedCommandId) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist({
+          type: 'RUN_FAILED',
+          command_id: suppliedCommandId ?? `run-failed:${runId}:${hashCanonicalV4(failure)}`,
+          run_id: runId,
+          failure,
+        });
+        await releaseForRun(runId);
+      }),
+    recordAbort: (runId, suppliedCommandId) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        const failure: RuntimeFailureV4 = {
+          code: 'ABORTED',
+          message: 'ABORTED: run was aborted by authenticated control',
+          retryable: false,
+          evidence_hashes: [],
+        };
+        await persist({ type: 'RUN_ABORTED', command_id: suppliedCommandId ?? `run-aborted:${runId}`, run_id: runId, failure });
+        await releaseForRun(runId);
+      }),
+    recordCommitCreated: (event) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist(event);
+      }),
+    recordPublication: (event) =>
+      serialize(async () => {
+        requireOpen();
+        await ensureRecovered();
+        await persist(event);
+        if (event.type === 'RUN_MERGED' || event.type === 'PUBLICATION_SKIPPED') await releaseForRun(event.run_id);
+      }),
+    close: () =>
+      serialize(async () => {
+        if (closed) return;
+        if (recovering !== null) await recovering;
+        closed = true;
+        await auditTrail?.close();
+        auditTrail = null;
+        await journal?.close();
+        journal = null;
+        for (const lock of locks.values()) await lock.release();
+        locks.clear();
+        lockHolders.clear();
+        for (const lock of runLocks.values()) await lock.release();
+        runLocks.clear();
+      }),
   };
 }

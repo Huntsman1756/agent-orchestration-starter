@@ -50,8 +50,17 @@ function superseding(eventId: string, sequenceNumber: number, target: PilotEvent
   };
 }
 
-function invalidating(eventId: string, sequenceNumber: number, target: PilotEventV3, expectedHash = hashCanonical(target)): InvalidationEvent {
-  const { supersedes_event_id: _supersedesEventId, expected_superseded_event_content_hash: _expectedSupersededEventContentHash, ...base } = planned(eventId, sequenceNumber, target.block_id);
+function invalidating(
+  eventId: string,
+  sequenceNumber: number,
+  target: PilotEventV3,
+  expectedHash = hashCanonical(target),
+): InvalidationEvent {
+  const {
+    supersedes_event_id: _supersedesEventId,
+    expected_superseded_event_content_hash: _expectedSupersededEventContentHash,
+    ...base
+  } = planned(eventId, sequenceNumber, target.block_id);
   return {
     ...base,
     event_type: 'EVENT_INVALIDATED',
@@ -148,11 +157,14 @@ test('appendEvent rejects undefined own optional envelope properties before cano
     expected_superseded_event_content_hash: undefined,
   } as PilotEventV3;
 
-  assert.throws(() => appendEvent(log, retryWithUndefinedEnvelope), error => {
-    assert.ok(error instanceof Error);
-    assert.doesNotMatch(error.message, /Canonical JSON/i);
-    return /undefined|contract/i.test(error.message);
-  });
+  assert.throws(
+    () => appendEvent(log, retryWithUndefinedEnvelope),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.doesNotMatch(error.message, /Canonical JSON/i);
+      return /undefined|contract/i.test(error.message);
+    },
+  );
 });
 
 test('appendEvent rejects unknown and hash-mismatched supersession and invalidation targets', () => {
@@ -170,12 +182,21 @@ test('activeEvents deterministically projects corrections while preserving the i
   const correction = superseding('event-correction', 2, prior);
   const log = appendEvent(appendEvent([], prior), correction);
 
-  assert.deepEqual(log.map(event => event.event_id), ['event-prior', 'event-correction']);
-  assert.deepEqual(activeEvents(log).map(event => event.event_id), ['event-correction']);
+  assert.deepEqual(
+    log.map((event) => event.event_id),
+    ['event-prior', 'event-correction'],
+  );
+  assert.deepEqual(
+    activeEvents(log).map((event) => event.event_id),
+    ['event-correction'],
+  );
 
   const invalidation = invalidating('event-invalidation', 3, correction);
   const correctedLog = appendEvent(log, invalidation);
-  assert.deepEqual(activeEvents(correctedLog).map(event => event.event_id), ['event-prior']);
+  assert.deepEqual(
+    activeEvents(correctedLog).map((event) => event.event_id),
+    ['event-prior'],
+  );
 });
 
 test('invalidating a superseding correction restores the original event in the active projection', () => {
@@ -184,7 +205,10 @@ test('invalidating a superseding correction restores the original event in the a
   const invalidation = invalidating('event-invalidate-correction', 3, correction);
   const log = appendEvent(appendEvent(appendEvent([], original), correction), invalidation);
 
-  assert.deepEqual(activeEvents(log).map(event => event.event_id), ['event-original']);
+  assert.deepEqual(
+    activeEvents(log).map((event) => event.event_id),
+    ['event-original'],
+  );
 });
 
 test('invalidating an invalidation recursively restores the original event', () => {
@@ -193,7 +217,10 @@ test('invalidating an invalidation recursively restores the original event', () 
   const reversal = invalidating('event-invalidate-invalidation', 3, invalidation);
   const log = appendEvent(appendEvent(appendEvent([], original), invalidation), reversal);
 
-  assert.deepEqual(activeEvents(log).map(event => event.event_id), ['event-original-nested']);
+  assert.deepEqual(
+    activeEvents(log).map((event) => event.event_id),
+    ['event-original-nested'],
+  );
 });
 
 test('nested invalidation effects resolve newest-first at every dependency depth', () => {
@@ -205,8 +232,14 @@ test('nested invalidation effects resolve newest-first at every dependency depth
   const oddDepth = appendEvent(appendEvent(appendEvent(appendEvent([], original), first), second), third);
   const evenDepth = appendEvent(oddDepth, fourth);
 
-  assert.deepEqual(activeEvents(oddDepth).map(event => event.event_id), []);
-  assert.deepEqual(activeEvents(evenDepth).map(event => event.event_id), ['event-original-depth']);
+  assert.deepEqual(
+    activeEvents(oddDepth).map((event) => event.event_id),
+    [],
+  );
+  assert.deepEqual(
+    activeEvents(evenDepth).map((event) => event.event_id),
+    ['event-original-depth'],
+  );
 });
 
 test('two writers with one snapshot cannot both claim the same next sequence', () => {
@@ -245,7 +278,13 @@ test('activeEvents produces canonical byte-equivalent output for the same correc
 
   const firstProjection = activeEvents([prior, correction]);
   const secondProjection = activeEvents([prior, reorderedCorrection]);
-  assert.deepEqual(firstProjection.map(event => event.event_id), ['event-correction']);
-  assert.deepEqual(secondProjection.map(event => event.event_id), ['event-correction']);
+  assert.deepEqual(
+    firstProjection.map((event) => event.event_id),
+    ['event-correction'],
+  );
+  assert.deepEqual(
+    secondProjection.map((event) => event.event_id),
+    ['event-correction'],
+  );
   assert.equal(canonicalize(firstProjection), canonicalize(secondProjection));
 });

@@ -10,12 +10,18 @@ const example = (name: string) => resolve('examples', name);
 
 function validArgs(): string[] {
   return [
-    'pilot-v3', 'evaluate',
-    '--manifest', example('pilot-manifest-v3.yaml'),
-    '--events', example('pilot-events-v3.jsonl'),
-    '--gate', example('pilot-routing-gate-v3.yaml'),
-    '--evaluation-id', 'evaluation-cli-v3-1',
-    '--evaluation-version', '1',
+    'pilot-v3',
+    'evaluate',
+    '--manifest',
+    example('pilot-manifest-v3.yaml'),
+    '--events',
+    example('pilot-events-v3.jsonl'),
+    '--gate',
+    example('pilot-routing-gate-v3.yaml'),
+    '--evaluation-id',
+    'evaluation-cli-v3-1',
+    '--evaluation-version',
+    '1',
   ];
 }
 
@@ -24,7 +30,7 @@ test('pilot-v3 evaluate requires explicit evaluation identity instead of inventi
   const args = validArgs();
   args.splice(args.indexOf('--evaluation-id'), 2);
 
-  const code = await runCli(args, { stderr: line => errors.push(line) });
+  const code = await runCli(args, { stderr: (line) => errors.push(line) });
 
   assert.equal(code, 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: --evaluation-id and --evaluation-version are required');
@@ -34,8 +40,8 @@ test('pilot-v3 evaluate deterministically reduces explicit events and emits obse
   const first: string[] = [];
   const second: string[] = [];
 
-  assert.equal(await runCli(validArgs(), { stdout: line => first.push(line) }), 0);
-  assert.equal(await runCli(validArgs(), { stdout: line => second.push(line) }), 0);
+  assert.equal(await runCli(validArgs(), { stdout: (line) => first.push(line) }), 0);
+  assert.equal(await runCli(validArgs(), { stdout: (line) => second.push(line) }), 0);
   assert.equal(first.join('\n'), second.join('\n'));
 
   const output = JSON.parse(first.join('\n'));
@@ -57,7 +63,7 @@ test('pilot-v3 evaluate rejects a V2 event with a typed sanitized input error', 
   args[args.indexOf('--events') + 1] = events;
   const errors: string[] = [];
 
-  const code = await runCli(args, { stderr: line => errors.push(line) });
+  const code = await runCli(args, { stderr: (line) => errors.push(line) });
 
   assert.equal(code, 2);
   assert.equal(errors[0], 'PILOT_V3_INPUT_ERROR: event line 1 is not valid V3 evidence');
@@ -72,7 +78,7 @@ test('pilot-v3 evaluate rejects empty event evidence instead of inferring execut
   args[args.indexOf('--events') + 1] = events;
   const errors: string[] = [];
 
-  const code = await runCli(args, { stderr: line => errors.push(line) });
+  const code = await runCli(args, { stderr: (line) => errors.push(line) });
 
   assert.equal(code, 2);
   assert.equal(errors[0], 'PILOT_V3_INPUT_ERROR: events JSONL is empty');
@@ -82,12 +88,12 @@ test('pilot-v3 evaluation versions require an exact prior report input pairing',
   const errors: string[] = [];
   const later = validArgs();
   later[later.indexOf('--evaluation-version') + 1] = '2';
-  assert.equal(await runCli(later, { stderr: line => errors.push(line) }), 2);
+  assert.equal(await runCli(later, { stderr: (line) => errors.push(line) }), 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: --prior-report is required when --evaluation-version is greater than 1');
 
   errors.length = 0;
   const first = [...validArgs(), '--prior-report', 'unexpected.json'];
-  assert.equal(await runCli(first, { stderr: line => errors.push(line) }), 2);
+  assert.equal(await runCli(first, { stderr: (line) => errors.push(line) }), 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: --prior-report is forbidden for evaluation version 1');
 });
 
@@ -96,20 +102,20 @@ test('pilot-v3 evaluate rejects an option whose value is another flag', async ()
   args.splice(args.indexOf('--evaluation-id') + 1, 1);
   const errors: string[] = [];
 
-  assert.equal(await runCli(args, { stderr: line => errors.push(line) }), 2);
+  assert.equal(await runCli(args, { stderr: (line) => errors.push(line) }), 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: --evaluation-id and --evaluation-version are required');
 });
 
 test('pilot-v3 evaluate rejects unknown arguments instead of ignoring them', async () => {
   const errors: string[] = [];
 
-  assert.equal(await runCli([...validArgs(), '--execute-provider', 'true'], { stderr: line => errors.push(line) }), 2);
+  assert.equal(await runCli([...validArgs(), '--execute-provider', 'true'], { stderr: (line) => errors.push(line) }), 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: unsupported option --execute-provider');
 });
 
 test('pilot-v3 evaluate rejects duplicate options instead of selecting one', async () => {
   const errors: string[] = [];
 
-  assert.equal(await runCli([...validArgs(), '--evaluation-id', 'second-id'], { stderr: line => errors.push(line) }), 2);
+  assert.equal(await runCli([...validArgs(), '--evaluation-id', 'second-id'], { stderr: (line) => errors.push(line) }), 2);
   assert.equal(errors[0], 'PILOT_V3_ARGUMENT_ERROR: duplicate option --evaluation-id');
 });

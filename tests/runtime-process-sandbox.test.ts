@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {
-  createUnsupportedProcessSandboxBackendV4,
-  type SandboxRunRequestV4,
-} from '../src/runtime/process-sandbox.js';
+import { createUnsupportedProcessSandboxBackendV4, type SandboxRunRequestV4 } from '../src/runtime/process-sandbox.js';
 
 const request: SandboxRunRequestV4 = {
   execution_id: 'exec_contract_0001',

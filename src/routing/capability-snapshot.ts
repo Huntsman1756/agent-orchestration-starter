@@ -82,7 +82,7 @@ function invalid(message: string): never {
 }
 
 function stableSort(values: readonly string[]): string[] {
-  return [...values].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  return [...values].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 }
 
 function freeze<T>(value: T): T {
@@ -136,13 +136,9 @@ function printedSignature(node: ts.Node, sourceFile: ts.SourceFile): string | nu
     return printer.printNode(ts.EmitHint.Unspecified, signature, sourceFile).trim();
   }
   if (ts.isVariableStatement(node)) {
-    const declarations = node.declarationList.declarations.map((declaration) => ts.factory.updateVariableDeclaration(
-      declaration,
-      declaration.name,
-      declaration.exclamationToken,
-      declaration.type,
-      undefined,
-    ));
+    const declarations = node.declarationList.declarations.map((declaration) =>
+      ts.factory.updateVariableDeclaration(declaration, declaration.name, declaration.exclamationToken, declaration.type, undefined),
+    );
     const declarationList = ts.factory.updateVariableDeclarationList(node.declarationList, declarations);
     const signature = ts.factory.updateVariableStatement(node, node.modifiers, declarationList);
     return printer.printNode(ts.EmitHint.Unspecified, signature, sourceFile).trim();
@@ -175,7 +171,8 @@ function parseStaticImports(path: string, sourceFile: ts.SourceFile): { imports:
       if (specifier !== undefined && ts.isStringLiteralLike(specifier)) addSpecifier(imports, specifier.text);
     } else if (ts.isImportEqualsDeclaration(node)) {
       const reference = node.moduleReference;
-      if (ts.isExternalModuleReference(reference) && ts.isStringLiteralLike(reference.expression)) addSpecifier(imports, reference.expression.text);
+      if (ts.isExternalModuleReference(reference) && ts.isStringLiteralLike(reference.expression))
+        addSpecifier(imports, reference.expression.text);
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteralLike(node.argument.literal)) {
       addSpecifier(imports, node.argument.literal.text);
     } else if (ts.isCallExpression(node)) {
@@ -208,19 +205,24 @@ function xmlAttribute(value: string): string {
 }
 
 function renderBody(body: SnapshotBodyV4, snapshotHash: string): string {
-  const files = body.files.map((file) => [
-    `<file path="${xmlAttribute(file.path)}" role="${file.role}" mode="${file.mode}" content_hash="${file.content_hash}">`,
-    cdata(file.content),
-    '</file>',
-  ].join('\n')).join('\n');
-  const dynamic = body.ignored_dynamic_imports.length === 0
-    ? '<ignored-dynamic-imports count="0" />'
-    : `<ignored-dynamic-imports count="${body.ignored_dynamic_imports.length}">${body.ignored_dynamic_imports.map(xmlAttribute).join('\n')}</ignored-dynamic-imports>`;
+  const files = body.files
+    .map((file) =>
+      [
+        `<file path="${xmlAttribute(file.path)}" role="${file.role}" mode="${file.mode}" content_hash="${file.content_hash}">`,
+        cdata(file.content),
+        '</file>',
+      ].join('\n'),
+    )
+    .join('\n');
+  const dynamic =
+    body.ignored_dynamic_imports.length === 0
+      ? '<ignored-dynamic-imports count="0" />'
+      : `<ignored-dynamic-imports count="${body.ignored_dynamic_imports.length}">${body.ignored_dynamic_imports.map(xmlAttribute).join('\n')}</ignored-dynamic-imports>`;
   return [
     `<capability_snapshot schema_version="4" repository_id="${xmlAttribute(body.repository_id)}" source_revision="${xmlAttribute(body.base_sha ?? 'WORKTREE')}" mode="${body.mode}" snapshot_hash="${snapshotHash}">`,
     `<roots count="${body.root_paths.length}">${body.root_paths.map((path) => `<path>${xmlAttribute(path)}</path>`).join('')}</roots>`,
     dynamic,
-    ...body.files.length > 0 ? [files] : ['<files count="0" />'],
+    ...(body.files.length > 0 ? [files] : ['<files count="0" />']),
     '</capability_snapshot>',
   ].join('\n');
 }
@@ -279,12 +281,13 @@ export async function build_capability_snapshot(
   const maxBytes = validateLimit(options.max_bytes ?? DEFAULT_MAX_BYTES, 'maximum context size', MAX_MAX_BYTES);
   const maxFiles = validateLimit(options.max_files, 'maximum file count', DEFAULT_MAX_FILES);
   const baseSha = contract.base_sha ?? null;
-  if (options.read_from_git === true && (baseSha === null || !GIT_SHA.test(baseSha))) invalid('immutable base_sha is required for Git-backed reads');
+  if (options.read_from_git === true && (baseSha === null || !GIT_SHA.test(baseSha)))
+    invalid('immutable base_sha is required for Git-backed reads');
 
   const targetPaths = contract.implementation_targets.map((change) => change.path);
-  const createTargetPaths = new Set(contract.implementation_targets
-    .filter((change) => change.operations.includes('CREATE'))
-    .map((change) => foldPath(change.path)));
+  const createTargetPaths = new Set(
+    contract.implementation_targets.filter((change) => change.operations.includes('CREATE')).map((change) => foldPath(change.path)),
+  );
   const acceptancePaths = [...contract.acceptance_tests];
   const roots = stableSort([...targetPaths, ...acceptancePaths]);
   const rootSet = new Set(roots.map(foldPath));
@@ -325,7 +328,11 @@ export async function build_capability_snapshot(
         }
         toRepositoryPath(repositoryRoot, physical);
         const raw = await readFile(physical);
-        try { content = new TextDecoder('utf-8', { fatal: true }).decode(raw); } catch { invalid(`source file is not UTF-8: ${path}`); }
+        try {
+          content = new TextDecoder('utf-8', { fatal: true }).decode(raw);
+        } catch {
+          invalid(`source file is not UTF-8: ${path}`);
+        }
       }
       if (content.includes('\u0000')) invalid(`source file contains NUL bytes: ${path}`);
       if (bytes(content) > MAX_MAX_BYTES) invalid(`source file exceeds the bounded parser limit: ${path}`);
@@ -365,11 +372,16 @@ export async function build_capability_snapshot(
       : resolve(repositoryRoot, ...specifier.split('/'));
     if (!isRelativeSpecifier(specifier)) {
       const relativeCandidate = relative(repositoryRoot, candidateBase);
-      if (relativeCandidate === '..' || relativeCandidate.startsWith(`..${sep}`) || isAbsolute(relativeCandidate)) invalid(`import escapes the repository root: ${from} -> ${specifier}`);
+      if (relativeCandidate === '..' || relativeCandidate.startsWith(`..${sep}`) || isAbsolute(relativeCandidate))
+        invalid(`import escapes the repository root: ${from} -> ${specifier}`);
     }
     for (const candidate of extensionCandidates(candidateBase)) {
       let candidatePath: string;
-      try { candidatePath = toRepositoryPath(repositoryRoot, resolve(candidate)); } catch { continue; }
+      try {
+        candidatePath = toRepositoryPath(repositoryRoot, resolve(candidate));
+      } catch {
+        continue;
+      }
       if (candidatePath.split('/').includes('node_modules')) continue;
       try {
         await sourceFor(candidatePath);
@@ -408,7 +420,9 @@ export async function build_capability_snapshot(
       const role = roles.get(foldPath(path)) ?? 'local_dependency';
       const isRoot = rootSet.has(foldPath(path));
       const full = mode === 'FULL' || isRoot;
-      const content = full ? source.content : source.exported_signatures || '// dependency exposes no exported type/interface signatures; implementation omitted.\n';
+      const content = full
+        ? source.content
+        : source.exported_signatures || '// dependency exposes no exported type/interface signatures; implementation omitted.\n';
       const fileMode: CapabilitySnapshotFileModeV4 = full ? 'FULL' : 'EXPORTED_SIGNATURES';
       return Object.freeze({ path, role, mode: fileMode, content, content_hash: contentHash(content) });
     });
@@ -424,11 +438,21 @@ export async function build_capability_snapshot(
     ignored_dynamic_imports: Object.freeze(stableSort([...ignoredDynamicImports])),
   };
   const fullFiles = filesFor('FULL');
-  const fullBody: SnapshotBodyV4 = Object.freeze({ ...common, mode: 'FULL', files: fullFiles, total_bytes: bodySize({ ...common, mode: 'FULL', files: fullFiles, total_bytes: 0 }) });
+  const fullBody: SnapshotBodyV4 = Object.freeze({
+    ...common,
+    mode: 'FULL',
+    files: fullFiles,
+    total_bytes: bodySize({ ...common, mode: 'FULL', files: fullFiles, total_bytes: 0 }),
+  });
   let selectedBody: SnapshotBodyV4 = fullBody;
   if (bodySize(fullBody) > maxBytes) {
     const fallbackFiles = filesFor('SIGNATURE_FALLBACK');
-    const fallbackBody: SnapshotBodyV4 = Object.freeze({ ...common, mode: 'SIGNATURE_FALLBACK', files: fallbackFiles, total_bytes: bodySize({ ...common, mode: 'SIGNATURE_FALLBACK', files: fallbackFiles, total_bytes: 0 }) });
+    const fallbackBody: SnapshotBodyV4 = Object.freeze({
+      ...common,
+      mode: 'SIGNATURE_FALLBACK',
+      files: fallbackFiles,
+      total_bytes: bodySize({ ...common, mode: 'SIGNATURE_FALLBACK', files: fallbackFiles, total_bytes: 0 }),
+    });
     if (bodySize(fallbackBody) > maxBytes) invalid(`root context plus dependency signatures exceed ${maxBytes} bytes`);
     selectedBody = fallbackBody;
   }

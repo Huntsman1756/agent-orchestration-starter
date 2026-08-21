@@ -17,11 +17,7 @@ export interface CompileOptions {
 
 export function compileHarness(harness: Harness, policy: ResolvedPolicy, options: CompileOptions = {}): GeneratedFile[] {
   const effectiveIsolation = harnessWriteIsolation[harness];
-  if (
-    policy.isolation.required === 'hard'
-    && effectiveIsolation === 'degraded'
-    && !options.acceptDegradedIsolation?.includes(harness)
-  ) {
+  if (policy.isolation.required === 'hard' && effectiveIsolation === 'degraded' && !options.acceptDegradedIsolation?.includes(harness)) {
     throw new Error(`hard write isolation required; ${harness} provides degraded isolation and requires explicit acceptance`);
   }
   if (harness === 'codex') return compileCodex(policy, effectiveIsolation);

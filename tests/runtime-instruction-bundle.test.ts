@@ -10,7 +10,8 @@ import { promisify } from 'node:util';
 import { buildInstructionBundle } from '../src/runtime/instruction-bundle.js';
 
 const execFileAsync = promisify(execFile);
-const git = async (repo: string, ...argv: string[]) => (await execFileAsync('git', ['-C', repo, ...argv], { encoding: 'utf8' })).stdout.trim();
+const git = async (repo: string, ...argv: string[]) =>
+  (await execFileAsync('git', ['-C', repo, ...argv], { encoding: 'utf8' })).stdout.trim();
 
 test('copies only approved instructions from the frozen base tree and hashes every byte', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'ao-instructions-repo-'));
@@ -56,8 +57,21 @@ test('fails closed on symbolic base revisions and oversized instruction text', a
     await git(repo, 'add', '.');
     await git(repo, 'commit', '-m', 'base');
     const baseSha = await git(repo, 'rev-parse', 'HEAD');
-    await assert.rejects(() => buildInstructionBundle({ repository_root: repo, base_sha: 'HEAD', approved_sources: ['AGENTS.md'], output_root: output }), /OUT_OF_SCOPE_CHANGE/);
-    await assert.rejects(() => buildInstructionBundle({ repository_root: repo, base_sha: baseSha, approved_sources: ['AGENTS.md'], output_root: output, max_total_bytes: 3 }), /OUT_OF_SCOPE_CHANGE/);
+    await assert.rejects(
+      () => buildInstructionBundle({ repository_root: repo, base_sha: 'HEAD', approved_sources: ['AGENTS.md'], output_root: output }),
+      /OUT_OF_SCOPE_CHANGE/,
+    );
+    await assert.rejects(
+      () =>
+        buildInstructionBundle({
+          repository_root: repo,
+          base_sha: baseSha,
+          approved_sources: ['AGENTS.md'],
+          output_root: output,
+          max_total_bytes: 3,
+        }),
+      /OUT_OF_SCOPE_CHANGE/,
+    );
   } finally {
     await rm(repo, { recursive: true, force: true });
     await rm(output, { recursive: true, force: true });

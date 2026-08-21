@@ -12,15 +12,36 @@ test('one request is durably accepted once and automatically advances outside th
   let submits = 0;
   let advances = 0;
   let release!: () => void;
-  const completed = new Promise<void>((resolve) => { release = resolve; });
+  const completed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const orchestrator = createRuntimeOrchestratorV4({
     command_id: () => 'fixed-command',
     daemon: {
-      submit: async (command) => { submits += 1; const prior = byRequest.get(command.request.request_id); if (prior !== undefined) return { request_id: command.request.request_id, run_id: prior, state: result.state, status_token: 'a'.repeat(64) }; byRequest.set(command.request.request_id, result.run_id); return { request_id: result.request_id, run_id: result.run_id, state: result.state, status_token: 'a'.repeat(64) }; },
+      submit: async (command) => {
+        submits += 1;
+        const prior = byRequest.get(command.request.request_id);
+        if (prior !== undefined)
+          return { request_id: command.request.request_id, run_id: prior, state: result.state, status_token: 'a'.repeat(64) };
+        byRequest.set(command.request.request_id, result.run_id);
+        return { request_id: result.request_id, run_id: result.run_id, state: result.state, status_token: 'a'.repeat(64) };
+      },
       status: async () => result,
     },
-    pipeline: { advance: async () => { advances += 1; await completed; result.state = 'FINALIZED'; result.commit_sha = 'c'.repeat(40); }, abort: async () => { result.state = 'ABORTED'; } },
-    persist_terminal_failure: async () => { throw new Error('unexpected failure'); },
+    pipeline: {
+      advance: async () => {
+        advances += 1;
+        await completed;
+        result.state = 'FINALIZED';
+        result.commit_sha = 'c'.repeat(40);
+      },
+      abort: async () => {
+        result.state = 'ABORTED';
+      },
+    },
+    persist_terminal_failure: async () => {
+      throw new Error('unexpected failure');
+    },
   });
   const first = await orchestrator.start(validTaskRequest() as unknown as RuntimeTaskRequestV4);
   const replay = await orchestrator.start(validTaskRequest() as unknown as RuntimeTaskRequestV4);
@@ -41,15 +62,36 @@ test('typed pipeline failure is persisted and abort delegates only to daemon-own
   const failures: RuntimeFailureV4[] = [];
   let aborted = false;
   const orchestrator = createRuntimeOrchestratorV4({
-    daemon: { submit: async () => ({ request_id: result.request_id, run_id: result.run_id, state: result.state, status_token: 'a'.repeat(64) }), status: async () => result },
-    pipeline: { advance: async () => { throw new Error('VALIDATION_FAILED: raw repository detail'); }, abort: async () => { aborted = true; result.state = 'ABORTED'; } },
-    persist_terminal_failure: async (_runId, failure) => { failures.push(failure); result.state = 'FAILED'; result.failure = failure; },
+    daemon: {
+      submit: async () => ({ request_id: result.request_id, run_id: result.run_id, state: result.state, status_token: 'a'.repeat(64) }),
+      status: async () => result,
+    },
+    pipeline: {
+      advance: async () => {
+        throw new Error('VALIDATION_FAILED: raw repository detail');
+      },
+      abort: async () => {
+        aborted = true;
+        result.state = 'ABORTED';
+      },
+    },
+    persist_terminal_failure: async (_runId, failure) => {
+      failures.push(failure);
+      result.state = 'FAILED';
+      result.failure = failure;
+    },
   });
   await orchestrator.start(validTaskRequest() as unknown as RuntimeTaskRequestV4);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(result.state, 'FAILED');
-  assert.deepEqual(failures[0], { code: 'VALIDATION_FAILED', message: 'VALIDATION_FAILED: automated pipeline failed', retryable: false, evidence_hashes: [] });
-  result.state = 'READY_FOR_EXECUTOR'; result.failure = null;
+  assert.deepEqual(failures[0], {
+    code: 'VALIDATION_FAILED',
+    message: 'VALIDATION_FAILED: automated pipeline failed',
+    retryable: false,
+    evidence_hashes: [],
+  });
+  result.state = 'READY_FOR_EXECUTOR';
+  result.failure = null;
   assert.equal((await orchestrator.abort(result.run_id)).state, 'ABORTED');
   assert.equal(aborted, true);
 });

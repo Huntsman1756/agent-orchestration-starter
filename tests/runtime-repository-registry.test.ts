@@ -9,14 +9,16 @@ import { loadRepositoryRegistration, type RepositoryRegistryV4 } from '../src/ru
 test('loads the broker-owned canonical registration for an allowed repository', () => {
   const fixtureRoot = realpathSync.native(mkdtempSync(join(tmpdir(), 'runner-v4-registry-')));
   const registry: RepositoryRegistryV4 = {
-    repositories: [{
-      repository_id: 'fixture-repo',
-      canonical_root: fixtureRoot,
-      policy_ref: 'policies/fixture.yaml',
-      profile_ref: 'profiles/fixture.yaml',
-      worktree_parent: 'C:/broker/worktrees',
-      state_path: 'C:/broker/state/fixture.json',
-    }],
+    repositories: [
+      {
+        repository_id: 'fixture-repo',
+        canonical_root: fixtureRoot,
+        policy_ref: 'policies/fixture.yaml',
+        profile_ref: 'profiles/fixture.yaml',
+        worktree_parent: 'C:/broker/worktrees',
+        state_path: 'C:/broker/state/fixture.json',
+      },
+    ],
   };
 
   const registration = loadRepositoryRegistration('fixture-repo', registry);
@@ -27,8 +29,5 @@ test('loads the broker-owned canonical registration for an allowed repository', 
 });
 
 test('rejects a repository absent from the broker registry', () => {
-  assert.throws(
-    () => loadRepositoryRegistration('missing-repo', { repositories: [] }),
-    /REPOSITORY_NOT_ALLOWED/,
-  );
+  assert.throws(() => loadRepositoryRegistration('missing-repo', { repositories: [] }), /REPOSITORY_NOT_ALLOWED/);
 });

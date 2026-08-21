@@ -1,7 +1,13 @@
 import { hashCanonicalV4 } from './canonical.js';
 import { loadRuntimeProfileV4, loadRuntimeRepositoryPolicyV4 } from './load.js';
 import { analyzeRuntimeRouteCoverageV4 } from './readiness.js';
-import type { RuntimeBindingV4, RuntimeProfileV4, RuntimeRepositoryPolicyV4, RuntimeTaskTraitV4, SourceSensitivityV4 } from './contracts.js';
+import type {
+  RuntimeBindingV4,
+  RuntimeProfileV4,
+  RuntimeRepositoryPolicyV4,
+  RuntimeTaskTraitV4,
+  SourceSensitivityV4,
+} from './contracts.js';
 
 export type RuntimeDelegationDiagnosticStatusV4 = 'READY' | 'DEGRADED' | 'BLOCKED';
 export type RuntimeDelegationDiagnosticSeverityV4 = 'INFO' | 'WARNING' | 'BLOCKED';
@@ -44,15 +50,34 @@ export interface RuntimeDelegationDiagnosticV4 {
 
 const mechanicalTraits = ['mechanical', 'localized'] as const;
 const reasoningTraits = ['semantic-debugging', 'cross-file-reasoning'] as const;
-const frontierTraits = ['mechanical', 'localized', 'semantic-debugging', 'cross-file-reasoning', 'long-horizon', 'architecture', 'security-sensitive', 'migration'] as const;
+const frontierTraits = [
+  'mechanical',
+  'localized',
+  'semantic-debugging',
+  'cross-file-reasoning',
+  'long-horizon',
+  'architecture',
+  'security-sensitive',
+  'migration',
+] as const;
 
 function supports(binding: RuntimeBindingV4 | undefined, sensitivity: SourceSensitivityV4, traits: readonly RuntimeTaskTraitV4[]): boolean {
-  if (binding === undefined || binding.permissions !== 'contract-write' || !binding.allowedSourceSensitivity.includes(sensitivity) || binding.execution === undefined) return false;
+  if (
+    binding === undefined ||
+    binding.permissions !== 'contract-write' ||
+    !binding.allowedSourceSensitivity.includes(sensitivity) ||
+    binding.execution === undefined
+  )
+    return false;
   const supported = new Set(binding.execution.supportedTaskTraits);
   return traits.every((trait) => supported.has(trait));
 }
 
-function roleSummary(role: keyof RuntimeProfileV4['bindings'], binding: RuntimeBindingV4, sensitivity: SourceSensitivityV4): RuntimeDelegationRoleV4 {
+function roleSummary(
+  role: keyof RuntimeProfileV4['bindings'],
+  binding: RuntimeBindingV4,
+  sensitivity: SourceSensitivityV4,
+): RuntimeDelegationRoleV4 {
   return Object.freeze({
     role,
     tier: binding.tier,
@@ -64,7 +89,10 @@ function roleSummary(role: keyof RuntimeProfileV4['bindings'], binding: RuntimeB
   });
 }
 
-export function diagnoseRuntimeDelegationV4(policyInput: RuntimeRepositoryPolicyV4, profileInput: RuntimeProfileV4): RuntimeDelegationDiagnosticV4 {
+export function diagnoseRuntimeDelegationV4(
+  policyInput: RuntimeRepositoryPolicyV4,
+  profileInput: RuntimeProfileV4,
+): RuntimeDelegationDiagnosticV4 {
   const policy = loadRuntimeRepositoryPolicyV4(structuredClone(policyInput));
   const profile = loadRuntimeProfileV4(structuredClone(profileInput));
   const sensitivity = policy.sourcePolicy.sourceSensitivity;
@@ -74,30 +102,78 @@ export function diagnoseRuntimeDelegationV4(policyInput: RuntimeRepositoryPolicy
   const reasoningReady = supports(profile.bindings.reasoningExecutor, sensitivity, reasoningTraits);
   const frontierReady = supports(profile.bindings.frontierExecutor, sensitivity, frontierTraits);
 
-  findings.push(Object.freeze(mechanicalReady
-    ? { code: 'ECONOMY_MECHANICAL_READY', severity: 'INFO', message: 'Localized mechanical work can be delegated to the economy executor.' }
-    : { code: 'ECONOMY_MECHANICAL_UNAVAILABLE', severity: 'WARNING', message: 'Mechanical work will not use the economy executor for this source sensitivity and qualification envelope.' }));
-  findings.push(Object.freeze(reasoningReady
-    ? { code: 'ECONOMY_REASONING_READY', severity: 'INFO', message: 'Qualified semantic debugging and cross-file work can use the reasoning economy executor.' }
-    : { code: 'ECONOMY_REASONING_UNAVAILABLE', severity: 'WARNING', message: 'Semantic debugging and cross-file work will elevate to the frontier executor.' }));
+  findings.push(
+    Object.freeze(
+      mechanicalReady
+        ? {
+            code: 'ECONOMY_MECHANICAL_READY',
+            severity: 'INFO',
+            message: 'Localized mechanical work can be delegated to the economy executor.',
+          }
+        : {
+            code: 'ECONOMY_MECHANICAL_UNAVAILABLE',
+            severity: 'WARNING',
+            message: 'Mechanical work will not use the economy executor for this source sensitivity and qualification envelope.',
+          },
+    ),
+  );
+  findings.push(
+    Object.freeze(
+      reasoningReady
+        ? {
+            code: 'ECONOMY_REASONING_READY',
+            severity: 'INFO',
+            message: 'Qualified semantic debugging and cross-file work can use the reasoning economy executor.',
+          }
+        : {
+            code: 'ECONOMY_REASONING_UNAVAILABLE',
+            severity: 'WARNING',
+            message: 'Semantic debugging and cross-file work will elevate to the frontier executor.',
+          },
+    ),
+  );
   if (sensitivity === 'PRIVATE' && !coverage.economy.available) {
-    findings.push(Object.freeze({ code: 'PRIVATE_SOURCE_ROUTE_COLLAPSE', severity: 'WARNING', message: 'The economy route does not support PRIVATE source; AUTO collapses to frontier execution.' }));
+    findings.push(
+      Object.freeze({
+        code: 'PRIVATE_SOURCE_ROUTE_COLLAPSE',
+        severity: 'WARNING',
+        message: 'The economy route does not support PRIVATE source; AUTO collapses to frontier execution.',
+      }),
+    );
   }
   const economyIdentities = [profile.bindings.executor, profile.bindings.reasoningExecutor, profile.bindings.escalationExecutor]
     .filter((binding): binding is RuntimeBindingV4 => binding !== undefined)
     .map((binding) => `${binding.provider}\u0000${binding.model}`);
   if (economyIdentities.includes(`${profile.bindings.frontierExecutor.provider}\u0000${profile.bindings.frontierExecutor.model}`)) {
-    findings.push(Object.freeze({ code: 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL', severity: 'WARNING', message: 'Frontier execution reuses an economy model identity; supervision may improve retries, but this is not a stronger-model fallback.' }));
+    findings.push(
+      Object.freeze({
+        code: 'FRONTIER_EXECUTOR_REUSES_ECONOMY_MODEL',
+        severity: 'WARNING',
+        message:
+          'Frontier execution reuses an economy model identity; supervision may improve retries, but this is not a stronger-model fallback.',
+      }),
+    );
   }
   if (!frontierReady) {
-    findings.push(Object.freeze({ code: 'FRONTIER_FALLBACK_UNAVAILABLE', severity: 'BLOCKED', message: 'No frontier write binding is qualified for every protected task trait at this source sensitivity.' }));
+    findings.push(
+      Object.freeze({
+        code: 'FRONTIER_FALLBACK_UNAVAILABLE',
+        severity: 'BLOCKED',
+        message: 'No frontier write binding is qualified for every protected task trait at this source sensitivity.',
+      }),
+    );
   }
 
-  const roles = Object.freeze((Object.entries(profile.bindings) as [keyof RuntimeProfileV4['bindings'], RuntimeBindingV4][])
-    .map(([role, binding]) => roleSummary(role, binding, sensitivity)));
+  const roles = Object.freeze(
+    (Object.entries(profile.bindings) as [keyof RuntimeProfileV4['bindings'], RuntimeBindingV4][]).map(([role, binding]) =>
+      roleSummary(role, binding, sensitivity),
+    ),
+  );
   const status: RuntimeDelegationDiagnosticStatusV4 = findings.some((finding) => finding.severity === 'BLOCKED')
     ? 'BLOCKED'
-    : findings.some((finding) => finding.severity === 'WARNING') ? 'DEGRADED' : 'READY';
+    : findings.some((finding) => finding.severity === 'WARNING')
+      ? 'DEGRADED'
+      : 'READY';
   const body = {
     schemaVersion: 4 as const,
     status,
@@ -119,7 +195,10 @@ export function renderRuntimeDelegationDiagnosticV4(report: RuntimeDelegationDia
     `source sensitivity: ${report.sourceSensitivity}`,
     `automatic route: ${report.automaticRoute ?? 'NONE'}`,
     'roles:',
-    ...report.roles.map((role) => `  ${role.role}: ${role.tier} ${role.provider}/${role.model} via ${role.harness} (source=${role.sourceSensitivitySupported ? 'supported' : 'unsupported'}, traits=${role.supportedTaskTraits.join(',') || 'none'})`),
+    ...report.roles.map(
+      (role) =>
+        `  ${role.role}: ${role.tier} ${role.provider}/${role.model} via ${role.harness} (source=${role.sourceSensitivitySupported ? 'supported' : 'unsupported'}, traits=${role.supportedTaskTraits.join(',') || 'none'})`,
+    ),
     'findings:',
     ...report.findings.map((finding) => `  ${finding.severity} ${finding.code}: ${finding.message}`),
     `report hash: ${report.reportHash}`,

@@ -18,7 +18,9 @@ export interface ArtifactStoreV4 {
 }
 
 const kinds = new Set<ArtifactKindV4>(['VALIDATION_STDOUT', 'VALIDATION_STDERR', 'VALIDATION_MANIFEST', 'DIFF']);
-function failed(message: string): never { throw new Error(`VALIDATION_FAILED: ${message}`); }
+function failed(message: string): never {
+  throw new Error(`VALIDATION_FAILED: ${message}`);
+}
 
 export function createArtifactStoreV4(input: { root: string; max_artifact_bytes: number }): ArtifactStoreV4 {
   if (!Number.isSafeInteger(input.max_artifact_bytes) || input.max_artifact_bytes < 1 || input.max_artifact_bytes > 64 * 1024 * 1024) {
@@ -26,16 +28,31 @@ export function createArtifactStoreV4(input: { root: string; max_artifact_bytes:
   }
   const referenceFor = (kind: ArtifactKindV4, bytes: Uint8Array): ArtifactReferenceV4 => {
     const hash = createHash('sha256').update(bytes).digest('hex');
-    return Object.freeze({ schema_version: 4, kind, content_hash: hash, byte_length: bytes.byteLength, storage_key: `${kind}/${hash}.bin` });
+    return Object.freeze({
+      schema_version: 4,
+      kind,
+      content_hash: hash,
+      byte_length: bytes.byteLength,
+      storage_key: `${kind}/${hash}.bin`,
+    });
   };
   const verify = async (reference: ArtifactReferenceV4): Promise<boolean> => {
-    if (reference.schema_version !== 4 || !kinds.has(reference.kind) || !/^[a-f0-9]{64}$/.test(reference.content_hash)
-      || reference.storage_key !== `${reference.kind}/${reference.content_hash}.bin`
-      || !Number.isSafeInteger(reference.byte_length) || reference.byte_length < 0 || reference.byte_length > input.max_artifact_bytes) return false;
+    if (
+      reference.schema_version !== 4 ||
+      !kinds.has(reference.kind) ||
+      !/^[a-f0-9]{64}$/.test(reference.content_hash) ||
+      reference.storage_key !== `${reference.kind}/${reference.content_hash}.bin` ||
+      !Number.isSafeInteger(reference.byte_length) ||
+      reference.byte_length < 0 ||
+      reference.byte_length > input.max_artifact_bytes
+    )
+      return false;
     try {
       const bytes = await readFile(join(input.root, reference.storage_key));
       return bytes.length === reference.byte_length && createHash('sha256').update(bytes).digest('hex') === reference.content_hash;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   };
   return Object.freeze({
     put: async (kind: ArtifactKindV4, bytes: Uint8Array): Promise<ArtifactReferenceV4> => {

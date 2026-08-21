@@ -68,8 +68,9 @@
     "example:reference-e2e": "tsx --test tests/runtime-reference-host-e2e.test.ts",
     "typecheck": "tsc -p tsconfig.test.json",
     "lint": "eslint src tests --max-warnings=0",
-    "format:critical:check": "prettier --check eslint.config.mjs .prettierrc.json orchestration.yaml policies/repository-policy.example.yaml package.json src/runtime/audit-trail.ts src/runtime/shift-left-validation.ts tests/runtime-shift-left.test.ts",
-    "validate": "npm run test && npm run typecheck && npm run lint && npm run format:critical:check && npm run build",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "validate": "npm run test && npm run typecheck && npm run lint && npm run format:check && npm run build",
     "audit:verify": "node dist/cli/main.js runtime audit-verify",
     "prepublishOnly": "npm run validate"
   },

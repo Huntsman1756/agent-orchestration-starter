@@ -4,10 +4,7 @@ import { dirname, join, parse } from 'node:path';
 
 import { runBoundedProcessV4 } from './bounded-process.js';
 import { dockerCliEnvironmentV4, registerOrReproveDockerLauncherV4 } from './docker-launcher.js';
-import {
-  createDockerContainerRemovalControllerV4,
-  type DockerContainerRemovalControllerV4,
-} from './process-sandbox.js';
+import { createDockerContainerRemovalControllerV4, type DockerContainerRemovalControllerV4 } from './process-sandbox.js';
 
 type ContainerKindV4 = 'executor' | 'gateway' | 'tls-fixture';
 
@@ -124,17 +121,24 @@ async function loadDurablePending(request: BrokerOwnedContainerCreateRequestV4):
       container_id?: string | null;
       owner_pid?: number;
     };
-    try { value = JSON.parse(await readFile(join(directory, entry), 'utf8')) as typeof value; } catch { unavailable(); }
-    if (value.request?.docker_executable !== request.docker_executable
-      || value.request.broker_state_directory !== request.broker_state_directory
-      || value.nonce === undefined
-      || entry !== `${value.nonce}.json`
-      || !/^[a-f0-9]{32}$/.test(value.nonce)
-      || typeof value.name !== 'string'
-      || !/^ao-(executor|gateway|tls-fixture)-[a-f0-9]{32}$/.test(value.name)
-      || !Number.isSafeInteger(value.owner_pid) || value.owner_pid! <= 0
-      || (value.container_id !== null && value.container_id !== undefined
-        && !/^[a-f0-9]{64}$/.test(value.container_id))) unavailable();
+    try {
+      value = JSON.parse(await readFile(join(directory, entry), 'utf8')) as typeof value;
+    } catch {
+      unavailable();
+    }
+    if (
+      value.request?.docker_executable !== request.docker_executable ||
+      value.request.broker_state_directory !== request.broker_state_directory ||
+      value.nonce === undefined ||
+      entry !== `${value.nonce}.json` ||
+      !/^[a-f0-9]{32}$/.test(value.nonce) ||
+      typeof value.name !== 'string' ||
+      !/^ao-(executor|gateway|tls-fixture)-[a-f0-9]{32}$/.test(value.name) ||
+      !Number.isSafeInteger(value.owner_pid) ||
+      value.owner_pid! <= 0 ||
+      (value.container_id !== null && value.container_id !== undefined && !/^[a-f0-9]{64}$/.test(value.container_id))
+    )
+      unavailable();
     const ownerPid = value.owner_pid!;
     const existing = pendingCreates.get(value.nonce);
     if (existing !== undefined) {
@@ -159,17 +163,15 @@ async function loadDurablePending(request: BrokerOwnedContainerCreateRequestV4):
 }
 
 function processExists(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (error) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 
-async function docker(
-  executable: string,
-  argv: readonly string[],
-  deadlineMs: number,
-  signal?: AbortSignal,
-): Promise<DockerResultV4> {
+async function docker(executable: string, argv: readonly string[], deadlineMs: number, signal?: AbortSignal): Promise<DockerResultV4> {
   await registerOrReproveDockerLauncherV4(executable, signal);
   const result = await runBoundedProcessV4({
     executable,
@@ -190,9 +192,11 @@ async function docker(
 }
 
 async function exactIdPresent(executable: string, containerId: string): Promise<boolean> {
-  const result = await docker(executable, [
-    'container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}',
-  ], 10_000);
+  const result = await docker(
+    executable,
+    ['container', 'ls', '--all', '--no-trunc', `--filter=id=${containerId}`, '--format', '{{.ID}}'],
+    10_000,
+  );
   if (result.terminated || result.truncated || result.exit_code !== 0) unavailable();
   const output = result.stdout.trim();
   if (output === '') return false;
@@ -205,8 +209,8 @@ function removalController(executable: string, containerId: string): DockerConta
     inspect_exact_id: async (id) => await exactIdPresent(executable, id),
     force_remove_exact_id: async (id) => {
       const result = await docker(executable, ['rm', '--force', id], 10_000);
-      if (result.terminated || result.truncated || result.exit_code !== 0
-        || result.stdout.trim() !== id || result.stderr !== '') unavailable();
+      if (result.terminated || result.truncated || result.exit_code !== 0 || result.stdout.trim() !== id || result.stderr !== '')
+        unavailable();
     },
     poll_interval_ms: 25,
     absence_timeout_ms: 5_000,
@@ -229,15 +233,17 @@ async function inspectOwnedContainer(
       Config?: { Image?: unknown; Labels?: Record<string, string> };
     }>;
     const value = values[0];
-    return values.length === 1
-      && value?.Id === containerId
-      && value.Name === `/${name}`
-      && value.Config?.Image === request.image_id
-      && value.Config.Labels?.['agent-orchestration.execution'] === request.execution_id
-      && value.Config.Labels['agent-orchestration.nonce'] === nonce
-      && value.Config.Labels['agent-orchestration.image'] === request.image_id
-      && value.Config.Labels['agent-orchestration.launcher'] === launcherKey(request)
-      && value.Config.Labels['agent-orchestration.container-kind'] === request.kind;
+    return (
+      values.length === 1 &&
+      value?.Id === containerId &&
+      value.Name === `/${name}` &&
+      value.Config?.Image === request.image_id &&
+      value.Config.Labels?.['agent-orchestration.execution'] === request.execution_id &&
+      value.Config.Labels['agent-orchestration.nonce'] === nonce &&
+      value.Config.Labels['agent-orchestration.image'] === request.image_id &&
+      value.Config.Labels['agent-orchestration.launcher'] === launcherKey(request) &&
+      value.Config.Labels['agent-orchestration.container-kind'] === request.kind
+    );
   } catch {
     return false;
   }
@@ -250,17 +256,17 @@ async function recoverByNonce(
   deadline: number,
 ): Promise<string | null> {
   do {
-    const listed = await docker(request.docker_executable, [
-      'container', 'ls', '--all', '--no-trunc',
-      `--filter=label=agent-orchestration.nonce=${nonce}`,
-      '--format', '{{.ID}}',
-    ], 10_000).catch(() => unavailable());
+    const listed = await docker(
+      request.docker_executable,
+      ['container', 'ls', '--all', '--no-trunc', `--filter=label=agent-orchestration.nonce=${nonce}`, '--format', '{{.ID}}'],
+      10_000,
+    ).catch(() => unavailable());
     if (listed.terminated || listed.truncated || listed.exit_code !== 0) unavailable();
     const ids = listed.stdout.trim().split('\n').filter(Boolean);
     if (ids.length > 1 || ids.some((id) => !/^[a-f0-9]{64}$/.test(id))) unavailable();
     if (ids.length === 1) {
       const id = ids[0]!;
-      if (!await inspectOwnedContainer(request, id, name, nonce)) unavailable();
+      if (!(await inspectOwnedContainer(request, id, name, nonce))) unavailable();
       return id;
     }
     if (Date.now() >= deadline) return null;
@@ -280,11 +286,11 @@ async function reconcilePendingCreate(pending: PendingContainerCreateV4): Promis
     pending.removal = removalController(pending.request.docker_executable, id);
     await persistPending(pending);
   }
-  if (!await exactIdPresent(pending.request.docker_executable, id)) {
+  if (!(await exactIdPresent(pending.request.docker_executable, id))) {
     await clearPending(pending);
     return;
   }
-  if (!await inspectOwnedContainer(pending.request, id, pending.name, pending.nonce)) unavailable();
+  if (!(await inspectOwnedContainer(pending.request, id, pending.name, pending.nonce))) unavailable();
   await pending.removal!.remove();
   await clearPending(pending);
 }
@@ -294,9 +300,11 @@ async function reconcilePendingCreates(executable: string): Promise<void> {
     if (externallyActiveCreates.has(pending.nonce) && !processExists(pending.owner_pid)) {
       externallyActiveCreates.delete(pending.nonce);
     }
-    if (pending.request.docker_executable === executable
-      && !liveActiveCreates.has(pending.nonce)
-      && !externallyActiveCreates.has(pending.nonce)) {
+    if (
+      pending.request.docker_executable === executable &&
+      !liveActiveCreates.has(pending.nonce) &&
+      !externallyActiveCreates.has(pending.nonce)
+    ) {
       await reconcilePendingCreate(pending);
     }
   }
@@ -305,15 +313,24 @@ async function reconcilePendingCreates(executable: string): Promise<void> {
 async function rejectUnknownBrokerContainers(request: BrokerOwnedContainerCreateRequestV4): Promise<void> {
   const deadline = Date.now() + 2_000;
   do {
-    const listed = await docker(request.docker_executable, [
-      'container', 'ls', '--all', '--no-trunc',
-      `--filter=label=agent-orchestration.launcher=${launcherKey(request)}`, '--format', '{{.ID}}',
-    ], 10_000);
+    const listed = await docker(
+      request.docker_executable,
+      [
+        'container',
+        'ls',
+        '--all',
+        '--no-trunc',
+        `--filter=label=agent-orchestration.launcher=${launcherKey(request)}`,
+        '--format',
+        '{{.ID}}',
+      ],
+      10_000,
+    );
     if (listed.terminated || listed.truncated || listed.exit_code !== 0) unavailable();
     const ids = listed.stdout.trim().split('\n').filter(Boolean);
     if (ids.some((id) => !/^[a-f0-9]{64}$/.test(id))) unavailable();
     const authorized = new Set(
-      [...pendingCreates.values()].flatMap((pending) => pending.container_id === null ? [] : [pending.container_id]),
+      [...pendingCreates.values()].flatMap((pending) => (pending.container_id === null ? [] : [pending.container_id])),
     );
     if (ids.every((id) => authorized.has(id))) return;
     if (Date.now() >= deadline) unavailable();
@@ -323,30 +340,34 @@ async function rejectUnknownBrokerContainers(request: BrokerOwnedContainerCreate
   } while (true);
 }
 
-export async function createBrokerOwnedDockerContainerV4(
-  request: BrokerOwnedContainerCreateRequestV4,
-): Promise<BrokerOwnedContainerV4> {
-  await registerOrReproveDockerLauncherV4(
-    request.docker_executable,
-    request.signal,
-    request.broker_state_directory,
-  );
+export async function createBrokerOwnedDockerContainerV4(request: BrokerOwnedContainerCreateRequestV4): Promise<BrokerOwnedContainerV4> {
+  await registerOrReproveDockerLauncherV4(request.docker_executable, request.signal, request.broker_state_directory);
   await loadDurablePending(request);
   await reconcilePendingCreates(request.docker_executable);
   await rejectUnknownBrokerContainers(request);
-  if (!/^sha256:[a-f0-9]{64}$/.test(request.image_id)
-    || !/^exec_[a-z0-9_-]{8,96}$/.test(request.execution_id)
-    || request.create_arguments.some((arg) => arg === 'create' || arg.startsWith('--name')
-      || arg.startsWith('--label') || arg.startsWith('-l'))) unavailable();
+  if (
+    !/^sha256:[a-f0-9]{64}$/.test(request.image_id) ||
+    !/^exec_[a-z0-9_-]{8,96}$/.test(request.execution_id) ||
+    request.create_arguments.some(
+      (arg) => arg === 'create' || arg.startsWith('--name') || arg.startsWith('--label') || arg.startsWith('-l'),
+    )
+  )
+    unavailable();
   const nonce = randomBytes(16).toString('hex');
   const name = `ao-${request.kind}-${randomBytes(16).toString('hex')}`;
   const argv = [
-    'create', `--name=${name}`,
-    '--label', `agent-orchestration.execution=${request.execution_id}`,
-    '--label', `agent-orchestration.nonce=${nonce}`,
-    '--label', `agent-orchestration.image=${request.image_id}`,
-    '--label', `agent-orchestration.launcher=${launcherKey(request)}`,
-    '--label', `agent-orchestration.container-kind=${request.kind}`,
+    'create',
+    `--name=${name}`,
+    '--label',
+    `agent-orchestration.execution=${request.execution_id}`,
+    '--label',
+    `agent-orchestration.nonce=${nonce}`,
+    '--label',
+    `agent-orchestration.image=${request.image_id}`,
+    '--label',
+    `agent-orchestration.launcher=${launcherKey(request)}`,
+    '--label',
+    `agent-orchestration.container-kind=${request.kind}`,
     ...request.create_arguments,
   ];
   const pending: PendingContainerCreateV4 = {
@@ -369,11 +390,8 @@ export async function createBrokerOwnedDockerContainerV4(
   }
 
   const directId = result?.stdout.trim() ?? '';
-  const directAuthoritative = result !== null
-    && !result.terminated
-    && !result.truncated
-    && result.exit_code === 0
-    && /^[a-f0-9]{64}$/.test(directId);
+  const directAuthoritative =
+    result !== null && !result.terminated && !result.truncated && result.exit_code === 0 && /^[a-f0-9]{64}$/.test(directId);
   let containerId: string | null = directAuthoritative ? directId : null;
   let removal = containerId === null ? null : removalController(request.docker_executable, containerId);
   if (containerId !== null) {
@@ -396,7 +414,7 @@ export async function createBrokerOwnedDockerContainerV4(
   }
 
   try {
-    if (!await inspectOwnedContainer(request, containerId, name, nonce, directAuthoritative ? request.signal : undefined)) unavailable();
+    if (!(await inspectOwnedContainer(request, containerId, name, nonce, directAuthoritative ? request.signal : undefined))) unavailable();
     if (!directAuthoritative) {
       await removal.remove();
       await clearPending(pending);

@@ -1,11 +1,4 @@
-import type {
-  BenchmarkObservation,
-  RouteDecision,
-  RouteMetrics,
-  RoutingGatePolicy,
-  RoutingReport,
-  RoutingStrategy,
-} from './types.js';
+import type { BenchmarkObservation, RouteDecision, RouteMetrics, RoutingGatePolicy, RoutingReport, RoutingStrategy } from './types.js';
 
 function metrics(observations: BenchmarkObservation[]): RouteMetrics {
   const samples = observations.length;
@@ -16,10 +9,11 @@ function metrics(observations: BenchmarkObservation[]): RouteMetrics {
   const defects = observations.flatMap((item) => item.postAcceptanceDefects);
   const postAcceptanceDefectsBySeverity = { low: 0, medium: 0, high: 0, critical: 0 };
   for (const defect of defects) postAcceptanceDefectsBySeverity[defect.severity] += 1;
-  const tokenTotal = (kind: 'frontierTokens' | 'economyTokens') => observations.reduce(
-    (sum, item) => ({ input: sum.input + item[kind].input, output: sum.output + item[kind].output }),
-    { input: 0, output: 0 },
-  );
+  const tokenTotal = (kind: 'frontierTokens' | 'economyTokens') =>
+    observations.reduce((sum, item) => ({ input: sum.input + item[kind].input, output: sum.output + item[kind].output }), {
+      input: 0,
+      output: 0,
+    });
   return {
     samples,
     firstPassAcceptanceRate: samples === 0 ? 0 : firstPassAccepted / samples,
@@ -37,11 +31,7 @@ function metrics(observations: BenchmarkObservation[]): RouteMetrics {
   };
 }
 
-function routeObservations(
-  observations: BenchmarkObservation[],
-  taskClass: string,
-  route: RoutingStrategy,
-): BenchmarkObservation[] {
+function routeObservations(observations: BenchmarkObservation[], taskClass: string, route: RoutingStrategy): BenchmarkObservation[] {
   return observations.filter((item) => item.taskClass === taskClass && item.attemptedRoute === route);
 }
 
@@ -67,22 +57,17 @@ export function evaluateRouting(observations: BenchmarkObservation[], policy: Ro
       if (pairedSamples < policy.minPairedSamplesPerRoute) reasons.push('paired_sample_below_minimum');
       const insufficientEvidence = reasons.length > 0;
       if (!insufficientEvidence) {
-        const savingsRate = candidate.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === 0
-          ? Number.NEGATIVE_INFINITY
-          : 1 - (candidate.acceptedTaskCostUsd / baseline.acceptedTaskCostUsd);
+        const savingsRate =
+          candidate.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === null || baseline.acceptedTaskCostUsd === 0
+            ? Number.NEGATIVE_INFINITY
+            : 1 - candidate.acceptedTaskCostUsd / baseline.acceptedTaskCostUsd;
         if (savingsRate < policy.minAcceptedTaskCostSavingsRate) {
           reasons.push('accepted_task_cost_savings_below_minimum');
         }
-        if (
-          baseline.firstPassAcceptanceRate - candidate.firstPassAcceptanceRate
-          > policy.maxFirstPassAcceptanceDropRate
-        ) {
+        if (baseline.firstPassAcceptanceRate - candidate.firstPassAcceptanceRate > policy.maxFirstPassAcceptanceDropRate) {
           reasons.push('first_pass_acceptance_drop_above_maximum');
         }
-        if (
-          baseline.finalAcceptanceRate - candidate.finalAcceptanceRate
-          > policy.maxFinalAcceptanceDropRate
-        ) {
+        if (baseline.finalAcceptanceRate - candidate.finalAcceptanceRate > policy.maxFinalAcceptanceDropRate) {
           reasons.push('final_acceptance_drop_above_maximum');
         }
         if (candidate.escalationRate > policy.maxEscalationRate) {

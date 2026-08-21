@@ -14,7 +14,10 @@ function serialize(value: unknown): string {
       throw new TypeError('Canonical JSON accepts only plain objects');
     }
     const object = value as Record<string, unknown>;
-    return `{${Object.keys(object).sort().map(key => `${JSON.stringify(key)}:${serialize(object[key])}`).join(',')}}`;
+    return `{${Object.keys(object)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${serialize(object[key])}`)
+      .join(',')}}`;
   }
   throw new TypeError(`Canonical JSON does not support ${typeof value} values`);
 }

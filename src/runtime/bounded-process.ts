@@ -36,10 +36,14 @@ function boundedAppend(chunks: Buffer[], size: number, chunk: Buffer | string, l
 }
 
 export function startBoundedProcessV4(request: BoundedProcessRequestV4): BoundedProcessHandleV4 {
-  if (!Number.isSafeInteger(request.deadline_ms) || request.deadline_ms < 1
-    || !Number.isSafeInteger(request.max_output_bytes) || request.max_output_bytes < 1
-    || (request.working_directory !== undefined
-      && (!isAbsolute(request.working_directory) || resolve(request.working_directory) !== request.working_directory))) {
+  if (
+    !Number.isSafeInteger(request.deadline_ms) ||
+    request.deadline_ms < 1 ||
+    !Number.isSafeInteger(request.max_output_bytes) ||
+    request.max_output_bytes < 1 ||
+    (request.working_directory !== undefined &&
+      (!isAbsolute(request.working_directory) || resolve(request.working_directory) !== request.working_directory))
+  ) {
     throw new Error('PROCESS_SANDBOX_UNAVAILABLE: bounded process policy is invalid');
   }
   const child = spawn(request.executable, [...request.argv], {
@@ -80,14 +84,21 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
     rejectCompletion(new Error('PROCESS_SANDBOX_UNAVAILABLE: process tree did not settle'));
   };
   const pidAbsent = (pid: number): boolean => {
-    try { process.kill(pid, 0); return false; } catch (error) {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
       return (error as NodeJS.ErrnoException).code === 'ESRCH';
     }
   };
   const terminateTree = async (): Promise<void> => {
     if (child.pid === undefined) throw new Error('PROCESS_SANDBOX_UNAVAILABLE: process PID is unavailable');
     if (process.platform !== 'win32') {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
       return;
     }
     const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
@@ -95,7 +106,9 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
       throw new Error('PROCESS_SANDBOX_UNAVAILABLE: Windows taskkill path is unavailable');
     }
     const killer = spawn(join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], {
-      shell: false, windowsHide: true, stdio: 'ignore',
+      shell: false,
+      windowsHide: true,
+      stdio: 'ignore',
     });
     const exitCode = await new Promise<number | null>((resolvePromise, reject) => {
       const timer = setTimeout(() => {
@@ -122,7 +135,9 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
   const settleAfterClose = async () => {
     if (settled || closeOutcome === null) return;
     if (stopping) {
-      try { await terminationWork; } catch (error) {
+      try {
+        await terminationWork;
+      } catch (error) {
         if (settled) return;
         settled = true;
         cleanup();
@@ -133,15 +148,17 @@ export function startBoundedProcessV4(request: BoundedProcessRequestV4): Bounded
     if (settled) return;
     settled = true;
     cleanup();
-    resolveCompletion(Object.freeze({
-      exit_code: closeOutcome.exitCode,
-      signal: closeOutcome.signal,
-      stdout: Buffer.concat(stdout).toString('utf8'),
-      stderr: Buffer.concat(stderr).toString('utf8'),
-      stdout_truncated: stdoutTruncated,
-      stderr_truncated: stderrTruncated,
-      termination,
-    }));
+    resolveCompletion(
+      Object.freeze({
+        exit_code: closeOutcome.exitCode,
+        signal: closeOutcome.signal,
+        stdout: Buffer.concat(stdout).toString('utf8'),
+        stderr: Buffer.concat(stderr).toString('utf8'),
+        stdout_truncated: stdoutTruncated,
+        stderr_truncated: stderrTruncated,
+        termination,
+      }),
+    );
   };
   const stop = (reason: Exclude<BoundedProcessResultV4['termination'], null>) => {
     if (stopping || settled) return;
@@ -196,12 +213,9 @@ export async function runBoundedProcessV4(request: BoundedProcessRequestV4): Pro
   return await handle.completion;
 }
 
-export async function settleBoundedProcessAndCleanupV4(
-  handle: BoundedProcessHandleV4,
-  cleanup: () => Promise<void>,
-): Promise<void> {
+export async function settleBoundedProcessAndCleanupV4(handle: BoundedProcessHandleV4, cleanup: () => Promise<void>): Promise<void> {
   const results = await Promise.allSettled([handle.terminate(), cleanup()]);
-  const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+  const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
   if (errors.length === 1) throw errors[0];
   if (errors.length > 1) {
     throw new AggregateError(errors, `PROCESS_SANDBOX_UNAVAILABLE: ${errors.map(String).join('; ')}`);

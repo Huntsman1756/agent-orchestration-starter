@@ -16,8 +16,19 @@ test('materializes only immutable evidence and approved content outside the work
   const envelope = { ...envelopeBody, envelope_hash: hashCanonicalV4(envelopeBody) } as any;
   const content = 'export const x = 1;\n';
   const contentHash = createHash('sha256').update(content).digest('hex');
-  const capsule = await buildReviewCapsule({ capsule_parent: parent, envelope, forbidden_roots: [worktree], approved_context: [{ path: 'src/x.ts', content, content_hash: contentHash }] });
-  assert.deepEqual((await readdir(capsule.root)).sort(), ['context', 'context-index.json', 'envelope.json', 'manifest.json', 'review-attestation-v4.schema.json']);
+  const capsule = await buildReviewCapsule({
+    capsule_parent: parent,
+    envelope,
+    forbidden_roots: [worktree],
+    approved_context: [{ path: 'src/x.ts', content, content_hash: contentHash }],
+  });
+  assert.deepEqual((await readdir(capsule.root)).sort(), [
+    'context',
+    'context-index.json',
+    'envelope.json',
+    'manifest.json',
+    'review-attestation-v4.schema.json',
+  ]);
   assert.deepEqual(await readdir(join(capsule.root, 'context')), [contentHash + '.txt']);
   assert.doesNotMatch(JSON.stringify(capsule), new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
 });

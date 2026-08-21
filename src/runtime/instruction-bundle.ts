@@ -42,7 +42,9 @@ export async function buildInstructionBundle(input: InstructionBundleInputV4): P
     seen.add(source.toLowerCase());
     const content = (await runGit(input.repository_root, ['show', `${input.base_sha}:${source}`])).stdout;
     if (content.includes(0)) throw new Error('OUT_OF_SCOPE_CHANGE: instruction source is not bounded text');
-    try { new TextDecoder('utf-8', { fatal: true }).decode(content); } catch {
+    try {
+      new TextDecoder('utf-8', { fatal: true }).decode(content);
+    } catch {
       throw new Error('OUT_OF_SCOPE_CHANGE: instruction source is not UTF-8 text');
     }
     total += content.length;
@@ -52,7 +54,11 @@ export async function buildInstructionBundle(input: InstructionBundleInputV4): P
     await writeFile(join(input.output_root, capsulePath), content, { flag: 'wx', mode: 0o600 });
     entries.push(Object.freeze({ source_path: source, content_hash: hash, byte_length: content.length, capsule_path: capsulePath }));
   }
-  entries.sort((left, right) => left.source_path < right.source_path ? -1 : left.source_path > right.source_path ? 1 : 0);
+  entries.sort((left, right) => (left.source_path < right.source_path ? -1 : left.source_path > right.source_path ? 1 : 0));
   const frozenEntries = Object.freeze(entries);
-  return Object.freeze({ entries: frozenEntries, total_bytes: total, manifest_hash: hashCanonicalV4({ schema_version: 4, entries: frozenEntries, total_bytes: total }) });
+  return Object.freeze({
+    entries: frozenEntries,
+    total_bytes: total,
+    manifest_hash: hashCanonicalV4({ schema_version: 4, entries: frozenEntries, total_bytes: total }),
+  });
 }

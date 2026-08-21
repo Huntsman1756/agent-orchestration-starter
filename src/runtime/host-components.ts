@@ -31,7 +31,10 @@ export const RUNTIME_HOST_COMPONENT_DEPENDENCIES_V4 = Object.freeze({
 } satisfies Readonly<Record<RuntimeHostComponentIdV4, readonly RuntimeHostComponentIdV4[]>>);
 
 type RuntimeHostPortMemberKindV4 = 'function' | 'string';
-export interface RuntimeHostPortMemberV4 { readonly name: string; readonly kind: RuntimeHostPortMemberKindV4 }
+export interface RuntimeHostPortMemberV4 {
+  readonly name: string;
+  readonly kind: RuntimeHostPortMemberKindV4;
+}
 
 function port(...members: ReadonlyArray<readonly [string, RuntimeHostPortMemberKindV4]>): readonly RuntimeHostPortMemberV4[] {
   return Object.freeze(members.map(([name, kind]) => Object.freeze({ name, kind })));
@@ -39,8 +42,13 @@ function port(...members: ReadonlyArray<readonly [string, RuntimeHostPortMemberK
 
 const RUNTIME_HOST_COMPONENT_PORTS_V4 = Object.freeze({
   task_source: port(
-    ['listCandidates', 'function'], ['loadCandidate', 'function'], ['claim', 'function'], ['renew', 'function'],
-    ['complete', 'function'], ['reopen', 'function'], ['fail', 'function'],
+    ['listCandidates', 'function'],
+    ['loadCandidate', 'function'],
+    ['claim', 'function'],
+    ['renew', 'function'],
+    ['complete', 'function'],
+    ['reopen', 'function'],
+    ['fail', 'function'],
   ),
   issue_planner: port(['plan', 'function']),
   practice_pack_resolver: port(['resolve', 'function']),
@@ -48,8 +56,11 @@ const RUNTIME_HOST_COMPONENT_PORTS_V4 = Object.freeze({
   sandbox_coordinator: port(['id', 'string'], ['probe', 'function'], ['run', 'function'], ['terminate', 'function']),
   capability_issuer: port(['issue', 'function']),
   github_publisher: port(
-    ['pushExact', 'function'], ['findPullRequest', 'function'], ['createPullRequest', 'function'],
-    ['waitForRequiredChecks', 'function'], ['mergePullRequest', 'function'],
+    ['pushExact', 'function'],
+    ['findPullRequest', 'function'],
+    ['createPullRequest', 'function'],
+    ['waitForRequiredChecks', 'function'],
+    ['mergePullRequest', 'function'],
   ),
   post_merge_verifier: port(['verify', 'function']),
 } satisfies Readonly<Record<RuntimeHostComponentIdV4, readonly RuntimeHostPortMemberV4[]>>);
@@ -106,7 +117,9 @@ export interface RuntimeHostCompositionBindingV4 {
   readonly compositionCertificationHash: string;
 }
 
-function invalid(message: string): never { throw new Error(`INVALID_CONTRACT: ${message}`); }
+function invalid(message: string): never {
+  throw new Error(`INVALID_CONTRACT: ${message}`);
+}
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[], message: string): void {
   if (Object.keys(value).sort().join(',') !== [...expected].sort().join(',')) invalid(message);
@@ -125,7 +138,9 @@ export function runtimeHostComponentPortMembersV4(id: RuntimeHostComponentIdV4):
   return RUNTIME_HOST_COMPONENT_PORTS_V4[id];
 }
 
-export function runtimeHostComponentCertificationHashV4(component: Omit<RuntimeHostComponentSourceV4, 'modulePath' | 'certificationHash'>): string {
+export function runtimeHostComponentCertificationHashV4(
+  component: Omit<RuntimeHostComponentSourceV4, 'modulePath' | 'certificationHash'>,
+): string {
   return hashCanonicalV4({
     schema_version: 4,
     component_id: component.id,
@@ -153,35 +168,72 @@ export function runtimeHostCompositionCertificationHashV4(
 export function loadRuntimeHostComponentSourceManifestV4(value: unknown): RuntimeHostComponentSourceManifestV4 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('host component source manifest is not an object');
   const item = value as Record<string, unknown>;
-  exactKeys(item, ['schemaVersion', 'driverSha256', 'integrationEvidenceHash', 'components', 'compositionCertificationHash'], 'host component source manifest has unknown or missing fields');
-  if (item.schemaVersion !== 4 || !HASH.test(String(item.driverSha256)) || !HASH.test(String(item.integrationEvidenceHash)) || !HASH.test(String(item.compositionCertificationHash))) invalid('host component source manifest identity is invalid');
-  if (!Array.isArray(item.components) || item.components.length !== RUNTIME_HOST_COMPONENT_IDS_V4.length) invalid('host component source manifest is incomplete');
+  exactKeys(
+    item,
+    ['schemaVersion', 'driverSha256', 'integrationEvidenceHash', 'components', 'compositionCertificationHash'],
+    'host component source manifest has unknown or missing fields',
+  );
+  if (
+    item.schemaVersion !== 4 ||
+    !HASH.test(String(item.driverSha256)) ||
+    !HASH.test(String(item.integrationEvidenceHash)) ||
+    !HASH.test(String(item.compositionCertificationHash))
+  )
+    invalid('host component source manifest identity is invalid');
+  if (!Array.isArray(item.components) || item.components.length !== RUNTIME_HOST_COMPONENT_IDS_V4.length)
+    invalid('host component source manifest is incomplete');
 
   const modulePaths = new Set<string>();
   const certifications = new Map<RuntimeHostComponentIdV4, string>();
   const components = item.components.map((raw, index): RuntimeHostComponentSourceV4 => {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) invalid('host component declaration is invalid');
     const component = raw as Record<string, unknown>;
-    exactKeys(component, ['id', 'implementationRevision', 'modulePath', 'moduleSha256', 'interfaceHash', 'qualificationEvidenceHash', 'dependencies', 'certificationHash'], 'host component declaration has unknown or missing fields');
+    exactKeys(
+      component,
+      [
+        'id',
+        'implementationRevision',
+        'modulePath',
+        'moduleSha256',
+        'interfaceHash',
+        'qualificationEvidenceHash',
+        'dependencies',
+        'certificationHash',
+      ],
+      'host component declaration has unknown or missing fields',
+    );
     const expectedId = RUNTIME_HOST_COMPONENT_IDS_V4[index];
     if (component.id !== expectedId) invalid('host component declarations are missing, duplicated or out of order');
     const id = expectedId;
-    if (typeof component.implementationRevision !== 'string' || !IMMUTABLE_REVISION.test(component.implementationRevision)) invalid(`host component ${id} revision is mutable or invalid`);
-    if (typeof component.modulePath !== 'string' || !PORTABLE_MODULE_PATH.test(component.modulePath) || component.modulePath.split('/').some((part) => part === '.' || part === '..')) invalid(`host component ${id} module path is invalid`);
+    if (typeof component.implementationRevision !== 'string' || !IMMUTABLE_REVISION.test(component.implementationRevision))
+      invalid(`host component ${id} revision is mutable or invalid`);
+    if (
+      typeof component.modulePath !== 'string' ||
+      !PORTABLE_MODULE_PATH.test(component.modulePath) ||
+      component.modulePath.split('/').some((part) => part === '.' || part === '..')
+    )
+      invalid(`host component ${id} module path is invalid`);
     const foldedPath = component.modulePath.toLocaleLowerCase('en-US');
     if (modulePaths.has(foldedPath)) invalid('host component module paths are ambiguous');
     modulePaths.add(foldedPath);
-    if (!HASH.test(String(component.moduleSha256)) || !HASH.test(String(component.qualificationEvidenceHash)) || !HASH.test(String(component.certificationHash))) invalid(`host component ${id} hashes are invalid`);
+    if (
+      !HASH.test(String(component.moduleSha256)) ||
+      !HASH.test(String(component.qualificationEvidenceHash)) ||
+      !HASH.test(String(component.certificationHash))
+    )
+      invalid(`host component ${id} hashes are invalid`);
     if (component.interfaceHash !== runtimeHostComponentInterfaceHashV4(id)) invalid(`host component ${id} interface drifted`);
     if (!Array.isArray(component.dependencies)) invalid(`host component ${id} dependencies are invalid`);
     const expectedDependencies = RUNTIME_HOST_COMPONENT_DEPENDENCIES_V4[id];
     if (component.dependencies.length !== expectedDependencies.length) invalid(`host component ${id} dependencies drifted`);
     const dependencies = component.dependencies.map((rawDependency, dependencyIndex): RuntimeHostComponentDependencyV4 => {
-      if (rawDependency === null || typeof rawDependency !== 'object' || Array.isArray(rawDependency)) invalid(`host component ${id} dependencies are invalid`);
+      if (rawDependency === null || typeof rawDependency !== 'object' || Array.isArray(rawDependency))
+        invalid(`host component ${id} dependencies are invalid`);
       const dependency = rawDependency as Record<string, unknown>;
       exactKeys(dependency, ['id', 'certificationHash'], `host component ${id} dependency has unknown or missing fields`);
       const expectedDependencyId = expectedDependencies[dependencyIndex];
-      if (dependency.id !== expectedDependencyId || dependency.certificationHash !== certifications.get(expectedDependencyId)) invalid(`host component ${id} dependencies drifted`);
+      if (dependency.id !== expectedDependencyId || dependency.certificationHash !== certifications.get(expectedDependencyId))
+        invalid(`host component ${id} dependencies drifted`);
       return Object.freeze({ id: expectedDependencyId, certificationHash: String(dependency.certificationHash) });
     });
     const loaded = Object.freeze({
@@ -200,7 +252,11 @@ export function loadRuntimeHostComponentSourceManifestV4(value: unknown): Runtim
   });
 
   const frozenComponents = Object.freeze(components);
-  if (runtimeHostCompositionCertificationHashV4(String(item.driverSha256), String(item.integrationEvidenceHash), frozenComponents) !== item.compositionCertificationHash) invalid('host composition certification drifted');
+  if (
+    runtimeHostCompositionCertificationHashV4(String(item.driverSha256), String(item.integrationEvidenceHash), frozenComponents) !==
+    item.compositionCertificationHash
+  )
+    invalid('host composition certification drifted');
 
   return Object.freeze({
     schemaVersion: 4,
@@ -217,17 +273,20 @@ export function bindRuntimeHostCompositionV4(
   driverSha256: string,
 ): RuntimeHostCompositionBindingV4 {
   const loaded = loadRuntimeHostComponentSourceManifestV4(structuredClone(source));
-  if (!isAbsolute(installationRoot) || loaded.driverSha256 !== driverSha256) invalid('host composition does not bind the selected root driver');
-  const components = loaded.components.map((component): RuntimeHostComponentBindingV4 => Object.freeze({
-    id: component.id,
-    implementationRevision: component.implementationRevision,
-    path: join(installationRoot, 'host-components', `${component.id}.mjs`),
-    sha256: component.moduleSha256,
-    interfaceHash: component.interfaceHash,
-    qualificationEvidenceHash: component.qualificationEvidenceHash,
-    dependencies: component.dependencies,
-    certificationHash: component.certificationHash,
-  }));
+  if (!isAbsolute(installationRoot) || loaded.driverSha256 !== driverSha256)
+    invalid('host composition does not bind the selected root driver');
+  const components = loaded.components.map((component): RuntimeHostComponentBindingV4 =>
+    Object.freeze({
+      id: component.id,
+      implementationRevision: component.implementationRevision,
+      path: join(installationRoot, 'host-components', `${component.id}.mjs`),
+      sha256: component.moduleSha256,
+      interfaceHash: component.interfaceHash,
+      qualificationEvidenceHash: component.qualificationEvidenceHash,
+      dependencies: component.dependencies,
+      certificationHash: component.certificationHash,
+    }),
+  );
   return Object.freeze({
     integrationEvidenceHash: loaded.integrationEvidenceHash,
     components: Object.freeze(components),
@@ -242,14 +301,23 @@ export function loadRuntimeHostCompositionBindingV4(
 ): RuntimeHostCompositionBindingV4 {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid('host composition binding is invalid');
   const item = value as Record<string, unknown>;
-  exactKeys(item, ['integrationEvidenceHash', 'components', 'compositionCertificationHash'], 'host composition binding has unknown or missing fields');
+  exactKeys(
+    item,
+    ['integrationEvidenceHash', 'components', 'compositionCertificationHash'],
+    'host composition binding has unknown or missing fields',
+  );
   if (!Array.isArray(item.components)) invalid('host composition binding is incomplete');
   const sourceComponents = item.components.map((raw, index) => {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) invalid('host component binding is invalid');
     const component = raw as Record<string, unknown>;
-    exactKeys(component, ['id', 'implementationRevision', 'path', 'sha256', 'interfaceHash', 'qualificationEvidenceHash', 'dependencies', 'certificationHash'], 'host component binding has unknown or missing fields');
+    exactKeys(
+      component,
+      ['id', 'implementationRevision', 'path', 'sha256', 'interfaceHash', 'qualificationEvidenceHash', 'dependencies', 'certificationHash'],
+      'host component binding has unknown or missing fields',
+    );
     const id = RUNTIME_HOST_COMPONENT_IDS_V4[index];
-    if (component.id !== id || component.path !== join(installationRoot, 'host-components', `${id}.mjs`)) invalid('host component binding path or identity drifted');
+    if (component.id !== id || component.path !== join(installationRoot, 'host-components', `${id}.mjs`))
+      invalid('host component binding path or identity drifted');
     return {
       id,
       implementationRevision: component.implementationRevision,

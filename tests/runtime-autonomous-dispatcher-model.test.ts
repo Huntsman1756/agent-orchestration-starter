@@ -26,8 +26,19 @@ type Command = 'PAUSE' | 'RUN' | 'ADMIT' | 'CRASH' | 'RECOVER' | 'DRAIN' | 'ABOR
 
 const COMMANDS: readonly Command[] = ['PAUSE', 'RUN', 'ADMIT', 'CRASH', 'RECOVER', 'DRAIN', 'ABORT'];
 const COVERAGE_PREFIX: readonly Command[] = [
-  'PAUSE', 'RUN', 'CRASH', 'ADMIT', 'RECOVER', 'ADMIT',
-  'DRAIN', 'ADMIT', 'RUN', 'ADMIT', 'ADMIT', 'ABORT', 'RECOVER',
+  'PAUSE',
+  'RUN',
+  'CRASH',
+  'ADMIT',
+  'RECOVER',
+  'ADMIT',
+  'DRAIN',
+  'ADMIT',
+  'RUN',
+  'ADMIT',
+  'ADMIT',
+  'ABORT',
+  'RECOVER',
 ];
 
 type ModelTask = AutonomousDispatcherStatusV4['tasks'][number];
@@ -130,7 +141,14 @@ function runtimeResult(index: number, runId: string, state: string): RuntimeResu
     review_attestation_hash: finalized ? HASH : null,
     commit_sha: finalized ? BASE_SHA : null,
     publication: finalized
-      ? { state: 'MERGED', remote: 'origin', base_branch: 'main', pull_request: 31 + index, pull_request_url: `https://github.com/example/fixture/pull/${31 + index}`, merge_commit_sha: MERGE_SHA }
+      ? {
+          state: 'MERGED',
+          remote: 'origin',
+          base_branch: 'main',
+          pull_request: 31 + index,
+          pull_request_url: `https://github.com/example/fixture/pull/${31 + index}`,
+          merge_commit_sha: MERGE_SHA,
+        }
       : { state: 'NOT_STARTED', remote: null, base_branch: null, pull_request: null, pull_request_url: null, merge_commit_sha: null },
     failure: aborted
       ? { code: 'ABORTED', message: 'ABORTED: model injected an authenticated abort', retryable: false, evidence_hashes: [HASH] }
@@ -333,7 +351,10 @@ async function assertInvariants(context: DispatcherModelContext): Promise<void> 
     assert.ok(harness.owners.has(taskIdentity), `active task ${taskIdentity} has no source lease owner`);
   }
   for (const taskIdentity of harness.owners.keys()) {
-    assert.ok(activeTasks.some((task) => identity(task.candidate_id, task.revision) === taskIdentity), `orphan lease owner ${taskIdentity}`);
+    assert.ok(
+      activeTasks.some((task) => identity(task.candidate_id, task.revision) === taskIdentity),
+      `orphan lease owner ${taskIdentity}`,
+    );
   }
   for (const [taskIdentity, count] of harness.claim_counts) {
     assert.equal(count, 1, `task ${taskIdentity} was claimed more than once`);
@@ -426,7 +447,10 @@ test('bounded dispatcher state machine preserves safety invariants and emits rep
         await executeCommand(context, command);
         await assertInvariants(context);
       } catch (error: unknown) {
-        throw new Error(`dispatcher model counterexample seed=${seed} step=${step} command=${command} commands=${JSON.stringify(commands)}`, { cause: error });
+        throw new Error(
+          `dispatcher model counterexample seed=${seed} step=${step} command=${command} commands=${JSON.stringify(commands)}`,
+          { cause: error },
+        );
       }
     }
   }

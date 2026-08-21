@@ -30,7 +30,8 @@ function isRecord(value: unknown): value is JournalRecordV4 {
   const candidate = value as Record<string, unknown>;
   if (Object.keys(candidate).sort().join(',') !== 'command,previous_hash,record_hash,recorded_at,sequence') return false;
   if (!Number.isSafeInteger(candidate.sequence) || (candidate.sequence as number) < 1) return false;
-  if (candidate.previous_hash !== null && (typeof candidate.previous_hash !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.previous_hash))) return false;
+  if (candidate.previous_hash !== null && (typeof candidate.previous_hash !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.previous_hash)))
+    return false;
   if (typeof candidate.recorded_at !== 'string' || Number.isNaN(Date.parse(candidate.recorded_at))) return false;
   if (typeof candidate.record_hash !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.record_hash)) return false;
   if (candidate.command === null || typeof candidate.command !== 'object' || Array.isArray(candidate.command)) return false;
@@ -68,7 +69,8 @@ function parseRecords(bytes: string): JournalRecordV4[] {
     const expectedPrevious = records.at(-1)?.record_hash ?? null;
     if (record.sequence !== expectedSequence) corrupt(`journal sequence ${record.sequence} does not follow ${index}`);
     if (record.previous_hash !== expectedPrevious) corrupt(`journal previous hash is broken at sequence ${record.sequence}`);
-    if (hashCanonicalV4(recordDraft(record)) !== record.record_hash) corrupt(`journal record hash is broken at sequence ${record.sequence}`);
+    if (hashCanonicalV4(recordDraft(record)) !== record.record_hash)
+      corrupt(`journal record hash is broken at sequence ${record.sequence}`);
     const bytesForCommand = canonicalJsonV4(record.command);
     const previousCommand = commandBytes.get(record.command.command_id);
     if (previousCommand !== undefined && previousCommand !== bytesForCommand) {
@@ -85,7 +87,8 @@ export async function appendJournalRecord(file: FileHandle, record: JournalRecor
   let offset = 0;
   while (offset < bytes.length) {
     const { bytesWritten } = await file.write(bytes, offset, bytes.length - offset, null);
-    if (bytesWritten <= 0 || bytesWritten > bytes.length - offset) throw new Error('BROKER_STATE_CORRUPT: journal write did not make valid forward progress');
+    if (bytesWritten <= 0 || bytesWritten > bytes.length - offset)
+      throw new Error('BROKER_STATE_CORRUPT: journal write did not make valid forward progress');
     offset += bytesWritten;
   }
   await file.sync();
@@ -104,7 +107,9 @@ async function openJournal(directory: string): Promise<JournalV4> {
   let closed = false;
   const records = mutableRecords as JournalRecordV4[];
   return {
-    get records() { return Object.freeze([...records]); },
+    get records() {
+      return Object.freeze([...records]);
+    },
     append: async (command) => {
       if (closed) throw new Error('BROKER_STATE_CORRUPT: journal is closed');
       const durableCommand = loadJournalCommandV4(command);

@@ -60,7 +60,10 @@ test('creates only repository-local OpenCode configuration and preserves an unma
 
   const report = await renderProject({ targetDir: directory, policy: resolvedPolicy(), harnesses: ['opencode'] });
 
-  assert.deepEqual(report.conflicts.find((entry) => entry.path === 'opencode.json'), { path: 'opencode.json', reason: 'unmanaged' });
+  assert.deepEqual(
+    report.conflicts.find((entry) => entry.path === 'opencode.json'),
+    { path: 'opencode.json', reason: 'unmanaged' },
+  );
   assert.equal(await readFile(configPath, 'utf8'), '{"userOwned":true}\n');
   assert.match(await readFile(join(directory, 'AGENTS.md'), 'utf8'), /repository-root `opencode\.json`.*never.*personal.*global/is);
   assert.ok(report.created.every((path) => !path.startsWith('/') && !/^[A-Za-z]:[\\/]/u.test(path)));

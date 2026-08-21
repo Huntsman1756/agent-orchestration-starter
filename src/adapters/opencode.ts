@@ -26,19 +26,22 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
   if (assignment.permissions.write) {
     for (const command of policy.validation.commands) bash[`${command}*`] = 'allow';
   }
-  const frontmatter = stringify({
-    description: descriptions[role],
-    mode: role === 'orchestrator' ? 'primary' : 'subagent',
-    model: `${providerFor(assignment, 'opencode')}/${assignment.model}`,
-    temperature: role === 'executor' || role === 'frontier-executor' ? 0.1 : 0,
-    permission: {
-      read: assignment.permissions.read ? 'allow' : 'deny',
-      edit: assignment.permissions.write ? 'allow' : 'deny',
-      external_directory: 'deny',
-      task: role === 'orchestrator' ? 'allow' : 'deny',
-      bash,
+  const frontmatter = stringify(
+    {
+      description: descriptions[role],
+      mode: role === 'orchestrator' ? 'primary' : 'subagent',
+      model: `${providerFor(assignment, 'opencode')}/${assignment.model}`,
+      temperature: role === 'executor' || role === 'frontier-executor' ? 0.1 : 0,
+      permission: {
+        read: assignment.permissions.read ? 'allow' : 'deny',
+        edit: assignment.permissions.write ? 'allow' : 'deny',
+        external_directory: 'deny',
+        task: role === 'orchestrator' ? 'allow' : 'deny',
+        bash,
+      },
     },
-  }, { lineWidth: 0 });
+    { lineWidth: 0 },
+  );
   return {
     path: `.opencode/agents/${role}.md`,
     content: `---\n${frontmatter}---\n${contractInstructions(role, policy.validation.commands)}\n`,
@@ -48,12 +51,16 @@ function agentFile(role: AgentRole, policy: ResolvedPolicy): GeneratedFile {
 function projectConfig(): GeneratedFile {
   return {
     path: 'opencode.json',
-    content: `${JSON.stringify({
-      $schema: 'https://opencode.ai/config.json',
-      share: 'disabled',
-      autoupdate: false,
-      plugin: [],
-    }, null, 2)}\n`,
+    content: `${JSON.stringify(
+      {
+        $schema: 'https://opencode.ai/config.json',
+        share: 'disabled',
+        autoupdate: false,
+        plugin: [],
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 

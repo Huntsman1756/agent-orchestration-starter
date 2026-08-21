@@ -128,7 +128,14 @@ export interface RuntimeRepositoryPolicyV4 {
   repositoryId: string;
   base: { allowedBranches: readonly string[] };
   worktrees: { parentRef: string };
-  routing: { frontierOnly: { riskClasses: readonly string[]; taskClasses: readonly string[]; paths: readonly string[]; sourceSensitivity: readonly SourceSensitivityV4[] } };
+  routing: {
+    frontierOnly: {
+      riskClasses: readonly string[];
+      taskClasses: readonly string[];
+      paths: readonly string[];
+      sourceSensitivity: readonly SourceSensitivityV4[];
+    };
+  };
   validation: Record<string, { argv: readonly string[]; workingDirectory: string; timeoutSeconds: number; sandboxProfile: string }>;
   sourcePolicy: { dataScope: DataScopeV4; sourceSensitivity: SourceSensitivityV4 };
   sandbox: { requiredBackend: string; requiredProfiles: readonly string[] };
@@ -207,7 +214,11 @@ export interface RuntimeResultV4 {
   artifact_manifest_hash: string;
 }
 
-export interface ReviewFindingV4 { id: string; severity: string; message: string; }
+export interface ReviewFindingV4 {
+  id: string;
+  severity: string;
+  message: string;
+}
 
 export interface ReviewAttestationV4 {
   review_id: string;

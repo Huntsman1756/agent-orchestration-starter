@@ -66,7 +66,11 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
     chunks.push(buffer);
   }
   if (chunks.length === 0) return undefined;
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('INVALID_CONTRACT: MCP request body is not valid JSON'); }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new Error('INVALID_CONTRACT: MCP request body is not valid JSON');
+  }
 }
 
 function sessionId(request: IncomingMessage): string | null {
@@ -76,7 +80,8 @@ function sessionId(request: IncomingMessage): string | null {
 }
 
 export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, options: McpHttpAdapterOptionsV4): Promise<McpHttpAdapterV4> {
-  if (typeof options.bearerToken !== 'string' || options.bearerToken.length < 16 || options.bearerToken.length > 4_096) invalid('MCP HTTP bearer token is invalid');
+  if (typeof options.bearerToken !== 'string' || options.bearerToken.length < 16 || options.bearerToken.length > 4_096)
+    invalid('MCP HTTP bearer token is invalid');
   const host = options.host ?? '127.0.0.1';
   const port = options.port ?? 0;
   const path = options.path ?? DEFAULT_PATH;
@@ -87,7 +92,8 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
   const sessionIdleTimeoutMs = options.sessionIdleTimeoutMs ?? DEFAULT_SESSION_IDLE_TIMEOUT_MS;
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1 || maxSessions > 1_024) invalid('MCP HTTP session limit is invalid');
-  if (!Number.isSafeInteger(sessionIdleTimeoutMs) || sessionIdleTimeoutMs < 1_000 || sessionIdleTimeoutMs > 24 * 60 * 60 * 1_000) invalid('MCP HTTP session idle timeout is invalid');
+  if (!Number.isSafeInteger(sessionIdleTimeoutMs) || sessionIdleTimeoutMs < 1_000 || sessionIdleTimeoutMs > 24 * 60 * 60 * 1_000)
+    invalid('MCP HTTP session idle timeout is invalid');
   const now = options.now ?? Date.now;
 
   const sessions = new Map<string, SessionV4>();
@@ -99,13 +105,22 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
   };
   const pruneIdleSessions = async (): Promise<void> => {
     const cutoff = now() - sessionIdleTimeoutMs;
-    await Promise.all([...sessions].filter(([, session]) => session.lastAccessMs <= cutoff).map(([id, session]) => closeSession(id, session)));
+    await Promise.all(
+      [...sessions].filter(([, session]) => session.lastAccessMs <= cutoff).map(([id, session]) => closeSession(id, session)),
+    );
   };
   const server = createServer((request, response) => {
     void (async () => {
       const requestPath = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-      if (requestPath !== path) { sendJson(response, 404, { error: 'not found' }); return; }
-      if (request.method === 'OPTIONS') { response.statusCode = 204; response.end(); return; }
+      if (requestPath !== path) {
+        sendJson(response, 404, { error: 'not found' });
+        return;
+      }
+      if (request.method === 'OPTIONS') {
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
       if (!tokenMatches(request, options.bearerToken)) {
         response.setHeader('www-authenticate', 'Bearer');
         sendJson(response, 401, { error: 'unauthorized' });
@@ -118,13 +133,18 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
       if (request.method === 'POST') body = await readJsonBody(request, maxBodyBytes);
       let current = currentSessionId === null ? undefined : sessions.get(currentSessionId);
       if (current === undefined && request.method === 'POST' && currentSessionId === null && isInitializeRequest(body)) {
-        if (sessions.size + pendingInitializations >= maxSessions) { sendJson(response, 429, { error: 'MCP session capacity reached' }); return; }
+        if (sessions.size + pendingInitializations >= maxSessions) {
+          sendJson(response, 429, { error: 'MCP session capacity reached' });
+          return;
+        }
         pendingInitializations += 1;
         try {
           let createdSessionId: string | null = null;
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
-            onsessioninitialized: (value) => { createdSessionId = value; },
+            onsessioninitialized: (value) => {
+              createdSessionId = value;
+            },
           });
           const mcpServer = createBrokerMcpServer(deps);
           current = { transport, server: mcpServer, lastAccessMs: now() };
@@ -147,14 +167,21 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
       current.lastAccessMs = now();
       await current.transport.handleRequest(request, response, body);
     })().catch((error: unknown) => {
-      if (!response.headersSent) sendJson(response, 400, { error: error instanceof Error ? error.message.split(':', 2)[0] : 'invalid request' });
+      if (!response.headersSent)
+        sendJson(response, 400, { error: error instanceof Error ? error.message.split(':', 2)[0] : 'invalid request' });
       else response.destroy();
     });
   });
 
   await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => { server.off('listening', onListening); reject(error); };
-    const onListening = () => { server.off('error', onError); resolve(); };
+    const onError = (error: Error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
     server.once('error', onError);
     server.once('listening', onListening);
     server.listen({ host, port });
@@ -170,12 +197,14 @@ export async function createMcpHttpAdapter(deps: McpAdapterDependenciesV4, optio
     close: () => {
       if (closePromise !== null) return closePromise;
       closePromise = (async () => {
-        await Promise.allSettled([...sessions.values()].map(async ({ transport, server: mcpServer }) => {
-          await transport.close().catch(() => undefined);
-          await mcpServer.close().catch(() => undefined);
-        }));
+        await Promise.allSettled(
+          [...sessions.values()].map(async ({ transport, server: mcpServer }) => {
+            await transport.close().catch(() => undefined);
+            await mcpServer.close().catch(() => undefined);
+          }),
+        );
         sessions.clear();
-        await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+        await new Promise<void>((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error))));
         await deps.client.close();
       })();
       return closePromise;

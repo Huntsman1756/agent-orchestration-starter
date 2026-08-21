@@ -13,29 +13,38 @@ export interface GitResultV4 {
 function allowedGitArgv(argv: readonly string[]): boolean {
   const [command, ...rest] = argv;
   if (command === 'rev-parse') {
-    return (rest.length === 1 && rest[0] === 'HEAD')
-      || (rest.length === 2 && rest[0] === '--verify' && /^[a-f0-9]{40}\^\{commit\}$/.test(rest[1] ?? ''));
+    return (
+      (rest.length === 1 && rest[0] === 'HEAD') ||
+      (rest.length === 2 && rest[0] === '--verify' && /^[a-f0-9]{40}\^\{commit\}$/.test(rest[1] ?? ''))
+    );
   }
   if (command === 'symbolic-ref') return rest.length === 2 && rest[0] === '--short' && rest[1] === 'HEAD';
   if (command === 'status') return rest.length === 2 && rest[0] === '--porcelain=v2' && rest[1] === '-z';
   if (command === 'worktree') {
-    return (rest.length === 5 && rest[0] === 'add' && rest[1] === '-b' && branchPattern.test(rest[2] ?? '') && shaPattern.test(rest[4] ?? ''))
-      || (rest.length === 2 && rest[0] === 'list' && rest[1] === '--porcelain')
-      || ([2, 3].includes(rest.length) && rest[0] === 'remove' && (rest.length === 2 || rest[1] === '--force'));
+    return (
+      (rest.length === 5 && rest[0] === 'add' && rest[1] === '-b' && branchPattern.test(rest[2] ?? '') && shaPattern.test(rest[4] ?? '')) ||
+      (rest.length === 2 && rest[0] === 'list' && rest[1] === '--porcelain') ||
+      ([2, 3].includes(rest.length) && rest[0] === 'remove' && (rest.length === 2 || rest[1] === '--force'))
+    );
   }
   if (command === 'branch') {
-    return (rest.length === 2 && branchPattern.test(rest[0] ?? '') && shaPattern.test(rest[1] ?? ''))
-      || (rest.length === 2 && rest[0] === '-D' && branchPattern.test(rest[1] ?? ''));
+    return (
+      (rest.length === 2 && branchPattern.test(rest[0] ?? '') && shaPattern.test(rest[1] ?? '')) ||
+      (rest.length === 2 && rest[0] === '-D' && branchPattern.test(rest[1] ?? ''))
+    );
   }
-  if (command === 'show-ref') return rest.length === 2 && rest[0] === '--verify' && /^refs\/heads\/codex\/auto\/[A-Za-z0-9_-]{1,96}$/.test(rest[1] ?? '');
+  if (command === 'show-ref')
+    return rest.length === 2 && rest[0] === '--verify' && /^refs\/heads\/codex\/auto\/[A-Za-z0-9_-]{1,96}$/.test(rest[1] ?? '');
   if (command === 'show') return rest.length === 1 && /^[a-f0-9]{40}:[^\0\r\n]+$/.test(rest[0] ?? '');
   if (command === 'diff') {
-    return rest.length === 5
-      && ['--name-status', '--numstat', '--raw'].includes(rest[0] ?? '')
-      && rest[1] === '-z'
-      && rest[2] === '--no-renames'
-      && shaPattern.test(rest[3] ?? '')
-      && rest[4] === '--';
+    return (
+      rest.length === 5 &&
+      ['--name-status', '--numstat', '--raw'].includes(rest[0] ?? '') &&
+      rest[1] === '-z' &&
+      rest[2] === '--no-renames' &&
+      shaPattern.test(rest[3] ?? '') &&
+      rest[4] === '--'
+    );
   }
   if (command === 'ls-files') {
     return rest.join('\0') === ['--others', '--exclude-standard', '-z'].join('\0');

@@ -53,20 +53,38 @@ export interface HostCodexSubscriptionRunnerDependenciesV4 {
 
 const allowedPlatforms = new Set<NodeJS.Platform>(['win32', 'darwin', 'linux']);
 const allowedEnvironment = new Set([
-  'APPDATA', 'DBUS_SESSION_BUS_ADDRESS', 'HOME', 'HOMEDRIVE', 'HOMEPATH', 'LANG', 'LC_ALL',
-  'LOCALAPPDATA', 'PATH', 'SystemRoot', 'TEMP', 'TMP', 'TMPDIR', 'USERPROFILE', 'WINDIR',
+  'APPDATA',
+  'DBUS_SESSION_BUS_ADDRESS',
+  'HOME',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LANG',
+  'LC_ALL',
+  'LOCALAPPDATA',
+  'PATH',
+  'SystemRoot',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USERPROFILE',
+  'WINDIR',
   'XDG_RUNTIME_DIR',
 ]);
 const forbiddenEnvironment = /(api|auth|credential|key|pass|secret|token)/iu;
 
-function unavailable(message: string): never { throw new Error(`CAPABILITY_UNVERIFIED: ${message}`); }
+function unavailable(message: string): never {
+  throw new Error(`CAPABILITY_UNVERIFIED: ${message}`);
+}
 
 function validateDependencies(deps: HostCodexSubscriptionRunnerDependenciesV4): void {
-  if (deps.harness_argv.length < 1
-    || deps.harness_argv.some((part) => part.length < 1 || part.length > 8_192 || part.includes('\0'))
-    || !isAbsolute(deps.harness_argv[0]!)
-    || !isAbsolute(deps.runtime_home_parent)
-    || resolve(deps.runtime_home_parent) !== deps.runtime_home_parent) unavailable('host Codex runner configuration is invalid');
+  if (
+    deps.harness_argv.length < 1 ||
+    deps.harness_argv.some((part) => part.length < 1 || part.length > 8_192 || part.includes('\0')) ||
+    !isAbsolute(deps.harness_argv[0]!) ||
+    !isAbsolute(deps.runtime_home_parent) ||
+    resolve(deps.runtime_home_parent) !== deps.runtime_home_parent
+  )
+    unavailable('host Codex runner configuration is invalid');
   for (const [key, value] of Object.entries(deps.environment)) {
     if (!allowedEnvironment.has(key) || forbiddenEnvironment.test(key) || value.includes('\0') || value.length > 16_384) {
       unavailable('host Codex runner environment is not allowlisted');
@@ -93,9 +111,12 @@ function policyHash(platform: NodeJS.Platform, harnessArgv: readonly string[]): 
 
 function codexConfigArgv(): readonly string[] {
   return Object.freeze([
-    '-c', 'cli_auth_credentials_store="keyring"',
-    '-c', 'forced_login_method="chatgpt"',
-    '-c', 'approval_policy="never"',
+    '-c',
+    'cli_auth_credentials_store="keyring"',
+    '-c',
+    'forced_login_method="chatgpt"',
+    '-c',
+    'approval_policy="never"',
   ]);
 }
 
@@ -119,20 +140,60 @@ export function createHostCodexSubscriptionRunnerV4(deps: HostCodexSubscriptionR
     return await mkdtemp(join(deps.runtime_home_parent, 'codex-subscription-'));
   };
   const probe = async (): Promise<HostCodexSubscriptionProbeV4> => {
-    if (!allowedPlatforms.has(platform)) return Object.freeze({ status: 'UNSUPPORTED', policy_hash: computedPolicyHash, platform, auth_store: 'keyring', login_method: 'chatgpt', reason: 'UNSUPPORTED_PLATFORM' });
+    if (!allowedPlatforms.has(platform))
+      return Object.freeze({
+        status: 'UNSUPPORTED',
+        policy_hash: computedPolicyHash,
+        platform,
+        auth_store: 'keyring',
+        login_method: 'chatgpt',
+        reason: 'UNSUPPORTED_PLATFORM',
+      });
     const home = await temporaryHome();
     try {
       let result: BoundedProcessResultV4;
       try {
-        result = await run({ executable: deps.harness_argv[0]!, argv: [...deps.harness_argv.slice(1), ...codexConfigArgv(), 'login', 'status'], environment: environmentFor(deps, home), deadline_ms: 10_000, max_output_bytes: 64 * 1024 });
+        result = await run({
+          executable: deps.harness_argv[0]!,
+          argv: [...deps.harness_argv.slice(1), ...codexConfigArgv(), 'login', 'status'],
+          environment: environmentFor(deps, home),
+          deadline_ms: 10_000,
+          max_output_bytes: 64 * 1024,
+        });
       } catch {
-        return Object.freeze({ status: 'UNSUPPORTED', policy_hash: computedPolicyHash, platform, auth_store: 'keyring', login_method: 'chatgpt', reason: 'HARNESS_UNAVAILABLE' });
+        return Object.freeze({
+          status: 'UNSUPPORTED',
+          policy_hash: computedPolicyHash,
+          platform,
+          auth_store: 'keyring',
+          login_method: 'chatgpt',
+          reason: 'HARNESS_UNAVAILABLE',
+        });
       }
       const status = loginStatus(`${result.stdout}\n${result.stderr}`);
-      if (result.exit_code !== 0 || result.termination !== null || result.stdout_truncated || result.stderr_truncated || status !== 'chatgpt') {
-        return Object.freeze({ status: 'UNSUPPORTED', policy_hash: computedPolicyHash, platform, auth_store: 'keyring', login_method: 'chatgpt', reason: status === 'not-logged-in' ? 'KEYRING_LOGIN_REQUIRED' : 'CHATGPT_LOGIN_REQUIRED' });
+      if (
+        result.exit_code !== 0 ||
+        result.termination !== null ||
+        result.stdout_truncated ||
+        result.stderr_truncated ||
+        status !== 'chatgpt'
+      ) {
+        return Object.freeze({
+          status: 'UNSUPPORTED',
+          policy_hash: computedPolicyHash,
+          platform,
+          auth_store: 'keyring',
+          login_method: 'chatgpt',
+          reason: status === 'not-logged-in' ? 'KEYRING_LOGIN_REQUIRED' : 'CHATGPT_LOGIN_REQUIRED',
+        });
       }
-      return Object.freeze({ status: 'SUPPORTED', policy_hash: computedPolicyHash, platform, auth_store: 'keyring', login_method: 'chatgpt' });
+      return Object.freeze({
+        status: 'SUPPORTED',
+        policy_hash: computedPolicyHash,
+        platform,
+        auth_store: 'keyring',
+        login_method: 'chatgpt',
+      });
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -140,26 +201,56 @@ export function createHostCodexSubscriptionRunnerV4(deps: HostCodexSubscriptionR
   return Object.freeze({
     probe,
     execute: async (input: HostCodexSubscriptionExecutionV4): Promise<HostCodexSubscriptionResultV4> => {
-      if (!/^exec_[a-z0-9_-]{8,96}$/u.test(input.execution_id)
-        || !isAbsolute(input.capsule_root) || resolve(input.capsule_root) !== input.capsule_root
-        || !/^[A-Za-z0-9._-]{1,128}$/u.test(input.model)
-        || input.prompt.length < 1 || input.prompt.length > 512 * 1024
-        || !/^[a-f0-9]{64}$/u.test(input.expected_policy_hash)) unavailable('host Codex review request is invalid');
+      if (
+        !/^exec_[a-z0-9_-]{8,96}$/u.test(input.execution_id) ||
+        !isAbsolute(input.capsule_root) ||
+        resolve(input.capsule_root) !== input.capsule_root ||
+        !/^[A-Za-z0-9._-]{1,128}$/u.test(input.model) ||
+        input.prompt.length < 1 ||
+        input.prompt.length > 512 * 1024 ||
+        !/^[a-f0-9]{64}$/u.test(input.expected_policy_hash)
+      )
+        unavailable('host Codex review request is invalid');
       const current = await probe();
-      if (current.status !== 'SUPPORTED' || current.policy_hash !== input.expected_policy_hash) unavailable('host Codex subscription runner is not freshly qualified');
+      if (current.status !== 'SUPPORTED' || current.policy_hash !== input.expected_policy_hash)
+        unavailable('host Codex subscription runner is not freshly qualified');
       const schema = join(input.capsule_root, 'review-attestation-v4.schema.json');
       const home = await temporaryHome();
       const started = (deps.now_ms ?? Date.now)();
       try {
         const result = await run({
           executable: deps.harness_argv[0]!,
-          argv: [...deps.harness_argv.slice(1), 'exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '--skip-git-repo-check', '--output-schema', schema, '--json', '--cd', input.capsule_root, '--model', input.model, ...codexConfigArgv(), ...codexModelConfigArgvV4(input.guidance), input.prompt],
+          argv: [
+            ...deps.harness_argv.slice(1),
+            'exec',
+            '--ephemeral',
+            '--ignore-user-config',
+            '--ignore-rules',
+            '--sandbox',
+            'read-only',
+            '--skip-git-repo-check',
+            '--output-schema',
+            schema,
+            '--json',
+            '--cd',
+            input.capsule_root,
+            '--model',
+            input.model,
+            ...codexConfigArgv(),
+            ...codexModelConfigArgvV4(input.guidance),
+            input.prompt,
+          ],
           environment: environmentFor(deps, home),
           working_directory: input.capsule_root,
           deadline_ms: 300_000,
           max_output_bytes: 2 * 1024 * 1024,
         });
-        return Object.freeze({ ...result, execution_id: input.execution_id, timed_out: result.termination === 'TIMEOUT', duration_ms: Math.max(0, (deps.now_ms ?? Date.now)() - started) });
+        return Object.freeze({
+          ...result,
+          execution_id: input.execution_id,
+          timed_out: result.termination === 'TIMEOUT',
+          duration_ms: Math.max(0, (deps.now_ms ?? Date.now)() - started),
+        });
       } finally {
         await rm(home, { recursive: true, force: true });
       }

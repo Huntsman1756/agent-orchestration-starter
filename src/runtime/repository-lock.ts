@@ -32,15 +32,25 @@ export function createInProcessReclamationCoordinatorV4(identity: string): Recla
     runExclusive: async <T>(key: string, operation: () => Promise<T>): Promise<T> => {
       const prior = tails.get(key) ?? Promise.resolve();
       let release!: () => void;
-      const tail = new Promise<void>((resolve) => { release = resolve; });
+      const tail = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       tails.set(key, tail);
       await prior;
-      try { return await operation(); } finally { release(); if (tails.get(key) === tail) tails.delete(key); }
+      try {
+        return await operation();
+      } finally {
+        release();
+        if (tails.get(key) === tail) tails.delete(key);
+      }
     },
   };
 }
 
-export interface LockProcessIdentityV4 { boot_id: string; process_start_id: string }
+export interface LockProcessIdentityV4 {
+  boot_id: string;
+  process_start_id: string;
+}
 
 export interface RepositoryLockOwnerV4 {
   repository_id: string;
@@ -86,14 +96,19 @@ async function platformIdentity(pid: number): Promise<LockProcessIdentityV4 | nu
     }
   }
   if (process.platform === 'win32') {
-    const script = "$p=Get-Process -Id $env:RUNNER_V4_PID -ErrorAction Stop; $o=Get-CimInstance Win32_OperatingSystem; [pscustomobject]@{boot_id=$o.LastBootUpTime.ToUniversalTime().ToString('o');process_start_id=$p.StartTime.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress";
+    const script =
+      "$p=Get-Process -Id $env:RUNNER_V4_PID -ErrorAction Stop; $o=Get-CimInstance Win32_OperatingSystem; [pscustomobject]@{boot_id=$o.LastBootUpTime.ToUniversalTime().ToString('o');process_start_id=$p.StartTime.ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress";
     try {
       const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-        env: { ...process.env, RUNNER_V4_PID: String(pid) }, windowsHide: true, maxBuffer: 4_096,
+        env: { ...process.env, RUNNER_V4_PID: String(pid) },
+        windowsHide: true,
+        maxBuffer: 4_096,
       });
       const value = JSON.parse(stdout.trim()) as Partial<LockProcessIdentityV4>;
-      return typeof value.boot_id === 'string' && typeof value.process_start_id === 'string' ? value as LockProcessIdentityV4 : null;
-    } catch { return null; }
+      return typeof value.boot_id === 'string' && typeof value.process_start_id === 'string' ? (value as LockProcessIdentityV4) : null;
+    } catch {
+      return null;
+    }
   }
   if (process.platform === 'darwin') {
     try {
@@ -108,7 +123,9 @@ async function platformIdentity(pid: number): Promise<LockProcessIdentityV4 | nu
         boot_id: createHash('sha256').update(bootValue, 'utf8').digest('hex'),
         process_start_id: createHash('sha256').update(processValue, 'utf8').digest('hex'),
       };
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -139,8 +156,16 @@ async function defaultOwnerStatus(owner: RepositoryLockOwnerV4): Promise<LockOwn
 async function readOwner(path: string): Promise<RepositoryLockOwnerV4> {
   try {
     const value = JSON.parse(await readFile(path, 'utf8')) as Partial<RepositoryLockOwnerV4>;
-    if (typeof value.repository_id !== 'string' || !Number.isSafeInteger(value.pid) || typeof value.boot_nonce !== 'string' || value.boot_nonce.length < 8
-      || typeof value.boot_id !== 'string' || value.boot_id.length === 0 || typeof value.process_start_id !== 'string' || value.process_start_id.length === 0) {
+    if (
+      typeof value.repository_id !== 'string' ||
+      !Number.isSafeInteger(value.pid) ||
+      typeof value.boot_nonce !== 'string' ||
+      value.boot_nonce.length < 8 ||
+      typeof value.boot_id !== 'string' ||
+      value.boot_id.length === 0 ||
+      typeof value.process_start_id !== 'string' ||
+      value.process_start_id.length === 0
+    ) {
       throw new Error('invalid lock owner');
     }
     return value as RepositoryLockOwnerV4;
@@ -152,7 +177,7 @@ async function readOwner(path: string): Promise<RepositoryLockOwnerV4> {
 export async function acquireRepositoryLockV4(options: RepositoryLockOptionsV4): Promise<RepositoryLockV4> {
   await mkdir(options.directory, { recursive: true, mode: 0o700 });
   const path = join(options.directory, lockName(options.repositoryId));
-  const identity = options.ownerIdentity ?? await platformIdentity(options.pid ?? process.pid);
+  const identity = options.ownerIdentity ?? (await platformIdentity(options.pid ?? process.pid));
   if (identity === null) throw new Error('BROKER_STATE_CORRUPT: process boot/start identity is unavailable for lock ownership');
   const owner: RepositoryLockOwnerV4 = {
     repository_id: options.repositoryId,
@@ -200,8 +225,14 @@ export async function acquireRepositoryLockV4(options: RepositoryLockOptionsV4):
     ...owner,
     release: async () => {
       const recorded = await readOwner(path).catch(() => null);
-      if (recorded !== null && recorded.boot_nonce === owner.boot_nonce && recorded.pid === owner.pid
-        && recorded.boot_id === owner.boot_id && recorded.process_start_id === owner.process_start_id) await unlink(path).catch(() => undefined);
+      if (
+        recorded !== null &&
+        recorded.boot_nonce === owner.boot_nonce &&
+        recorded.pid === owner.pid &&
+        recorded.boot_id === owner.boot_id &&
+        recorded.process_start_id === owner.process_start_id
+      )
+        await unlink(path).catch(() => undefined);
     },
   });
 }

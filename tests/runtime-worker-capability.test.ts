@@ -50,25 +50,37 @@ test('worker capability binds exact deployment, tools, qualification, and story 
   assert.deepEqual(loadWorkerCapabilityV4(structuredClone(capability)), capability);
   assert.equal(Object.isFrozen(capability.deployment), true);
   assert.equal(Object.isFrozen(capability.capabilities), true);
-  assert.notEqual(createWorkerCapabilityV4({
-    ...body(),
-    deployment: { ...body().deployment, model_ref: 'replaceable-model-b' },
-  }).worker_capability_hash, capability.worker_capability_hash);
-  assert.notEqual(createWorkerCapabilityV4({
-    ...body(),
-    deployment: { ...body().deployment, instruction_bundle_hash: hash('e') },
-  }).worker_capability_hash, capability.worker_capability_hash);
+  assert.notEqual(
+    createWorkerCapabilityV4({
+      ...body(),
+      deployment: { ...body().deployment, model_ref: 'replaceable-model-b' },
+    }).worker_capability_hash,
+    capability.worker_capability_hash,
+  );
+  assert.notEqual(
+    createWorkerCapabilityV4({
+      ...body(),
+      deployment: { ...body().deployment, instruction_bundle_hash: hash('e') },
+    }).worker_capability_hash,
+    capability.worker_capability_hash,
+  );
 
-  assert.throws(() => createWorkerCapabilityV4({
-    ...body(),
-    deployment: { ...body().deployment, model_revision: 'latest' },
-  }), /exact immutable revision/u);
+  assert.throws(
+    () =>
+      createWorkerCapabilityV4({
+        ...body(),
+        deployment: { ...body().deployment, model_revision: 'latest' },
+      }),
+    /exact immutable revision/u,
+  );
   assert.throws(() => loadWorkerCapabilityV4({ ...capability, worker_capability_hash: hash('0') }), /hash is invalid/u);
 });
 
 test('publishes strict schemas for worker capabilities and sanitized repair packets', async () => {
   const ajv = new Ajv2020({ strict: true });
-  const workerSchema = JSON.parse(await readFile(new URL('../contracts/runtime-worker-capability-v4.schema.json', import.meta.url), 'utf8'));
+  const workerSchema = JSON.parse(
+    await readFile(new URL('../contracts/runtime-worker-capability-v4.schema.json', import.meta.url), 'utf8'),
+  );
   const repairSchema = JSON.parse(await readFile(new URL('../contracts/runtime-repair-packet-v4.schema.json', import.meta.url), 'utf8'));
   const validateWorker = ajv.compile(workerSchema);
   const validateRepair = ajv.compile(repairSchema);
@@ -77,7 +89,17 @@ test('publishes strict schemas for worker capabilities and sanitized repair pack
     schema_version: 4 as const,
     story_id: 'story_alpha',
     failed_attempt: 1,
-    findings: [{ finding_id: 'finding-1', source: 'REVIEW' as const, category_code: 'acceptance_mismatch', path: 'src/a.ts', line: 7, instruction: 'Implement the missing accepted behavior.', evidence_hash: hash('f') }],
+    findings: [
+      {
+        finding_id: 'finding-1',
+        source: 'REVIEW' as const,
+        category_code: 'acceptance_mismatch',
+        path: 'src/a.ts',
+        line: 7,
+        instruction: 'Implement the missing accepted behavior.',
+        evidence_hash: hash('f'),
+      },
+    ],
   };
   const packet = loadRepairPacketV4({ ...packetBody, packet_hash: hashCanonicalV4(packetBody) });
 
@@ -85,7 +107,9 @@ test('publishes strict schemas for worker capabilities and sanitized repair pack
   assert.equal(validateRepair(packet), true, JSON.stringify(validateRepair.errors));
   assert.equal(
     createNormalizedFailureSignatureV4(packet.findings),
-    createNormalizedFailureSignatureV4([{ ...packet.findings[0]!, finding_id: 'renamed', line: 99, instruction: 'Different wording.', evidence_hash: hash('9') }]),
+    createNormalizedFailureSignatureV4([
+      { ...packet.findings[0]!, finding_id: 'renamed', line: 99, instruction: 'Different wording.', evidence_hash: hash('9') },
+    ]),
   );
   assert.notEqual(
     createNormalizedFailureSignatureV4(packet.findings),
