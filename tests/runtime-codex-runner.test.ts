@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -83,7 +83,7 @@ test('runs exact ephemeral Codex argv from the capsule with a frozen bounded pro
   assert.match(prompt, /"instruction_manifest_hash":"4{64}"/);
   assert.doesNotMatch(prompt, new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   const capture = JSON.parse(await readFile(join(capsule, 'config', 'fake-codex-capture.json'), 'utf8'));
-  assert.equal(capture.cwd, capsule);
+  assert.equal(capture.cwd, await realpath(capsule));
 });
 
 test('rejects stale isolation before credential lease or harness launch', async () => {

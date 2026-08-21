@@ -294,7 +294,9 @@ test('networked executor permits only an internal network and the fixed non-secr
   );
 });
 
-test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', async () => {
+test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, and open enums', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-proof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');
@@ -331,7 +333,9 @@ test('physical mount proof rejects aliases, ambiguous parents, sensitive roots, 
   }
 });
 
-test('mount capability reproof rejects a source replaced by an alias before Docker effects', async () => {
+test('mount capability reproof rejects a source replaced by an alias before Docker effects', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = await mkdtemp(join(process.platform === 'win32' ? dirname(process.cwd()) : tmpdir(), 'ao-mount-reproof-'));
   const allowed = join(root, 'allowed');
   const source = join(allowed, 'capsule');

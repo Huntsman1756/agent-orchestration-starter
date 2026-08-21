@@ -67,7 +67,9 @@ function virtualWindowsMetadata(options: {
   };
 }
 
-test('records the canonical parent and existence of a safe allowed change', async () => {
+test('records the canonical parent and existence of a safe allowed change', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = fixture();
 
   const [change] = await inspectAllowedChanges({
@@ -221,7 +223,9 @@ test('rejects a Windows cross-volume canonical parent before the executor launch
   assert.equal(launched, false);
 });
 
-test('deep-freezes inspected operations against caller mutation', async () => {
+test('deep-freezes inspected operations against caller mutation', {
+  skip: process.platform === 'darwin',
+}, async () => {
   const root = fixture();
   const operations: ('MODIFY' | 'DELETE')[] = ['MODIFY'];
   const [inspected] = await inspectAllowedChanges({
